@@ -62,12 +62,19 @@ pub fn pc_queue_desc(d: [u32; 4]) -> [u32; 4] {
         0 | 100 | 10000 => d[1], // NORMAL, HIGH, GLOBAL_REALTIME
         _ => 100,
     };
-    [pc_list_type(d[0]), priority, d[2], if d[3] == 0 { 0 } else { 1 }]
+    let flags = d[2] & D3D12_COMMAND_QUEUE_FLAG_DISABLE_GPU_TIMEOUT.0 as u32;
+    [pc_list_type(d[0]), priority, flags, if d[3] == 0 { 0 } else { 1 }]
 }
 
 /// device #8 CreateCommandQueue / #48 CreateCommandQueueX(desc, riid, queue)
 pub(super) unsafe extern "system" fn create_command_queue_x(this: *mut c_void, desc: *const [u32; 4], riid: *const GUID, ppv: *mut *mut c_void) -> HRESULT {
-    let d = if desc.is_null() { [0; 4] } else { pc_queue_desc(desc.read_unaligned()) };
+    let original = if desc.is_null() { [0; 4] } else { desc.read_unaligned() };
+    let d = pc_queue_desc(original);
+    let unmapped = original[2] & !d[2];
+    static UNMAPPED: AtomicU64 = AtomicU64::new(0);
+    if unmapped != 0 && UNMAPPED.fetch_or(unmapped as u64, Ordering::Relaxed) & unmapped as u64 != unmapped as u64 {
+        crate::xlog_warn!("D3D12.X: command queue flags {unmapped:#x} have no Windows mapping");
+    }
     let hr = real::dev_create_command_queue(this, d.as_ptr() as usize, riid, ppv);
     if hr >= 0 && !ppv.is_null() && !(*ppv).is_null() {
         super::list_x::on_queue_create(*ppv as usize, this as usize, D3D12_COMMAND_LIST_TYPE(d[0] as i32));
@@ -835,6 +842,36 @@ pub(super) unsafe extern "system" fn create_command_signature_x(this: *mut c_voi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn console_queue_flags_create_a_native_compute_queue() {
+        let compute = D3D12_COMMAND_LIST_TYPE_COMPUTE.0 as u32;
+        assert_eq!(pc_queue_desc([compute, 0, 2, 0]), [compute, 0, 0, 0]);
+        assert_eq!(pc_queue_desc([compute, 0, 3, 1]), [compute, 0, 1, 1]);
+
+        assert_eq!(super::super::backend(), super::super::Backend::Real);
+        unsafe {
+            let iid = GUID::from_u128(0x0ec870a6_5d7e_4c22_8cfc_5baae07616ed);
+            let mut queue = std::ptr::null_mut();
+            let raw = real::device_raw();
+            assert_eq!(create_command_queue_x(raw, &[compute, 0, 2, 0], &iid, &mut queue), S_OK);
+            assert!(!queue.is_null());
+            let queue = ID3D12CommandQueue::from_raw(queue);
+            let desc = queue.GetDesc();
+            assert_eq!(desc.Type, D3D12_COMMAND_LIST_TYPE_COMPUTE);
+            assert_eq!(desc.Flags, D3D12_COMMAND_QUEUE_FLAG_NONE);
+
+            let dev = ID3D12Device::from_raw_borrowed(&raw).expect("D3D12 device");
+            let fence: ID3D12Fence = dev.CreateFence(0, D3D12_FENCE_FLAG_NONE).expect("queue test fence");
+            let event = windows::Win32::System::Threading::CreateEventW(None, false, false, None).expect("queue test event");
+            queue.Signal(&fence, 1).expect("compute queue signal");
+            fence.SetEventOnCompletion(1, event).expect("fence completion notification");
+            let wait = windows::Win32::System::Threading::WaitForSingleObject(event, 5000);
+            windows::Win32::Foundation::CloseHandle(event).expect("close queue test event");
+            assert_eq!(wait, windows::Win32::Foundation::WAIT_OBJECT_0);
+            assert_eq!(fence.GetCompletedValue(), 1);
+        }
+    }
 
     #[test]
     fn console_types_and_descs_become_pc_ones() {
