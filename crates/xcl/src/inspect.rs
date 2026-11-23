@@ -1,4 +1,4 @@
-//! `xcl inspect <exe>` – static analysis without running anything (read-only).
+//! `xcl inspect <exe>` – read-only PE analysis without running the title.
 
 use std::collections::BTreeMap;
 use std::path::Path;

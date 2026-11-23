@@ -45,6 +45,7 @@ pub struct ImportRecord {
 static RECORDS: Mutex<Vec<ImportRecord>> = Mutex::new(Vec::new());
 static SEARCH_DIRS: RwLock<Vec<PathBuf>> = RwLock::new(Vec::new());
 static SYS_CACHE: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
+static INSPECT_SYS_CACHE: Mutex<Option<HashMap<String, usize>>> = Mutex::new(None);
 
 pub fn set_search_dirs(dirs: Vec<PathBuf>) {
     *SEARCH_DIRS.write().unwrap() = dirs;
@@ -61,15 +62,23 @@ fn fname(what: &ImportName) -> String {
 /// Real Windows module handle (cached). Never maps through our loader.
 pub fn system_module(dll: &str) -> Option<usize> {
     use windows_sys::Win32::System::LibraryLoader::LoadLibraryW;
+    cached_system_module(&SYS_CACHE, dll, || unsafe { LoadLibraryW(wide(dll).as_ptr()) as usize })
+}
+
+fn cached_system_module(
+    cache: &Mutex<Option<HashMap<String, usize>>>,
+    dll: &str,
+    load: impl FnOnce() -> usize,
+) -> Option<usize> {
     let key = dll_key(dll);
     {
-        let g = SYS_CACHE.lock().unwrap();
+        let g = cache.lock().unwrap();
         if let Some(&h) = g.as_ref().and_then(|m| m.get(&key)) {
             return (h != 0).then_some(h);
         }
     }
-    let h = unsafe { LoadLibraryW(wide(dll).as_ptr()) } as usize;
-    SYS_CACHE.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, h);
+    let h = load();
+    cache.lock().unwrap().get_or_insert_with(HashMap::new).insert(key, h);
     (h != 0).then_some(h)
 }
 
@@ -91,6 +100,23 @@ pub fn system_proc(dll: &str, what: &ImportName) -> Option<usize> {
     system_proc_in(system_module(dll)?, what)
 }
 
+fn inspect_system_proc(dll: &str, what: &ImportName) -> Option<usize> {
+    use windows_sys::Win32::System::LibraryLoader::{LoadLibraryExW, LOAD_LIBRARY_SEARCH_SYSTEM32};
+    if !is_library_filename(dll) {
+        return None;
+    }
+    let h = cached_system_module(&INSPECT_SYS_CACHE, dll, || unsafe {
+        LoadLibraryExW(wide(dll).as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_SEARCH_SYSTEM32) as usize
+    })?;
+    system_proc_in(h, what)
+}
+
+fn is_library_filename(dll: &str) -> bool {
+    dll.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+        && dll.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
+        && dll.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
 fn hle_name_for<'a>(m: &'a HleModule, dll: &str, what: &'a ImportName) -> Option<&'a str> {
     match what {
         ImportName::Name { name, .. } => Some(name.as_str()),
@@ -104,6 +130,15 @@ fn hle_name_for<'a>(m: &'a HleModule, dll: &str, what: &'a ImportName) -> Option
 
 /// HLE lookup with cross-module search and (kernel family) system fallback.
 fn resolve_hle(m: &HleModule, key: &str, what: &ImportName) -> Option<(usize, Source)> {
+    resolve_hle_with(m, key, what, system_proc)
+}
+
+fn resolve_hle_with(
+    m: &HleModule,
+    key: &str,
+    what: &ImportName,
+    system_lookup: fn(&str, &ImportName) -> Option<usize>,
+) -> Option<(usize, Source)> {
     let fallback_what = if let Some(name) = hle_name_for(m, key, what) {
         if let Some(&a) = m.exports.get(name) {
             return Some((a, Source::Hle(m.name.to_string())));
@@ -130,7 +165,7 @@ fn resolve_hle(m: &HleModule, key: &str, what: &ImportName) -> Option<(usize, So
         if ordinal_only && c != key {
             continue;
         }
-        if let Some(a) = system_proc(c, query) {
+        if let Some(a) = system_lookup(c, query) {
             return Some((a, Source::System(c.to_string())));
         }
     }
@@ -276,25 +311,28 @@ pub fn resolve_import(dll: &str, what: &ImportName, importer: &str, delay: bool)
     addr
 }
 
-/// Dry-run classification used by `xcl inspect` (does not map game DLLs).
+/// Dry-run classification used by `xcl inspect` (no game loading; Windows probes only System32).
 pub fn classify(dll: &str, what: &ImportName) -> Source {
+    if !is_library_filename(dll) {
+        return Source::Stub;
+    }
     let key = dll_key(dll);
     let reg = registry();
     match reg.route(&key) {
         Some(Route::Stub) => Source::Stub,
         Some(Route::System) => {
-            if system_proc(&key, what).is_some() {
+            if inspect_system_proc(&key, what).is_some() {
                 Source::System(key)
             } else {
                 Source::Stub
             }
         }
-        Some(Route::Hle(i)) => resolve_hle(&reg.modules[*i], &key, what).map(|x| x.1).unwrap_or(Source::Stub),
+        Some(Route::Hle(i)) => resolve_hle_with(&reg.modules[*i], &key, what, inspect_system_proc).map(|x| x.1).unwrap_or(Source::Stub),
         None => {
             if find_game_dll(&key).is_some() {
                 return Source::GameDll(key);
             }
-            if system_proc(&key, what).is_some() {
+            if inspect_system_proc(&key, what).is_some() {
                 return Source::System(key);
             }
             if let ImportName::Name { name, .. } = what {
@@ -430,6 +468,16 @@ mod tests {
         assert!(a != 0 && matches!(s, Source::Hle(ref m) if m == crate::hle::KERNELX), "{s:?}");
         let (a, s) = resolve_inner("advapi32.dll", &name("RegSetValueExW"), 0);
         assert!(a != 0 && matches!(s, Source::System(ref d) if d == "advapi32.dll"), "{s:?}");
+    }
+
+    #[test]
+    fn inspect_classifies_windows_exports_by_filename_only() {
+        let name = |s: &str| ImportName::Name { hint: 0, name: s.into() };
+        assert_eq!(classify("USER32.DLL", &name("ShowWindow")), Source::System("user32.dll".into()));
+        assert!(matches!(classify("api-ms-win-core-processthreads-l1-1-0.dll", &name("GetCurrentProcessId")), Source::System(_)));
+        assert_eq!(classify("kernelx.dll", &name("VirtualAlloc")), Source::Hle("kernelx.dll".into()));
+        assert_eq!(classify("user32.dll", &name("XclNonexistentWindowsExport")), Source::Stub);
+        assert_eq!(classify("fixtures/user32.dll", &name("ShowWindow")), Source::Stub);
     }
 
     #[test]
