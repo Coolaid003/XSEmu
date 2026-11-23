@@ -1,12 +1,12 @@
-//! `xcrdapi.dll` – the console's DirectStorage: `DStorageGetFactory` → IDStorageFactoryX.
+//! `xcrdapi.dll` – the console's DirectStorage: `DStorageGetFactory` → IDStorageFactoryX/X2.
 //!
 //! The interfaces are the PC DirectStorage ones in the console's vtable order and structure
 //! layouts (as observed on Fortnite, which reads all its data through them):
 //! * factory: QueryInterface, AddRef, Release, CreateQueue(desc, riid, out), OpenFile(path,
 //!   riid, out), CreateStatusArray(capacity, name, riid, out), SetCpuAffinity(mask),
-//!   SetDebugFlags(flags), SetStagingBufferSize(bytes), then 7 more,
+//!   SetDebugFlags(flags), SetStagingBufferSize(bytes), GetStats (unsupported), CreateQueue1,
 //! * queue desc (0x18): source type u32 @0 (0 file, 1 memory), capacity u16 @8, priority i8
-//!   @10 (-1 … 2; memory queues 2), name @0x10,
+//!   @10 (-1 … 2; memory queues 2), name @0x10. Desc1 adds AutoSubmitDisabled at 0x18.
 //! * request (0x48): options u64 @0 (`DSTORAGE_REQUEST_OPTIONS`: bit 0 `ZlibDecompress`,
 //!   bits 1–4 `BcpackMode`, bits 5–20 `SwizzleMode`, bit 21 `DestinationIsPhysicalPages`,
 //!   bit 22 `SourceType` (0 file / 1 memory), bit 23 `SourceIsPhysicalPages`),
@@ -18,7 +18,7 @@
 //! * queue: QueryInterface, AddRef, Release, EnqueueRequest, EnqueueStatus(array, index),
 //!   EnqueueSignal(fence, value), Submit, CancelRequestsWithTag(mask, value), Close,
 //!   GetErrorEvent, RetrieveErrorRecord (0x290 bytes), Query (0x1C: the desc, then empty
-//!   slots u16 @0x18 and requests until the automatic submit u16 @0x1A), then 6 more,
+//!   slots u16 @0x18 and requests until the automatic submit u16 @0x1A), EnqueueSetEvent, Query1,
 //! * file: QueryInterface, AddRef, Release, Close, GetHandle, 2 unknown, GetId, then 4 more;
 //!   status array: QueryInterface, AddRef, Release, IsComplete(index), GetHResult(index),
 //!   then 5 more.
@@ -32,7 +32,7 @@
 
 use std::ffi::c_void;
 use std::os::windows::fs::FileExt;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -64,8 +64,10 @@ const E_QUEUE_TYPE: HRESULT = 0x8924_00F5u32 as i32;
 
 const IID_IUNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_c000_000000000046);
 const IID_FACTORY: GUID = GUID::from_u128(0xfb3b54ac_bf82_463a_b777_73195837864d);
+const IID_FACTORY_X2: GUID = GUID::from_u128(0x62959d11_d45f_4884_a0a3_f7862ea243ae);
 const IID_FILE: GUID = GUID::from_u128(0x43704f9f_27c6_4a9f_8815_d16527894df4);
 const IID_QUEUE: GUID = GUID::from_u128(0xa3f6649a_8c2c_4b3a_8b6e_10186a04b9bc);
+const IID_QUEUE_X2: GUID = GUID::from_u128(0x3c02cb0c_c050_4195_99a1_a1ce94ba33c5);
 const IID_STATUS_ARRAY: GUID = GUID::from_u128(0xcd66d752_2786_44f7_9070_e2a6fdad3f1b);
 
 /// Console `DSTORAGE_REQUEST_OPTIONS` bitfields (Xbox Series X|S `dstorage_xs.h`):
@@ -155,11 +157,11 @@ unsafe fn no_ref(_p: *mut c_void) -> u32 {
     1
 }
 
-unsafe fn query(p: *mut c_void, own: &GUID, riid: *const GUID, out: *mut *mut c_void, add: unsafe fn(*mut c_void) -> u32) -> HRESULT {
+unsafe fn query(p: *mut c_void, supported: &[GUID], riid: *const GUID, out: *mut *mut c_void, add: unsafe fn(*mut c_void) -> u32) -> HRESULT {
     if out.is_null() {
         return E_POINTER;
     }
-    if !riid.is_null() && (same(&*riid, own) || same(&*riid, &IID_IUNKNOWN)) {
+    if riid.as_ref().is_some_and(|iid| same(iid, &IID_IUNKNOWN) || supported.iter().any(|own| same(iid, own))) {
         add(p);
         *out = p;
         return S_OK;
@@ -176,6 +178,7 @@ unsafe fn query(p: *mut c_void, own: &GUID, riid: *const GUID, out: *mut *mut c_
 pub unsafe extern "system" fn DStorageGetFactory(riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
     static FACTORY: OnceLock<usize> = OnceLock::new();
     let f = *FACTORY.get_or_init(|| {
+        let (stats_stub, _) = crate::stubs::make_stub_info(DLL, "IDStorageFactoryX1::GetStats", E_NOTIMPL as u32 as u64);
         let v = vtable(
             "IDStorageFactoryX",
             &[
@@ -188,6 +191,8 @@ pub unsafe extern "system" fn DStorageGetFactory(riid: *const GUID, out: *mut *m
                 factory_set_cpu_affinity as usize,
                 factory_set_debug_flags as usize,
                 factory_set_staging_buffer_size as usize,
+                stats_stub,
+                factory_create_queue1 as usize,
             ],
             16,
         );
@@ -201,7 +206,7 @@ unsafe extern "system" fn static_ref(_p: *mut c_void) -> u32 {
 }
 
 unsafe extern "system" fn factory_qi(p: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
-    query(p, &IID_FACTORY, riid, out, no_ref)
+    query(p, &[IID_FACTORY, IID_FACTORY_X2], riid, out, no_ref)
 }
 
 unsafe extern "system" fn factory_set_cpu_affinity(_p: *mut c_void, _mask: u64) -> HRESULT {
@@ -264,7 +269,7 @@ unsafe extern "system" fn factory_open_file(_p: *mut c_void, path: *const u16, r
 }
 
 unsafe extern "system" fn file_qi(p: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
-    query(p, &IID_FILE, riid, out, add_ref::<FileInner>)
+    query(p, &[IID_FILE], riid, out, add_ref::<FileInner>)
 }
 
 unsafe extern "system" fn file_add_ref(p: *mut c_void) -> u32 {
@@ -339,7 +344,7 @@ unsafe extern "system" fn factory_create_status_array(_p: *mut c_void, capacity:
 }
 
 unsafe extern "system" fn status_qi(p: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
-    query(p, &IID_STATUS_ARRAY, riid, out, add_ref::<StatusInner>)
+    query(p, &[IID_STATUS_ARRAY], riid, out, add_ref::<StatusInner>)
 }
 
 unsafe extern "system" fn status_add_ref(p: *mut c_void) -> u32 {
@@ -630,6 +635,7 @@ enum Entry {
     Status(Arc<StatusInner>, u32),
     /// a fence (one reference held) and the value it gets
     Signal(FenceRef, u64),
+    SetEvent(OwnedHandle),
     #[cfg(test)]
     /// Test-only barrier to hold the worker deterministically while testing submitted-batch cancellation.
     Gate(Arc<std::sync::Barrier>),
@@ -655,9 +661,11 @@ struct FirstError {
 
 struct QueueInner {
     desc: [u8; 0x18],
+    auto_submit: bool,
     source_memory: bool,
     capacity: usize,
     pending: Mutex<Pending>,
+    space: Condvar,
     cancels: Mutex<Vec<CancelRule>>,
     worker: Mutex<Option<mpsc::Sender<Vec<Entry>>>>,
     worker_active: (Mutex<bool>, Condvar),
@@ -695,6 +703,7 @@ impl QueueInner {
         if batch.is_empty() {
             return;
         }
+        self.space.notify_all();
         if w.is_none() {
             let (tx, rx) = mpsc::channel::<Vec<Entry>>();
             let q = Arc::clone(self);
@@ -765,6 +774,9 @@ impl QueueInner {
                     Entry::Signal(fence, value) => unsafe {
                         fence.signal(value);
                     },
+                    Entry::SetEvent(event) => unsafe {
+                        SetEvent(event.as_raw_handle());
+                    },
                     #[cfg(test)]
                     Entry::Gate(b) => {
                         b.wait();
@@ -774,13 +786,19 @@ impl QueueInner {
         }
     }
 
-    fn enqueue(self: &Arc<Self>, e: Entry) {
+    fn enqueue(self: &Arc<Self>, mut e: Entry) {
         let n = {
             let mut p = self.pending.lock().unwrap();
+            while !self.auto_submit && p.entries.len() >= self.capacity - 1 && !self.closed.load(Ordering::Acquire) {
+                p = self.space.wait(p).unwrap();
+            }
             if self.closed.load(Ordering::Acquire) {
                 return;
             }
-            if let Entry::Status(ref s, i) = e {
+            if let Entry::Request { seq, .. } = &mut e {
+                *seq = p.next_seq;
+                p.next_seq += 1;
+            } else if let Entry::Status(ref s, i) = e {
                 if let Some(slot) = s.slots.get(i as usize) {
                     slot.store(E_PENDING, Ordering::Release);
                 }
@@ -789,23 +807,7 @@ impl QueueInner {
             p.entries.len()
         };
         // as on PC: a half-full queue submits by itself
-        if n >= (self.capacity / 2).max(1) {
-            self.submit();
-        }
-    }
-
-    fn enqueue_request(self: &Arc<Self>, req: Request, file: Option<Arc<FileInner>>, dest_pages: Option<Vec<usize>>, src_pages: Option<Vec<usize>>) {
-        let n = {
-            let mut p = self.pending.lock().unwrap();
-            if self.closed.load(Ordering::Acquire) {
-                return;
-            }
-            let seq = p.next_seq;
-            p.next_seq += 1;
-            p.entries.push(Entry::Request { seq, req, file, dest_pages, src_pages });
-            p.entries.len()
-        };
-        if n >= (self.capacity / 2).max(1) {
+        if self.auto_submit && n >= (self.capacity / 2).max(1) {
             self.submit();
         }
     }
@@ -835,6 +837,8 @@ fn queue_vtbl() -> &'static [usize] {
                 queue_get_error_event as usize,
                 queue_retrieve_error_record as usize,
                 queue_query as usize,
+                queue_enqueue_set_event as usize,
+                queue_query1 as usize,
             ],
             18,
         )
@@ -842,14 +846,26 @@ fn queue_vtbl() -> &'static [usize] {
 }
 
 unsafe extern "system" fn factory_create_queue(_p: *mut c_void, desc: *const u8, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
+    create_queue(desc, false, riid, out)
+}
+
+unsafe extern "system" fn factory_create_queue1(_p: *mut c_void, desc: *const u8, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
+    create_queue(desc, true, riid, out)
+}
+
+unsafe fn create_queue(desc: *const u8, extended: bool, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
     if out.is_null() {
         return E_POINTER;
     }
     *out = std::ptr::null_mut();
-    if desc.is_null() {
+    if !crate::gpu::shader::readable(desc as usize, if extended { 0x20 } else { 0x18 }) {
         return E_INVALIDARG;
     }
     let raw: [u8; 0x18] = (desc as *const [u8; 0x18]).read_unaligned();
+    let options = if extended { desc.add(0x18).cast::<u64>().read_unaligned() } else { 0 };
+    if options & !1 != 0 {
+        return E_INVALIDARG;
+    }
     let source = u32::from_le_bytes(raw[0..4].try_into().unwrap());
     let capacity = u16::from_le_bytes(raw[8..10].try_into().unwrap()) as usize;
     let priority = raw[10] as i8;
@@ -868,9 +884,11 @@ unsafe extern "system" fn factory_create_queue(_p: *mut c_void, desc: *const u8,
     }
     let inner = Arc::new(QueueInner {
         desc: raw,
+        auto_submit: options == 0,
         source_memory: source == 1,
         capacity,
         pending: Mutex::new(Pending { entries: Vec::new(), next_seq: 1 }),
+        space: Condvar::new(),
         cancels: Mutex::new(Vec::new()),
         worker: Mutex::new(None),
         worker_active: (Mutex::new(false), Condvar::new()),
@@ -889,7 +907,7 @@ unsafe fn queue<'a>(p: *mut c_void) -> &'a Arc<QueueInner> {
 }
 
 unsafe extern "system" fn queue_qi(p: *mut c_void, riid: *const GUID, out: *mut *mut c_void) -> HRESULT {
-    query(p, &IID_QUEUE, riid, out, add_ref::<QueueInner>)
+    query(p, &[IID_QUEUE, IID_QUEUE_X2], riid, out, add_ref::<QueueInner>)
 }
 
 unsafe extern "system" fn queue_add_ref(p: *mut c_void) -> u32 {
@@ -949,7 +967,7 @@ unsafe extern "system" fn queue_enqueue_request(p: *mut c_void, req: *const u8) 
     } else {
         None
     };
-    q.enqueue_request(r, file, dest_pages, src_pages);
+    q.enqueue(Entry::Request { seq: 0, req: r, file, dest_pages, src_pages });
 }
 
 unsafe extern "system" fn queue_enqueue_status(p: *mut c_void, array: *mut c_void, index: u32) {
@@ -979,6 +997,14 @@ unsafe extern "system" fn queue_enqueue_signal(p: *mut c_void, fence: *mut c_voi
     q.enqueue(Entry::Signal(FenceRef(fence as usize), value));
 }
 
+unsafe extern "system" fn queue_enqueue_set_event(p: *mut c_void, event: HANDLE) {
+    let mut h: HANDLE = std::ptr::null_mut();
+    let me = GetCurrentProcess();
+    if DuplicateHandle(me, event, me, &mut h, 0, 0, DUPLICATE_SAME_ACCESS) != 0 {
+        queue(p).enqueue(Entry::SetEvent(OwnedHandle::from_raw_handle(h)));
+    }
+}
+
 unsafe extern "system" fn queue_submit(p: *mut c_void) {
     let q = queue(p);
     if !q.closed.load(Ordering::Acquire) {
@@ -993,6 +1019,7 @@ unsafe extern "system" fn queue_cancel(p: *mut c_void, mask: u64, value: u64) {
     let cutoff = {
         let mut pend = q.pending.lock().unwrap();
         pend.entries.retain(|e| !matches!(e, Entry::Request { req, .. } if req.tag & mask == value));
+        q.space.notify_all();
         pend.next_seq.saturating_sub(1)
     };
     if cutoff == 0 {
@@ -1017,6 +1044,7 @@ unsafe extern "system" fn queue_close(p: *mut c_void) {
             Vec::new()
         } else {
             w.take();
+            q.space.notify_all();
             std::mem::take(&mut pend.entries)
         }
     };
@@ -1091,7 +1119,7 @@ unsafe extern "system" fn queue_query(p: *mut c_void, out: *mut u8) {
     let q = queue(p);
     let pending = q.pending.lock().unwrap().entries.len();
     let empty = q.capacity.saturating_sub(pending) as u16;
-    let until = (q.capacity / 2).max(1).saturating_sub(pending).max(1) as u16;
+    let until = if q.auto_submit { (q.capacity / 2).max(1).saturating_sub(pending).max(1) as u16 } else { 0 };
     let mut info = [0u8; 0x1C];
     info[..0x18].copy_from_slice(&q.desc);
     info[0x18..0x1A].copy_from_slice(&empty.to_le_bytes());
@@ -1099,9 +1127,79 @@ unsafe extern "system" fn queue_query(p: *mut c_void, out: *mut u8) {
     std::ptr::copy_nonoverlapping(info.as_ptr(), out, info.len());
 }
 
+unsafe extern "system" fn queue_query1(p: *mut c_void, out: *mut u8) {
+    if out.is_null() {
+        return;
+    }
+    let q = queue(p);
+    let pending = q.pending.lock().unwrap().entries.len();
+    let empty = (q.capacity - 1).saturating_sub(pending) as u16;
+    let until = if q.auto_submit { (q.capacity / 2).max(1).saturating_sub(pending).max(1) as u16 } else { 0 };
+    let mut info = [0u8; 0x24];
+    info[..0x18].copy_from_slice(&q.desc);
+    info[0x18] = u8::from(!q.auto_submit);
+    info[0x20..0x22].copy_from_slice(&empty.to_le_bytes());
+    info[0x22..0x24].copy_from_slice(&until.to_le_bytes());
+    std::ptr::copy_nonoverlapping(info.as_ptr(), out, info.len());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn factory_x2_creates_a_queue_that_waits_for_submit() {
+        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
+        use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+        let factory_iid = GUID::from_u128(0x62959d11_d45f_4884_a0a3_f7862ea243ae);
+        let queue_iid = GUID::from_u128(0x3c02cb0c_c050_4195_99a1_a1ce94ba33c5);
+        let name = crate::pe::ImportName::Name { hint: 0, name: "DStorageGetFactory".into() };
+        assert_eq!(crate::resolver::classify(DLL, &name), crate::resolver::Source::Hle(DLL.into()));
+        let f = crate::resolver::resolve_import(DLL, &name, "synthetic-storage-x2", false);
+        let get_factory: unsafe extern "system" fn(*const GUID, *mut *mut c_void) -> HRESULT = unsafe { std::mem::transmute(f) };
+        unsafe {
+            let mut factory = std::ptr::null_mut();
+            assert_eq!(get_factory(&factory_iid, &mut factory), S_OK);
+            let fv = *(factory as *const *const usize);
+            let staging_size: unsafe extern "system" fn(*mut c_void, u32) -> HRESULT = std::mem::transmute(*fv.add(8));
+            assert_eq!(staging_size(factory, 32 << 20), S_OK);
+            let create: unsafe extern "system" fn(*mut c_void, *const u8, *const GUID, *mut *mut c_void) -> HRESULT = std::mem::transmute(*fv.add(10));
+            let mut desc = [0u8; 0x20];
+            desc[0] = 1;
+            desc[8] = 4;
+            desc[10] = 2;
+            desc[0x18] = 2;
+            let mut q = std::ptr::null_mut();
+            assert_eq!(create(factory, desc.as_ptr(), &queue_iid, &mut q), E_INVALIDARG);
+            assert!(q.is_null());
+            desc[0x18] = 1;
+            assert_eq!(create(factory, desc.as_ptr(), &queue_iid, &mut q), S_OK);
+            let qv = *(q as *const *const usize);
+            let enqueue: unsafe extern "system" fn(*mut c_void, *const u8) = std::mem::transmute(*qv.add(3));
+            let submit: unsafe extern "system" fn(*mut c_void) = std::mem::transmute(*qv.add(6));
+            let enqueue_event: unsafe extern "system" fn(*mut c_void, HANDLE) = std::mem::transmute(*qv.add(12));
+            let query1: unsafe extern "system" fn(*mut c_void, *mut u8) = std::mem::transmute(*qv.add(13));
+            let signal = CreateEventW(std::ptr::null(), 0, 0, std::ptr::null());
+            assert!(!signal.is_null());
+            let payload = b"queue X2";
+            let mut dest = [0u8; 8];
+            let req = request(SOURCE_MEMORY_BIT, dest.as_mut_ptr() as u64, 8, payload.as_ptr() as u64, 0, 8);
+            enqueue(q, req.as_ptr());
+            enqueue_event(q, signal);
+            let mut info = [0u8; 0x28];
+            query1(q, info.as_mut_ptr());
+            assert_eq!(info[..0x20], desc);
+            assert_eq!(info[0x20..0x24], [1, 0, 0, 0]);
+            assert_eq!(WaitForSingleObject(signal, 50), WAIT_TIMEOUT);
+            submit(q);
+            assert_eq!(WaitForSingleObject(signal, 5000), WAIT_OBJECT_0);
+            assert_eq!(&dest, payload);
+            queue_close(q);
+            queue_release(q);
+            CloseHandle(signal);
+        }
+    }
 
     fn request(options: u64, dst: u64, dst_size: u32, src: u64, offset: u64, src_size: u32) -> [u8; REQUEST_BYTES] {
         let mut b = [0u8; REQUEST_BYTES];
