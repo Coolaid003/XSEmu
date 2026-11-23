@@ -30,6 +30,10 @@ struct SystemOsVersionInfo {
 #[link(name = "xmem", kind = "raw-dylib")]
 extern "system" {
     fn XMemGetWorkingSetStatistics(flags: u32, stats: *mut u64) -> i32;
+    #[cfg(target_env = "msvc")]
+    fn XMemAllocDefault(size: usize, attrs: u64) -> *mut c_void;
+    #[cfg(target_env = "msvc")]
+    fn XMemFreeDefault(p: *mut c_void, attrs: u64);
     fn XMemAllocatePhysicalPages(attrs: u64, count: *mut usize, pages: *mut u64) -> i32;
     fn XMemMapPhysicalPages(va: *mut c_void, count: usize, pages: *mut u64) -> *mut c_void;
     fn XMemFreePhysicalPages(count: usize, pages: *mut u64) -> i32;
@@ -207,6 +211,50 @@ macro_rules! ensure {
 }
 
 static FLAG: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_env = "msvc")]
+mod xmem_hooks {
+    use super::*;
+
+    const TEST_ATTRS: u64 = 0x1234;
+    static ALLOC: AtomicUsize = AtomicUsize::new(0);
+    static FREE: AtomicUsize = AtomicUsize::new(0);
+
+    #[repr(C)]
+    pub struct Hooks {
+        alloc: unsafe extern "system" fn(usize, u64) -> *mut c_void,
+        free: unsafe extern "system" fn(*mut c_void, u64),
+    }
+
+    #[no_mangle]
+    pub static __XMemAllocationHooks__: Hooks = Hooks { alloc, free };
+
+    unsafe extern "system" fn alloc(size: usize, attrs: u64) -> *mut c_void {
+        if attrs == TEST_ATTRS {
+            ALLOC.store(size, Ordering::Relaxed);
+        }
+        XMemAllocDefault(size, attrs)
+    }
+
+    unsafe extern "system" fn free(p: *mut c_void, attrs: u64) {
+        if attrs == TEST_ATTRS {
+            FREE.store(p as usize, Ordering::Relaxed);
+        }
+        XMemFreeDefault(p, attrs);
+    }
+
+    pub fn verify() -> Result<(), String> {
+        unsafe {
+            let p = XMemAlloc(128, TEST_ATTRS);
+            ensure!(!p.is_null(), "allocation failed");
+            XMemFree(p, TEST_ATTRS);
+            ensure!(ALLOC.load(Ordering::Relaxed) == 128, "exported allocation hook did not receive the request");
+            ensure!(FREE.load(Ordering::Relaxed) == p as usize, "exported free hook did not receive the allocation");
+        }
+        Ok(())
+    }
+}
+
 unsafe extern "system" fn set_flag(ctx: *mut c_void, canceled: bool) {
     if !canceled {
         FLAG.fetch_add(ctx as usize, Ordering::SeqCst);
@@ -268,6 +316,9 @@ fn main() {
         ensure!(v.major >= 10, "os major {}", v.major);
         Ok(())
     });
+
+    #[cfg(target_env = "msvc")]
+    check("xmem: exported allocation hooks", xmem_hooks::verify);
 
     check("kernelx: XMemAlloc alignment + zeroing", || unsafe {
         let attrs = 8u64 << 24; // 256-byte alignment, heap

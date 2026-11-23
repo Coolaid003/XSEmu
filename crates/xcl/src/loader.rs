@@ -13,7 +13,7 @@ use windows_sys::Win32::System::Memory::{
 };
 
 use crate::modules::{self, MappedModule};
-use crate::pe::{self, Layout, OwnedExports, Pe};
+use crate::pe::{self, ExportTarget, Layout, OwnedExports, Pe};
 use crate::resolver;
 
 static CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -222,7 +222,34 @@ fn map_image_ex(path: &Path, is_main: bool) -> Result<Arc<MappedModule>, String>
         let len = (s.mapped_size() as usize).min(size.saturating_sub(s.va as usize));
         unsafe { crate::eh::hook_gs_failure(base + s.va as usize, len, &name) };
     }
+    if is_main {
+        bind_xmem_hooks(&module, &pe.sections);
+    }
     Ok(module)
+}
+
+fn bind_xmem_hooks(module: &MappedModule, sections: &[pe::Section]) {
+    let Some(export) = module.exports.by_name.get("__XMemAllocationHooks__") else { return };
+    let in_section = |offset: usize, len: usize, flag: u32| {
+        offset.checked_add(len).is_some_and(|end| {
+            end <= module.size && sections.iter().any(|s| {
+                s.characteristics & flag != 0 && offset >= s.va as usize && end - s.va as usize <= s.mapped_size() as usize
+            })
+        })
+    };
+    if let ExportTarget::Rva(rva) = *export {
+        let offset = rva as usize;
+        if in_section(offset, std::mem::size_of::<[usize; 2]>(), pe::SCN_MEM_READ) {
+            let [alloc, free] = unsafe { ((module.base + offset) as *const [usize; 2]).read_unaligned() };
+            let executable = |addr: usize| addr.checked_sub(module.base).is_some_and(|rva| in_section(rva, 1, pe::SCN_MEM_EXECUTE));
+            if executable(alloc) && executable(free) {
+                unsafe { crate::hle::kernelx::XMemSetAllocationHooks(alloc, free) };
+                crate::xlog_info!("{}: bound exported XMem allocation hooks", module.name);
+                return;
+            }
+        }
+    }
+    crate::xlog_warn!("{}: ignoring invalid XMem allocation hooks export", module.name);
 }
 
 unsafe fn tls_install(m: &MappedModule, template: usize, len: usize, total: u64, index_ptr: *mut u32) -> Result<(), String> {

@@ -9,6 +9,7 @@ publish = false
 [[bin]]
 name = "xcl_testtitle"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 # zlib for the synthetic retail-format console shader (XBCH)
