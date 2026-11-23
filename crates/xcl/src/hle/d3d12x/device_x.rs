@@ -684,6 +684,19 @@ pub(super) unsafe extern "system" fn get_resource_allocation_info_x(a: *mut c_vo
     ret
 }
 
+pub(super) unsafe extern "system" fn get_custom_heap_properties_x(a: *mut c_void, b: *mut c_void, mask: u32, heap: D3D12_HEAP_TYPE) -> *mut D3D12_HEAP_PROPERTIES {
+    let device = real::device_raw();
+    let (this, ret) = if a == device || (b != device && real::is_adopted(a)) { (a, b) } else { (b, a) };
+    let ret = ret.cast::<D3D12_HEAP_PROPERTIES>();
+    if ret.is_null() || !real::is_adopted(this) {
+        return std::ptr::null_mut();
+    }
+    let pc: unsafe extern "system" fn(*mut c_void, *mut D3D12_HEAP_PROPERTIES, u32, D3D12_HEAP_TYPE) =
+        std::mem::transmute(real::orig_fn(this, 26));
+    pc(this, ret, mask, heap);
+    ret
+}
+
 /// Resources the title placed at an address an earlier one was placed at: on the console they
 /// share that memory (aliasing – transient render targets reuse it). Logged (first 16).
 fn note_alias(va: usize, x: &[u8; 0x38]) {

@@ -754,6 +754,7 @@ fn console_slots(kind: Kind) -> Vec<(usize, usize)> {
                 (0, dev_qi_x as usize),
                 (8, x::create_command_queue_x as usize),
                 (25, x::get_resource_allocation_info_x as usize),
+                (26, x::get_custom_heap_properties_x as usize),
                 (29, dev_create_placed_resource_x as usize),
                 // CreateCommittedResource at its PC index too (XDefiant): console code uses the
                 // buffer's GPU address as a CPU pointer – it goes into unified memory
@@ -3912,6 +3913,37 @@ mod cache_report_tests {
             decoded.dxil_cache,
             crate::gpu::recomp::dxc::CacheStats::default()
         );
+    }
+}
+
+#[cfg(test)]
+mod device_abi_tests {
+    use super::*;
+
+    #[test]
+    fn custom_heap_properties_preserve_both_return_abis() {
+        let method = console_slots(Kind::Device).into_iter().find_map(|(slot, f)| (slot == 26).then_some(f))
+            .expect("console GetCustomHeapProperties adapter at slot 26");
+        let console: unsafe extern "system" fn(*mut c_void, *mut c_void, u32, D3D12_HEAP_TYPE) -> *mut D3D12_HEAP_PROPERTIES =
+            unsafe { std::mem::transmute(method) };
+        assert_eq!(super::super::backend(), super::super::Backend::Real);
+        unsafe {
+            let raw = device_raw();
+            let dev = ID3D12Device::from_raw_borrowed(&raw).expect("D3D12 device");
+            assert_ne!(*vt(raw).add(26), orig_fn(raw, 26), "console dispatch slot is installed");
+            for heap in [D3D12_HEAP_TYPE_DEFAULT, D3D12_HEAP_TYPE_UPLOAD, D3D12_HEAP_TYPE_READBACK] {
+                let native = dev.GetCustomHeapProperties(1, heap);
+                assert_eq!(native.Type, D3D12_HEAP_TYPE_CUSTOM);
+                let mut output = std::mem::MaybeUninit::<D3D12_HEAP_PROPERTIES>::uninit();
+                let ret = output.as_mut_ptr();
+                assert_eq!(console(ret.cast(), raw, 1, heap), ret);
+                assert_eq!(output.assume_init(), native);
+                let mut output = std::mem::MaybeUninit::<D3D12_HEAP_PROPERTIES>::uninit();
+                let ret = output.as_mut_ptr();
+                assert_eq!(console(raw, ret.cast(), 1, heap), ret);
+                assert_eq!(output.assume_init(), native);
+            }
+        }
     }
 }
 
