@@ -464,6 +464,18 @@ pub unsafe extern "system" fn XMemFree(p: *mut c_void, attrs: u64) {
 /// DWORD protect)`: VirtualAlloc with an allocator's attributes – a graphics memory type is
 /// GPU-visible memory (as MEM_GRAPHICS: sparse VRAM pool).
 pub unsafe extern "system" fn XMemVirtualAlloc(addr: *const c_void, size: usize, t: u32, attrs: u64, p: u32) -> *mut c_void {
+    let placeholder = t & (mem::MEM_RESERVE_PLACEHOLDER | mem::MEM_REPLACE_PLACEHOLDER);
+    if placeholder != 0 {
+        return mem::VirtualAlloc2(
+            thr::GetCurrentProcess(),
+            addr,
+            size,
+            (t & STD_ALLOC_MASK) | placeholder,
+            sanitize_protect(p),
+            std::ptr::null_mut(),
+            0,
+        );
+    }
     let a = XAllocAttrs::decode(attrs);
     let mut t = if a.memory_type != 0 { t | MEM_GRAPHICS } else { t };
     if a.memory_type != 0 && a.page_size == 2 {
@@ -721,6 +733,10 @@ unsafe fn unmap_away(away: &mut Away, at: usize) {
     }
 }
 
+fn mapped_page_readwrite(protect: u32) -> bool {
+    protect & !(mem::PAGE_NOCACHE | mem::PAGE_WRITECOMBINE) == mem::PAGE_READWRITE
+}
+
 unsafe fn flush_away_range(away: Option<&Away>, start: usize, end: usize, allocation: Option<usize>) -> Vec<usize> {
     let Some(away) = away.filter(|_| start < end) else { return Vec::new() };
     let first = start & !(PHYS_PAGE - 1);
@@ -731,7 +747,7 @@ unsafe fn flush_away_range(away: Option<&Away>, start: usize, end: usize, alloca
         if allocation.is_some_and(|base| !queried || mbi.AllocationBase as usize != base) {
             break;
         }
-        if queried && mbi.State == mem::MEM_COMMIT && mbi.Protect == mem::PAGE_READWRITE
+        if queried && mbi.State == mem::MEM_COMMIT && mapped_page_readwrite(mbi.Protect)
             && at + PHYS_PAGE - mbi.BaseAddress as usize <= mbi.RegionSize
         {
             if let Some(home) = page_home(page) {
@@ -924,7 +940,7 @@ pub unsafe extern "system" fn XMemMapPhysicalPagesScatter(addresses: *const *mut
             let mut mbi: mem::MEMORY_BASIC_INFORMATION = std::mem::zeroed();
             mem::VirtualQuery(at as *const c_void, &mut mbi, std::mem::size_of_val(&mbi)) != 0
                 && (mbi.State == mem::MEM_RESERVE
-                    || (mbi.State == mem::MEM_COMMIT && mbi.Protect == mem::PAGE_READWRITE && away.at.contains_key(&at)))
+                    || (mbi.State == mem::MEM_COMMIT && mapped_page_readwrite(mbi.Protect) && away.at.contains_key(&at)))
                 && end.checked_sub(mbi.BaseAddress as usize).is_some_and(|len| len <= mbi.RegionSize)
         };
         if !reserved {
@@ -1582,6 +1598,42 @@ mod tests {
                 assert_eq!(saved, [0xE5]);
             }
             assert_eq!(XMemFreePhysicalPages(pages.len(), pages.as_mut_ptr()), 1);
+        }
+    }
+
+    #[test]
+    fn xmem_split_and_replace_physical_page_placeholders() {
+        unsafe {
+            let size = 2 * PHYS_PAGE;
+            let base = XMemVirtualAlloc(std::ptr::null(), 2 * size, mem::MEM_RESERVE | mem::MEM_RESERVE_PLACEHOLDER, 7, mem::PAGE_NOACCESS);
+            assert!(!base.is_null(), "reserve placeholder: {}", fnd::GetLastError());
+            let split = VirtualFree(base, size, mem::MEM_RELEASE | mem::MEM_PRESERVE_PLACEHOLDER);
+            if split == 0 {
+                let error = fnd::GetLastError();
+                VirtualFree(base, 0, mem::MEM_RELEASE);
+                panic!("split placeholder: {error}");
+            }
+            let second = base.byte_add(size);
+            for (at, protect) in [(base, 0x1004), (second, 0x1404)] {
+                let flags = MEM_64K_PAGES | mem::MEM_REPLACE_PLACEHOLDER | mem::MEM_RESERVE;
+                assert_eq!(XMemVirtualAlloc(at, size, flags, 0x27, protect), at, "replace placeholder: {}", fnd::GetLastError());
+            }
+            let mut pages = [0u64; 2];
+            let mut count = pages.len();
+            assert_eq!(XMemAllocatePhysicalPages(0, &mut count, pages.as_mut_ptr()), 1);
+            assert_eq!(count, pages.len());
+            assert_eq!(XMemMapPhysicalPages(second, count, pages.as_mut_ptr()), second);
+            second.cast::<u8>().write(0x3a);
+            assert_eq!(XMemMapPhysicalPagesScatter(&second, 1, std::ptr::null()), 1);
+            assert_eq!(XMemMapPhysicalPages(second, count, pages.as_mut_ptr()), second);
+            assert_eq!(second.cast::<u8>().read(), 0x3a);
+            second.cast::<u8>().write(0x4b);
+            assert_eq!(VirtualFree(second, 0, mem::MEM_RELEASE), 1);
+            let mut bytes = [0];
+            assert!(read_physical_pages(&[pages[0] as usize], 0, &mut bytes));
+            assert_eq!(bytes, [0x4b]);
+            assert_eq!(XMemFreePhysicalPages(count, pages.as_mut_ptr()), 1);
+            assert_eq!(VirtualFree(base, 0, mem::MEM_RELEASE), 1);
         }
     }
 
