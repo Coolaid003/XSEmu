@@ -18,6 +18,28 @@ pub const E_NOT_SUFFICIENT_BUFFER: HRESULT = 0x8007_007Au32 as i32;
 pub const E_NOT_FOUND: HRESULT = 0x8007_0490u32 as i32;
 pub const E_NOT_SUPPORTED: HRESULT = 0x8007_0032u32 as i32;
 
+pub(crate) fn memory_is_writable(p: usize, n: usize) -> bool {
+    use windows_sys::Win32::System::Memory::{
+        VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_COMMIT, PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY,
+        PAGE_GUARD, PAGE_READWRITE, PAGE_WRITECOPY,
+    };
+    let Some(end) = p.checked_add(n) else { return false };
+    let mut at = p;
+    while at < end {
+        let mut m: MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe { VirtualQuery(at as *const c_void, &mut m, std::mem::size_of_val(&m)) } == 0 {
+            return false;
+        }
+        let writable = PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+        if m.State != MEM_COMMIT || m.Protect & writable == 0 || m.Protect & PAGE_GUARD != 0 {
+            return false;
+        }
+        let Some(next) = (m.BaseAddress as usize).checked_add(m.RegionSize).filter(|&next| next > at) else { return false };
+        at = next;
+    }
+    true
+}
+
 pub fn hresult_from_win32(code: u32) -> HRESULT {
     if code == 0 {
         0

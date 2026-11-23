@@ -423,6 +423,14 @@ pub fn accepts_allocations() -> bool {
     !UNAVAILABLE.load(Ordering::Acquire)
 }
 
+pub(super) fn reserve_tile_table(bytes: usize) -> Result<(), crate::util::HRESULT> {
+    let mut g = STATE.lock().unwrap();
+    let s = g.as_mut().ok_or(crate::util::E_NOTIMPL)?;
+    let tiles = s.windows.len() * (crate::gpu::uma::WINDOW / TILE);
+    let capacity = tiles.min(bytes.div_ceil(std::mem::size_of::<(usize, TileEntry)>()));
+    s.mapped.try_reserve(capacity.saturating_sub(s.mapped.len())).map_err(|_| crate::util::E_OUTOFMEMORY)
+}
+
 unsafe fn open(dev: &ID3D12Device) -> Vec<(usize, usize, u64)> {
     let Some(u) = crate::gpu::uma::get() else { return Vec::new() };
     let mut out = Vec::new();
@@ -1403,6 +1411,43 @@ pub fn forget_buffer(res: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_memory_configuration_uses_the_live_tile_table() {
+        use crate::resolver::{self, Source};
+        use crate::util::{E_INVALIDARG, E_NOTIMPL};
+
+        let name = crate::pe::ImportName::Name { hint: 0, name: "D3D12ConfigureVirtualMemoryX".into() };
+        assert_eq!(resolver::classify("d3d12_xs.dll", &name), Source::Hle("d3d12_xs.dll".into()));
+        let f = resolver::resolve_import("d3d12_xs.dll", &name, "synthetic-vmem", false);
+        let configure: unsafe extern "system" fn(*mut u64) -> i32 = unsafe { std::mem::transmute(f) };
+        unsafe {
+            let mut config = [34u64 << 32, 0, 0xAB, 0xCD];
+            assert_eq!(configure(std::ptr::null_mut()), E_INVALIDARG);
+            assert_eq!(configure(config.as_mut_ptr()), E_INVALIDARG);
+            assert_eq!(config[2..], [0xAB, 0xCD]);
+            config[0] = (4u64 << 32) | 1;
+            assert_eq!(configure(config.as_mut_ptr()), E_NOTIMPL);
+            assert_eq!(config[2..], [0xAB, 0xCD]);
+
+            config[0] = 4u64 << 32;
+            let result = configure(config.as_mut_ptr());
+            let expected_capacity = (16 << 20) / std::mem::size_of::<(usize, TileEntry)>();
+            if let Some(state) = STATE.lock().unwrap().as_ref() {
+                assert_eq!(result, 0x1000_0000);
+                assert_eq!(config[2..], [0, 0]);
+                assert!(state.mapped.capacity() >= expected_capacity);
+            } else {
+                assert_eq!(result, E_NOTIMPL);
+                assert_eq!(config[2..], [0xAB, 0xCD]);
+                return;
+            }
+            let (at, _) = alloc(TILE, TILE).expect("a backed graphics page");
+            assert!(mapped_ranges().iter().any(|&(start, end)| start <= at && at + TILE <= end));
+            assert!(free(at));
+            assert!(!mapped_ranges().iter().any(|&(start, end)| start <= at && at < end));
+        }
+    }
 
     /// Only the 64-byte chunks the CPU changed are sent again – the rest of the page may hold
     /// what the GPU wrote.

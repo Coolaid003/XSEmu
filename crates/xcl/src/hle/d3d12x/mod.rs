@@ -30,7 +30,7 @@ pub mod vram;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
-use crate::util::{HRESULT, S_OK};
+use crate::util::{HRESULT, E_INVALIDARG, E_NOTIMPL, S_OK};
 
 /// data export: titles pass `&IID_ID3D12Device` to D3D12XboxCreateDevice / QueryInterface
 static IID_ID3D12_DEVICE: windows::core::GUID = windows::core::GUID::from_u128(0x189819f1_1db6_4b57_be54_1821339b85f7);
@@ -45,6 +45,7 @@ fn exports_fns() -> Vec<(&'static str, usize)> {
     crate::hle_exports![
         D3D12CreateDevice,
         D3D12XboxCreateDevice,
+        D3D12ConfigureVirtualMemoryX,
         D3D12GetDebugInterface,
         D3D12SerializeRootSignature,
         D3D12SerializeVersionedRootSignature,
@@ -107,6 +108,35 @@ pub unsafe extern "system" fn D3D12CreateDevice(adapter: *mut c_void, fl: u32, r
         return real::create_device(riid, ppv);
     }
     null::D3D12CreateDevice(adapter, fl, riid, ppv)
+}
+
+#[repr(C)]
+struct VirtualMemoryConfig {
+    flags: u32,
+    page_table_blocks: u32,
+    frame_buffer_preserve_bytes: u32,
+    reserved: u32,
+    outputs: [u64; 2],
+}
+
+unsafe extern "system" fn D3D12ConfigureVirtualMemoryX(config: *mut VirtualMemoryConfig) -> HRESULT {
+    if config.is_null() || !config.is_aligned() || !crate::util::memory_is_writable(config as usize, std::mem::size_of::<VirtualMemoryConfig>()) {
+        return E_INVALIDARG;
+    }
+    let config = &mut *config;
+    if config.flags & !1 != 0 || config.page_table_blocks > 33 || config.reserved != 0 {
+        return E_INVALIDARG;
+    }
+    if config.flags != 0 || config.frame_buffer_preserve_bytes != 0 || backend() != Backend::Real {
+        return E_NOTIMPL;
+    }
+    let bytes = (config.page_table_blocks as usize) << 22;
+    if let Err(hr) = sparse::reserve_tile_table(bytes) {
+        return hr;
+    }
+    config.outputs = [0; 2];
+    crate::xlog_info!("D3D12.X: configured graphics page tracking for {} MiB of requested tables", bytes >> 20);
+    0x1000_0000
 }
 
 pub unsafe extern "system" fn D3D12XboxCreateDevice(adapter: *mut c_void, params: *const c_void, riid: *const c_void, ppv: *mut *mut c_void) -> HRESULT {
