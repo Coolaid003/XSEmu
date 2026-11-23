@@ -12,7 +12,7 @@
 //! `VirtualAlloc` allocation (a reservation with partial commit is rejected); up to
 //! 4095 MiB works (exactly 4 GiB is rejected), opening 4 GiB takes ~0.5 s.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, OnceLock};
 
 use windows_sys::Win32::System::Memory::{VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE};
@@ -63,6 +63,7 @@ struct Inner {
     free: BTreeMap<usize, usize>,
     /// live allocations: offset → length
     used: BTreeMap<usize, usize>,
+    reserved: BTreeSet<usize>,
 }
 
 /// Carve an `align`-aligned block of `size` bytes from `free` within `[lo_bound, hi_bound)`.
@@ -485,6 +486,16 @@ impl Uma {
         g.used.range(..=off).next_back().is_some_and(|(&o, &l)| off < o + l)
     }
 
+    pub fn committed_reservation(&self, p: usize) -> Option<(usize, usize)> {
+        if !self.is_committed(p) {
+            return None;
+        }
+        let off = p - self.base;
+        let g = self.inner.lock().unwrap();
+        let (&start, &size) = g.used.range(..=off).next_back()?;
+        (off - start < size && g.reserved.contains(&start)).then_some((self.base + start, size))
+    }
+
     /// Zeroed block of `size` bytes aligned to `align` (at least 64 KiB), first fit (window 0
     /// first).
     #[track_caller]
@@ -547,6 +558,9 @@ impl Uma {
             g.free.insert(at + size, start + len - at - size);
         }
         g.used.insert(at, size);
+        if !zero {
+            g.reserved.insert(at);
+        }
         let used = if Self::tracing() && size >= 1 << 20 { Some(g.used.values().sum()) } else { None };
         drop(g);
         let p = (self.base + at) as *mut u8;
@@ -575,6 +589,7 @@ impl Uma {
         let mut g = self.inner.lock().unwrap();
         let off = p - self.base;
         let Some(orig) = g.used.remove(&off) else { return false };
+        g.reserved.remove(&off);
         let (mut start, mut len) = (off, orig);
         // merge with the free neighbours
         if let Some((&o, &l)) = g.free.range(..off).next_back() {
