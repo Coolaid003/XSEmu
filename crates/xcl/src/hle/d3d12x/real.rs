@@ -33,7 +33,7 @@ use windows_sys::core::GUID;
 
 use super::layout::{self, Iface};
 use crate::stubs;
-use crate::util::{HRESULT, E_INVALIDARG, E_NOINTERFACE, S_FALSE, S_OK};
+use crate::util::{HRESULT, E_INVALIDARG, E_NOINTERFACE, E_OUTOFMEMORY, S_FALSE, S_OK};
 
 const DLL: &str = "d3d12_xs.dll";
 const EXTRA_SLOTS: usize = 64;
@@ -881,7 +881,7 @@ fn console_slots(kind: Kind) -> Vec<(usize, usize)> {
 /// takes the handle in rax (only `this` passed); the PC methods return it through a hidden
 /// pointer
 unsafe extern "system" fn heap_cpu_start_x(this: *mut c_void) -> u64 {
-    if let Some(p) = super::console_heap::start(this as usize) {
+    if let Some(p) = super::console_heap::cpu_start(this as usize) {
         return p;
     }
     let f: unsafe extern "system" fn(*mut c_void, *mut u64) -> *mut u64 = std::mem::transmute(orig_fn(this, 9));
@@ -919,7 +919,11 @@ unsafe extern "system" fn dev_create_descriptor_heap_x(this: *mut c_void, desc: 
     let flags = if shared { d[2] & !(D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE.0 as u32) } else { d[2] };
     let pc = [d[0], pc_n, flags, d[3]];
     let hr = dev_create_descriptor_heap(this, pc.as_ptr() as usize, riid, ppv);
-    if hr >= 0 {
+    if hr >= 0 && !ppv.is_null() && !(*ppv).is_null() {
+        let discard = |e| {
+            drop(ID3D12DescriptorHeap::from_raw(std::mem::replace(&mut *ppv, std::ptr::null_mut())));
+            e
+        };
         let raw = *ppv;
         let heap = ID3D12DescriptorHeap::from_raw_borrowed(&raw).unwrap();
         let dev = ID3D12Device::from_raw_borrowed(&this).unwrap();
@@ -946,8 +950,17 @@ unsafe extern "system" fn dev_create_descriptor_heap_x(this: *mut c_void, desc: 
                 dev.CreateSampler(&zero, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: (cpu + k * inc as u64) as usize });
             }
         }
-        if !super::console_heap::register(raw as usize, d[1], cpu, gpu, inc, sampler, shared, visible) {
+        let backing = if !sampler && visible {
+            match super::console_heap::CpuBacking::allocate(d[1]) {
+                Ok(b) => b,
+                Err(e) => return discard(e),
+            }
+        } else {
+            None
+        };
+        if !super::console_heap::register(raw as usize, d[1], cpu, gpu, inc, sampler, shared, visible, backing) {
             crate::xlog_warn!("console descriptor heap: no room in UMA for {} slots", d[1]);
+            return discard(E_OUTOFMEMORY);
         }
     }
     hr
@@ -4106,7 +4119,7 @@ mod readback_routing_tests {
             // Console-slot paths (`copy_console_slots` invoked from both Simple and Ranges)
             let heap_obj = 0x5555_DEADusize;
             if crate::gpu::uma::get().is_some()
-                && super::super::console_heap::register(heap_obj, 4, 0x10_0000, 0, 32, false, false, false)
+                && super::super::console_heap::register(heap_obj, 4, 0x10_0000, 0, 32, false, false, false, None)
             {
                 let start = super::super::console_heap::start(heap_obj).unwrap();
                 let dst_h = start + super::super::console_heap::SLOT as u64;

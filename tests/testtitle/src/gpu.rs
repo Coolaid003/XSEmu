@@ -1763,6 +1763,28 @@ pub fn descriptor_heaps_after_a_large_graphics_reservation() -> Result<(), Strin
     }
 }
 
+#[cfg(target_env = "msvc")]
+pub fn title_backed_view_descriptor_heap(backing: usize) -> Result<(), String> {
+    unsafe {
+        let dev = device()?;
+        let heap: ID3D12DescriptorHeap = dev.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC {
+            Type: D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+            NumDescriptors: 8,
+            Flags: D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE,
+            NodeMask: 0,
+        }).map_err(e)?;
+        let vt = *(heap.as_raw() as *const *const usize);
+        let start = |slot| {
+            let f: unsafe extern "system" fn(*mut c_void) -> u64 = transmute_copy(&(*vt.add(slot)));
+            f(heap.as_raw())
+        };
+        ensure!(start(9) as usize == backing, "CPU handle {:#x} != callback memory {backing:#x}", start(9));
+        ensure!(start(10) != start(9) && (start(10) >> 32) & 3 == 0, "GPU handle does not name the shader window: {:#x}", start(10));
+        crate::XMemSetAllocationHooks(0, 0);
+        Ok(())
+    }
+}
+
 /// Committed console textures fill the coherent window only up to the room it keeps: more of
 /// them than fit (400 MB of 512x512 RGBA8, up to the room to the MB; one retail title makes
 /// 2.2 GB) are still created – as PC resources, also with console-only flag bits – and a

@@ -202,6 +202,7 @@ pub(super) unsafe fn refresh(queue: *mut c_void) {
 
 unsafe fn refresh_once(queue: *mut c_void) {
     let Some(u) = crate::gpu::uma::get() else { return };
+    super::console_heap::refresh_backing();
     let sparse = u.has_sparse();
     if !sparse && TEXTURES_LEN.load(Ordering::Relaxed) == 0 {
         return;

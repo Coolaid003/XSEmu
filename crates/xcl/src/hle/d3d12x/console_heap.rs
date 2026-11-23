@@ -28,14 +28,69 @@
 use std::sync::Mutex;
 
 use windows::Win32::Graphics::Direct3D12::*;
+use windows_sys::Win32::System::Memory as mem;
+
+use crate::hle::kernelx::{xmem_allocation_hooks, XMemFreeFn};
+use crate::util::{HRESULT, E_INVALIDARG, E_OUTOFMEMORY};
 
 /// bytes of a CBV/SRV/UAV slot (T# / V#) and of a sampler slot (S#)
 pub const SLOT: u32 = 32;
 pub const SAMPLER_SLOT: u32 = 16;
 
+const VIEW_HEAP_ATTRIBUTES: u64 = (5 << 24) | (128 << 16) | 4;
+
+pub(crate) struct CpuBacking {
+    base: usize,
+    free: XMemFreeFn,
+}
+
+impl CpuBacking {
+    #[cfg(test)]
+    pub(crate) fn for_test(base: usize, free: XMemFreeFn) -> Self {
+        Self { base, free }
+    }
+
+    pub(super) unsafe fn allocate(n: u32) -> Result<Option<Self>, HRESULT> {
+        let Some((alloc, free)) = xmem_allocation_hooks() else { return Ok(None) };
+        let bytes = n.checked_mul(SLOT).ok_or(E_INVALIDARG)? as usize;
+        let base = alloc(bytes, VIEW_HEAP_ATTRIBUTES) as usize;
+        if base == 0 {
+            return Err(E_OUTOFMEMORY);
+        }
+        let backing = Self { base, free };
+        if !base.is_multiple_of(SLOT as usize) || !backing.writable(bytes) {
+            return Err(E_INVALIDARG);
+        }
+        Ok(Some(backing))
+    }
+
+    fn writable(&self, bytes: usize) -> bool {
+        let Some(end) = self.base.checked_add(bytes) else { return false };
+        let mut at = self.base;
+        while at < end {
+            let mut mbi: mem::MEMORY_BASIC_INFORMATION = unsafe { std::mem::zeroed() };
+            if unsafe { mem::VirtualQuery(at as *const _, &mut mbi, std::mem::size_of_val(&mbi)) } == 0
+                || mbi.State != mem::MEM_COMMIT
+                || mbi.Protect & !(mem::PAGE_NOCACHE | mem::PAGE_WRITECOMBINE) != mem::PAGE_READWRITE
+            {
+                return false;
+            }
+            at = mbi.BaseAddress as usize + mbi.RegionSize;
+        }
+        true
+    }
+}
+
+impl Drop for CpuBacking {
+    fn drop(&mut self) {
+        unsafe { (self.free)(self.base as *mut _, VIEW_HEAP_ATTRIBUTES) };
+    }
+}
+
 struct Heap {
     obj: usize,
     shadow: usize,
+    backing: Option<CpuBacking>,
     n: u32,
     pc_cpu: u64,
     /// 0: not shader visible
@@ -52,6 +107,10 @@ struct Heap {
 }
 
 impl Heap {
+    fn cpu_base(&self) -> usize {
+        self.backing.as_ref().map_or(self.shadow, |b| b.base)
+    }
+
     fn slot_bytes(&self) -> u32 {
         if self.sampler {
             SAMPLER_SLOT
@@ -205,9 +264,9 @@ pub fn in_global(obj: usize) -> bool {
 /// visible) with 2·`n` view descriptors or `n` samplers: give it `n` console slots in
 /// unified memory. `shared`: its views go to the shared heap (`shared_heap`), a page at a
 /// time as slots are used; `visible`: what the title asked for.
-pub fn register(obj: usize, n: u32, pc_cpu: u64, pc_gpu: u64, inc: u32, sampler: bool, shared: bool, visible: bool) -> bool {
+pub(crate) fn register(obj: usize, n: u32, pc_cpu: u64, pc_gpu: u64, inc: u32, sampler: bool, shared: bool, visible: bool, backing: Option<CpuBacking>) -> bool {
     let Some(u) = crate::gpu::uma::get() else { return false };
-    let bytes = n.max(1) * if sampler { SAMPLER_SLOT } else { SLOT };
+    let Some(bytes) = n.max(1).checked_mul(if sampler { SAMPLER_SLOT } else { SLOT }) else { return false };
     // Descriptor tables are 32-bit console addresses (high dword 0): must live in window 0.
     // On the sparse-window path, `sparse::alloc_in(0, ...)` commits fresh zeroed pages so we
     // avoid touching unused pages with `write_bytes` (which would mark them dirty for write-watch).
@@ -234,7 +293,7 @@ pub fn register(obj: usize, n: u32, pc_cpu: u64, pc_gpu: u64, inc: u32, sampler:
         }
     }
     let pages = if shared && !sampler && GLOBAL.lock().unwrap().is_some() { vec![UNMAPPED; n.div_ceil(PAGE_SLOTS).max(1) as usize] } else { Vec::new() };
-    HEAPS.lock().unwrap().push(Heap { obj, shadow: p as usize, n, pc_cpu, pc_gpu, inc, sampler, pages, visible, sparse });
+    HEAPS.lock().unwrap().push(Heap { obj, shadow: p as usize, backing, n, pc_cpu, pc_gpu, inc, sampler, pages, visible, sparse });
     true
 }
 
@@ -245,6 +304,10 @@ pub fn unregister(obj: usize) {
         heaps.iter().position(|h| h.obj == obj).map(|i| heaps.swap_remove(i))
     };
     if let Some(h) = gone {
+        if let Some(res) = RES.lock().unwrap().as_mut() {
+            let end = h.shadow + h.n as usize * h.slot_bytes() as usize;
+            res.retain(|&at, _| at < h.shadow || at >= end);
+        }
         for (p, &f) in h.pages.iter().enumerate().filter(|&(_, &f)| f != UNMAPPED) {
             release_global(f, page_descriptors(h.n, p as u32));
         }
@@ -256,15 +319,34 @@ pub fn unregister(obj: usize) {
     }
 }
 
-/// Start of the console slots of heap `obj` (CPU handle = GPU handle on the console).
+/// Start of the console slots of heap `obj` in the GPU's descriptor window.
 pub fn start(obj: usize) -> Option<u64> {
     HEAPS.lock().unwrap().iter().find(|h| h.obj == obj).map(|h| h.shadow as u64)
+}
+
+pub(crate) fn cpu_start(obj: usize) -> Option<u64> {
+    HEAPS.lock().unwrap().iter().find(|h| h.obj == obj).map(|h| h.cpu_base() as u64)
+}
+
+pub(super) unsafe fn refresh_backing() {
+    for h in HEAPS.lock().unwrap().iter().filter(|h| h.backing.is_some()) {
+        let bytes = h.n as usize * h.slot_bytes() as usize;
+        for off in (0..bytes).step_by(4096) {
+            let len = (bytes - off).min(4096);
+            let src = std::slice::from_raw_parts((h.cpu_base() + off) as *const u8, len);
+            let dst = (h.shadow + off) as *mut u8;
+            if src != std::slice::from_raw_parts(dst, len) {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst, len);
+            }
+        }
+    }
 }
 
 /// A console slot: where its descriptor goes and its PC descriptors.
 #[derive(Clone, Copy, Debug)]
 pub struct Slot {
     pub at: usize,
+    gpu_at: usize,
     /// views: PC heap index of the SRV (the UAV is at + 1); samplers: of the sampler
     pub index: u32,
     /// PC CPU handles of the SRV / UAV where views are made (the title's heap)
@@ -282,11 +364,22 @@ pub struct Slot {
 /// The slot behind a console CPU handle (None: not one of XCL's console heaps). A view slot
 /// of a heap in the shared heap gets its page's place there now if the page has none yet.
 pub fn slot(cpu: u64) -> Option<Slot> {
+    find_slot(cpu, Heap::cpu_base)
+}
+
+pub(super) fn gpu_slot(gpu: u64) -> Option<Slot> {
+    find_slot(gpu, |h| h.shadow)
+}
+
+fn find_slot(handle: u64, base: impl Fn(&Heap) -> usize) -> Option<Slot> {
     let mut heaps = HEAPS.lock().unwrap();
-    let h = heaps.iter_mut().find(|h| cpu >= h.shadow as u64 && cpu < (h.shadow + (h.n * h.slot_bytes()) as usize) as u64)?;
-    let k = ((cpu - h.shadow as u64) / h.slot_bytes() as u64) as u32;
+    let h = heaps.iter_mut().find(|h| handle.wrapping_sub(base(h) as u64) < h.n as u64 * h.slot_bytes() as u64)?;
+    let k = ((handle - base(h) as u64) / h.slot_bytes() as u64) as u32;
+    let off = (k * h.slot_bytes()) as usize;
+    let at = h.cpu_base() + off;
+    let gpu_at = h.shadow + off;
     if h.sampler {
-        return Some(Slot { at: h.shadow + (k * SAMPLER_SLOT) as usize, index: k, pc_srv: h.pc_cpu + (k * h.inc) as u64, pc_uav: 0, pc_gpu_uav: 0, sampler: true, shared_srv: 0, k });
+        return Some(Slot { at, gpu_at, index: k, pc_srv: h.pc_cpu + (k * h.inc) as u64, pc_uav: 0, pc_gpu_uav: 0, sampler: true, shared_srv: 0, k });
     }
     let uav = ((2 * k + 1) * h.inc) as u64;
     let shared = page_of(h, k).and_then(|(first, k0)| {
@@ -296,7 +389,7 @@ pub fn slot(cpu: u64) -> Option<Slot> {
         Some((i, g.gpu + (i as u64 + 1) * g.inc as u64, g.cpu + i as u64 * g.inc as u64))
     });
     let (index, pc_gpu_uav, shared_srv) = shared.unwrap_or((2 * k, if h.pc_gpu == 0 { 0 } else { h.pc_gpu + uav }, 0));
-    Some(Slot { at: h.shadow + (k * SLOT) as usize, index, pc_srv: h.pc_cpu + (2 * k * h.inc) as u64, pc_uav: h.pc_cpu + uav, pc_gpu_uav, sampler: false, shared_srv, k })
+    Some(Slot { at, gpu_at, index, pc_srv: h.pc_cpu + (2 * k * h.inc) as u64, pc_uav: h.pc_cpu + uav, pc_gpu_uav, sampler: false, shared_srv, k })
 }
 
 /// The view just made in slot `s` (its SRV, or with `uav` its UAV) goes to the shared heap.
@@ -338,9 +431,9 @@ pub fn note_resource(s: &Slot, res: usize) {
     let mut g = RES.lock().unwrap();
     let m = g.get_or_insert_with(Default::default);
     if res == 0 {
-        m.remove(&s.at);
+        m.remove(&s.gpu_at);
     } else {
-        m.insert(s.at, res);
+        m.insert(s.gpu_at, res);
     }
 }
 
@@ -368,7 +461,7 @@ pub fn copy_words(src: &Slot, dst: &Slot) {
     }
     write(dst, &w[..n]);
     if !src.sampler {
-        note_resource(dst, resource_at(src.at).unwrap_or(0));
+        note_resource(dst, resource_at(src.gpu_at).unwrap_or(0));
     }
 }
 
@@ -409,7 +502,7 @@ pub fn census() {
             _ => 2 * k,
         };
         for k in 0..h.n {
-            let w = unsafe { std::slice::from_raw_parts((h.shadow + (k * SLOT) as usize) as *const u32, 8) };
+            let w = unsafe { std::slice::from_raw_parts((h.cpu_base() + (k * SLOT) as usize) as *const u32, 8) };
             if w.iter().all(|&x| x == 0) {
                 empty += 1;
             } else if w[3] >> 28 >= 8 {
@@ -438,7 +531,7 @@ pub fn census() {
 /// is in one of the console heaps.
 pub fn words_at(addr32: u32) -> Option<[u32; 8]> {
     let u = crate::gpu::uma::get()?;
-    let s = slot((u.base() + addr32 as usize) as u64)?;
+    let s = gpu_slot((u.base() + addr32 as usize) as u64)?;
     let mut w = [0u32; 8];
     unsafe { std::ptr::copy_nonoverlapping(s.at as *const u32, w.as_mut_ptr(), if s.sampler { 4 } else { 8 }) };
     Some(w)
@@ -469,8 +562,8 @@ mod tests {
         let Some(u) = crate::gpu::uma::get() else { return };
         let rel = |p: u64| (p as usize - u.base()) as u32;
         // views: 4 slots over a PC heap at 0x1000 (increment 32, GPU 0x5000); samplers: 2 at 0x9000
-        assert!(register(0xA1, 4, 0x1000, 0x5000, 32, false, false, true));
-        assert!(register(0xA2, 2, 0x9000, 0, 16, true, false, true));
+        assert!(register(0xA1, 4, 0x1000, 0x5000, 32, false, false, true, None));
+        assert!(register(0xA2, 2, 0x9000, 0, 16, true, false, true, None));
         let (v, sm) = (start(0xA1).unwrap(), start(0xA2).unwrap());
         assert_eq!(u.window_of(v as usize), Some(0), "view heap must live in window 0 (32-bit table addressing)");
         assert_eq!(u.window_of(sm as usize), Some(0), "sampler heap must live in window 0");
@@ -526,7 +619,7 @@ mod tests {
         const N: u32 = 73_727;
         let objs: Vec<usize> = (0..8).map(|i| 0xB000 + i).collect();
         for &o in &objs {
-            assert!(register(o, N, 0x10_0000, 0, 32, false, true, true));
+            assert!(register(o, N, 0x10_0000, 0, 32, false, true, true, None));
             assert!(in_global(o));
         }
         let mut seen = Vec::new();
@@ -551,7 +644,7 @@ mod tests {
         // a heap smaller than a page takes 2 descriptors per slot, as it did when a heap's
         // whole range was reserved (a title with many small heaps must not fill the shared heap)
         assert_eq!((page_descriptors(4, 0), page_descriptors(N, 0), page_descriptors(N, N / PAGE_SLOTS)), (8, 2 * PAGE_SLOTS, 2 * (N % PAGE_SLOTS)));
-        assert!(register(0xB100, 4, 0x10_0000, 0, 32, false, true, true) && register(0xB101, 4, 0x20_0000, 0, 32, false, true, true));
+        assert!(register(0xB100, 4, 0x10_0000, 0, 32, false, true, true, None) && register(0xB101, 4, 0x20_0000, 0, 32, false, true, true, None));
         let (a, b) = (slot(start(0xB100).unwrap()).unwrap(), slot(start(0xB101).unwrap()).unwrap());
         assert!(a.shared_srv != 0 && b.shared_srv != 0);
         assert_eq!(a.index.abs_diff(b.index), 8, "two heaps of 4 slots lie 8 descriptors apart");

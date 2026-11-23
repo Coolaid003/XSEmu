@@ -34,6 +34,8 @@ extern "system" {
     fn XMemAllocDefault(size: usize, attrs: u64) -> *mut c_void;
     #[cfg(target_env = "msvc")]
     fn XMemFreeDefault(p: *mut c_void, attrs: u64);
+    #[cfg(target_env = "msvc")]
+    fn XMemSetAllocationHooks(alloc: usize, free: usize);
     fn XMemAllocatePhysicalPages(attrs: u64, count: *mut usize, pages: *mut u64) -> i32;
     fn XMemMapPhysicalPages(va: *mut c_void, count: usize, pages: *mut u64) -> *mut c_void;
     fn XMemFreePhysicalPages(count: usize, pages: *mut u64) -> i32;
@@ -219,6 +221,8 @@ mod xmem_hooks {
     const TEST_ATTRS: u64 = 0x1234;
     static ALLOC: AtomicUsize = AtomicUsize::new(0);
     static FREE: AtomicUsize = AtomicUsize::new(0);
+    static DESCRIPTOR_BASE: AtomicUsize = AtomicUsize::new(0);
+    static DESCRIPTOR_FREES: AtomicUsize = AtomicUsize::new(0);
 
     #[repr(C)]
     pub struct Hooks {
@@ -233,12 +237,20 @@ mod xmem_hooks {
         if attrs == TEST_ATTRS {
             ALLOC.store(size, Ordering::Relaxed);
         }
+        let at = DESCRIPTOR_BASE.load(Ordering::Relaxed);
+        if at != 0 && attrs & 0xff3fff == 0x800004 && size == 8 * 32 {
+            return at as *mut c_void;
+        }
         XMemAllocDefault(size, attrs)
     }
 
     unsafe extern "system" fn free(p: *mut c_void, attrs: u64) {
         if attrs == TEST_ATTRS {
             FREE.store(p as usize, Ordering::Relaxed);
+        }
+        if p as usize == DESCRIPTOR_BASE.load(Ordering::Relaxed) && attrs & 0xff3fff == 0x800004 {
+            DESCRIPTOR_FREES.fetch_add(1, Ordering::Relaxed);
+            return;
         }
         XMemFreeDefault(p, attrs);
     }
@@ -248,8 +260,25 @@ mod xmem_hooks {
             let p = XMemAlloc(128, TEST_ATTRS);
             ensure!(!p.is_null(), "allocation failed");
             XMemFree(p, TEST_ATTRS);
+            XMemSetAllocationHooks(0, 0);
             ensure!(ALLOC.load(Ordering::Relaxed) == 128, "exported allocation hook did not receive the request");
             ensure!(FREE.load(Ordering::Relaxed) == p as usize, "exported free hook did not receive the allocation");
+        }
+        Ok(())
+    }
+
+    pub fn with_descriptor_backing(test: impl FnOnce(usize) -> Result<(), String>) -> Result<(), String> {
+        unsafe {
+            let at = XMemVirtualAlloc(std::ptr::null(), 0x10000, 0x3000, 0, 4);
+            ensure!(!at.is_null(), "reserve descriptor backing");
+            DESCRIPTOR_BASE.store(at as usize, Ordering::Relaxed);
+            XMemSetAllocationHooks(alloc as *const () as usize, free as *const () as usize);
+            let result = test(at as usize);
+            XMemSetAllocationHooks(0, 0);
+            DESCRIPTOR_BASE.store(0, Ordering::Relaxed);
+            ensure!(VirtualFree(at, 0, 0x8000) != 0, "release descriptor backing");
+            result?;
+            ensure!(DESCRIPTOR_FREES.load(Ordering::Relaxed) == 1, "descriptor backing was not freed exactly once");
         }
         Ok(())
     }
@@ -740,6 +769,8 @@ fn main() {
     check("D3D12.X: coherent window headroom (CUSTOM+WRITE_BACK & oversized READBACK in sparse VRAM)", gpu::coherent_window_headroom);
     check("D3D12.X: async ring-buffered sparse uploads (80 MiB across 20 submits + reused-tile zeroing)", gpu::sparse_async_ring_upload_stress);
     check("D3D12.X: descriptor heaps still in window 0 after an 8 GiB+ graphics reservation", gpu::descriptor_heaps_after_a_large_graphics_reservation);
+    #[cfg(target_env = "msvc")]
+    check("D3D12.X: title-backed view descriptor heap", || xmem_hooks::with_descriptor_backing(gpu::title_backed_view_descriptor_heap));
     check("D3D12.X: committed textures beyond the coherent room are created; a readback buffer still gets coherent memory", gpu::committed_textures_leave_room_for_readback);
     check("D3D12.X: dynamic depth bias via RSSetDepthBiasX (#94)", gpu::dynamic_depth_bias);
     check("D3D12.X: raytracing surface (OPTIONS5, AS SRV descriptor, #146/#148 BVH list slots)", gpu::raytracing_surface);

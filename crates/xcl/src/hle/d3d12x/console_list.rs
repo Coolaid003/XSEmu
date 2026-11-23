@@ -708,7 +708,7 @@ pub unsafe fn close(obj: *mut c_void) -> Result<Translation, String> {
                 let q = |k: usize| get(2 + 2 * k) as u64 | (get(3 + 2 * k) as u64) << 32;
                 let values = [get(8), get(9), get(10), get(11)];
                 let res = q(2) as *mut c_void;
-                let (gpu, cpu) = (super::console_heap::slot(q(0)), super::console_heap::slot(q(1)));
+                let (gpu, cpu) = (super::console_heap::gpu_slot(q(0)), super::console_heap::slot(q(1)));
                 match (gpu, cpu, ID3D12Resource::from_raw_borrowed(&res)) {
                     (Some(g), Some(c), Some(r)) if g.pc_gpu_uav != 0 => {
                         let (gh, ch) = (D3D12_GPU_DESCRIPTOR_HANDLE { ptr: g.pc_gpu_uav }, D3D12_CPU_DESCRIPTOR_HANDLE { ptr: c.pc_uav as usize });

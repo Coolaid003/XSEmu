@@ -441,10 +441,18 @@ pub unsafe extern "system" fn XMemFreeDefault(p: *mut c_void, attrs: u64) {
     }
 }
 
-type XMemAllocFn = unsafe extern "system" fn(usize, u64) -> *mut c_void;
-type XMemFreeFn = unsafe extern "system" fn(*mut c_void, u64);
+pub(crate) type XMemAllocFn = unsafe extern "system" fn(usize, u64) -> *mut c_void;
+pub(crate) type XMemFreeFn = unsafe extern "system" fn(*mut c_void, u64);
 static XMEM_ALLOC_HOOK: AtomicUsize = AtomicUsize::new(0);
 static XMEM_FREE_HOOK: AtomicUsize = AtomicUsize::new(0);
+static XMEM_HOOKS_UPDATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+pub(crate) fn xmem_allocation_hooks() -> Option<(XMemAllocFn, XMemFreeFn)> {
+    let _update = XMEM_HOOKS_UPDATE.lock().unwrap();
+    let alloc = XMEM_ALLOC_HOOK.load(Ordering::Acquire);
+    let free = XMEM_FREE_HOOK.load(Ordering::Acquire);
+    (alloc != 0 && free != 0).then(|| unsafe { (std::mem::transmute(alloc), std::mem::transmute(free)) })
+}
 
 pub unsafe extern "system" fn XMemAlloc(size: usize, attrs: u64) -> *mut c_void {
     match XMEM_ALLOC_HOOK.load(Ordering::Acquire) {
@@ -549,6 +557,7 @@ pub unsafe extern "system" fn OutputDebugStringW(s: *const u16) {
 }
 
 pub unsafe extern "system" fn XMemSetAllocationHooks(alloc: usize, free: usize) {
+    let _update = XMEM_HOOKS_UPDATE.lock().unwrap();
     if alloc == 0 {
         XMEM_ALLOC_HOOK.store(0, Ordering::Release);
         XMEM_FREE_HOOK.store(0, Ordering::Release);

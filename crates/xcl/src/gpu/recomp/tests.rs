@@ -2439,8 +2439,19 @@ fn gpu_memory_windows_above_4_gib() {
 /// Window 0 sparse VRAM between submits.
 #[test]
 fn gpu_sparse_vram_descriptors_buffers_and_xmem() {
+    sparse_descriptor_gpu_readback(false);
+    sparse_descriptor_gpu_readback(true);
+}
+
+fn sparse_descriptor_gpu_readback(external: bool) {
+    use crate::hle::d3d12x::console_heap;
     use windows::core::Interface;
     use windows::Win32::Graphics::Direct3D12::*;
+    use windows_sys::Win32::System::Memory as mem;
+
+    unsafe extern "system" fn release(base: *mut std::ffi::c_void, _: u64) {
+        mem::VirtualFree(base, 0, mem::MEM_RELEASE);
+    }
 
     if !gpu_ready() {
         return;
@@ -2455,9 +2466,16 @@ fn gpu_sparse_vram_descriptors_buffers_and_xmem() {
     assert!(windows.iter().all(|&va| va != 0), "all 4 window GPU VAs must be valid: {windows:x?}");
 
     // 1. Console descriptor heap in Window 0 sparse VRAM (32-bit hi = 0 table addressing)
-    let heap_obj = 0xDEAD_5EA7usize;
-    assert!(crate::hle::d3d12x::console_heap::register(heap_obj, 4, 0x1000, 0x5000, 32, false, false, true));
-    let heap_va = crate::hle::d3d12x::console_heap::start(heap_obj).unwrap() as usize;
+    let heap_obj = if external { 0xDEAD_5EA8 } else { 0xDEAD_5EA7 };
+    let backing = external.then(|| {
+        let p = unsafe { mem::VirtualAlloc(std::ptr::null(), 0x10000, mem::MEM_COMMIT | mem::MEM_RESERVE, mem::PAGE_READWRITE) } as usize;
+        assert_ne!(p, 0);
+        console_heap::CpuBacking::for_test(p, release)
+    });
+    assert!(console_heap::register(heap_obj, 4, 0x1000, 0x5000, 32, false, false, true, backing));
+    let heap_va = console_heap::start(heap_obj).unwrap() as usize;
+    let cpu_va = console_heap::cpu_start(heap_obj).unwrap() as usize;
+    assert_eq!(cpu_va != heap_va, external);
     assert_eq!(u.window_of(heap_va), Some(0), "descriptor heap must live in window 0");
     assert!(u.is_sparse(heap_va), "descriptor heap must live in sparse VRAM");
 
@@ -2484,8 +2502,8 @@ fn gpu_sparse_vram_descriptors_buffers_and_xmem() {
             *((in_b + 4 * l) as *mut u32) = 5000 + 2 * l as u32;
         }
     }
-    let slot0 = crate::hle::d3d12x::console_heap::slot(heap_va as u64).unwrap();
-    let slot1 = crate::hle::d3d12x::console_heap::slot(heap_va as u64 + 32).unwrap();
+    let slot0 = console_heap::slot(cpu_va as u64).unwrap();
+    let slot1 = console_heap::slot(cpu_va as u64 + 32).unwrap();
     crate::hle::d3d12x::console_heap::write(&slot0, &vsharp(in_a));
     crate::hle::d3d12x::console_heap::write(&slot1, &vsharp(out_buf));
 
@@ -2528,7 +2546,7 @@ fn gpu_sparse_vram_descriptors_buffers_and_xmem() {
         io[5] = 0xDEAD_BEEF; // shader overwrites s5 = 0 to prove hi == 0 32-bit addressing hits Window 0 sparse VRAM
         std::ptr::copy_nonoverlapping(io.as_ptr() as *const u8, io_buf as *mut u8, io.len() * 4);
 
-        let record_and_run = |fence_val: u64, first: bool| {
+        let record_and_run = |fence_val: u64, first: bool, replace: bool| {
             if !first {
                 alloc.Reset().unwrap();
                 list.Reset(&alloc, Some(&pso)).unwrap();
@@ -2541,32 +2559,35 @@ fn gpu_sparse_vram_descriptors_buffers_and_xmem() {
             }
             list.Dispatch(1, 1, 1);
             list.Close().unwrap();
+            if replace {
+                std::ptr::copy_nonoverlapping(vsharp(in_b).as_ptr(), cpu_va as *mut u32, 4);
+            }
             queue.ExecuteCommandLists(&[Some(list.cast::<ID3D12CommandList>().unwrap())]);
             queue.Signal(&fence, fence_val).unwrap();
             if fence.GetCompletedValue() < fence_val {
                 let ev = windows::Win32::System::Threading::CreateEventW(None, false, false, None).unwrap();
                 fence.SetEventOnCompletion(fence_val, ev).unwrap();
-                windows::Win32::System::Threading::WaitForSingleObject(ev, 5000);
+                let waited = windows::Win32::System::Threading::WaitForSingleObject(ev, 5000);
                 let _ = windows::Win32::Foundation::CloseHandle(ev);
+                assert_eq!(waited, windows::Win32::Foundation::WAIT_OBJECT_0, "GPU completion for submit {fence_val}");
             }
         };
 
         // Submit 1: reads slot 0 -> in_a (sparse VRAM) + arg_table constant 77 (Window 3)
-        record_and_run(1, true);
+        record_and_run(1, true, false);
         for l in 0..64usize {
             let got = *((out_buf + 4 * l) as *const u32);
-            assert_eq!(got, 1000 + l as u32 + 77, "submit 1 lane {l} mismatch");
+            assert_eq!(got, 1000 + l as u32 + 77, "submit 1 lane {l}, title backing {external}");
         }
 
         // Submit 2: mutate descriptor slot 0 in Window 0 sparse VRAM -> in_b, and mutate in_b[3] + arg_table
         *(arg_table as *mut u32) = 13;
         *((in_b + 4 * 3) as *mut u32) = 9999;
-        crate::hle::d3d12x::console_heap::write(&slot0, &vsharp(in_b));
-        record_and_run(2, false);
+        record_and_run(2, false, true);
         for l in 0..64usize {
             let expected = if l == 3 { 9999 + 13 } else { 5000 + 2 * l as u32 + 13 };
             let got = *((out_buf + 4 * l) as *const u32);
-            assert_eq!(got, expected, "submit 2 (mutated sparse descriptor + XMem buffer) lane {l} mismatch");
+            assert_eq!(got, expected, "submit 2 lane {l}, title backing {external}");
         }
 
         // Clean up
