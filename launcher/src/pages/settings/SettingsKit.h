@@ -52,7 +52,8 @@ struct Section {
 // An empty title leaves the heading out (About draws its own).
 Section makeSection(const QString& title, const QString& description);
 
-// The design's 32 px select: surface, strong hairline, 13 px text and a chevron. The list is Qt's.
+// The design's 32 px select: surface, strong hairline, the item's icon (when it has one), 13 px text
+// and a chevron. The list is Qt's.
 class Dropdown : public QComboBox {
     Q_OBJECT
 public:

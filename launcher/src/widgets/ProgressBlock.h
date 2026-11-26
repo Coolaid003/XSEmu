@@ -35,6 +35,7 @@ public:
     void setColumnTone(int index, Theme::Role role); // after setColumns: the value's colour
     Button* actionButton() const { return m_action; }
     void addHeaderWidget(QWidget* w); // e.g. a primary button next to the percent
+    void addNoteWidget(QWidget* w);   // at the right end of the note line ("Show log"); shown with the note
     State state() const { return m_state; }
 
 signals:
@@ -56,4 +57,6 @@ private:
     QWidget* m_bar;
     QHBoxLayout* m_columns;
     Label* m_note;
+    QWidget* m_noteRow;
+    QHBoxLayout* m_noteLayout;
 };

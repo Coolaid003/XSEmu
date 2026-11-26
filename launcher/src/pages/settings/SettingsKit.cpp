@@ -148,7 +148,12 @@ void Dropdown::paintEvent(QPaintEvent*)
     p.drawRoundedRect(r, 7, 7);
     p.setFont(Theme::font(13));
     p.setPen(Theme::color(Theme::Role::Text));
-    const QRect text = rect().adjusted(12, 0, -30, -1);
+    QRect text = rect().adjusted(12, 0, -30, -1);
+    if (const QIcon icon = itemIcon(currentIndex()); !icon.isNull()) {
+        const QSize s = iconSize();
+        icon.paint(&p, QRect(QPoint(text.left(), (height() - s.height()) / 2), s));
+        text.setLeft(text.left() + s.width() + 8);
+    }
     p.drawText(text, Qt::AlignVCenter | Qt::AlignLeft, QFontMetrics(p.font()).elidedText(currentText(), Qt::ElideRight, text.width()));
     Icon::paint(p, QRectF(width() - 22, (height() - 12) / 2.0 - 0.5, 12, 12), QStringLiteral("chevron-down"), Theme::color(Theme::Role::Text2), 12);
 }

@@ -173,6 +173,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
     , m_warm(new Button({}, Button::Variant::Primary, Button::Size::Small, QStringLiteral("bolt")))
     , m_resume(new Button({}, Button::Variant::Secondary, Button::Size::Small, QStringLiteral("bolt")))
     , m_log(new Button(QStringLiteral("Open log"), Button::Variant::Secondary, Button::Size::Small, QStringLiteral("file")))
+    , m_showLog(new Button(QStringLiteral("Show log"), Button::Variant::Link, Button::Size::Tiny))
     , m_dismiss(new Button(QStringLiteral("Dismiss"), Button::Variant::Ghost, Button::Size::Small))
     , m_cancel(new Button(QStringLiteral("Cancel"), Button::Variant::Ghost, Button::Size::Small))
     , m_runs(nullptr)
@@ -198,6 +199,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
     m_block->setActionText({});
     for (Button* b : {m_warm, m_play, m_resume, m_log, m_dismiss, m_cancel})
         m_block->addHeaderWidget(b);
+    m_block->addNoteWidget(m_showLog);
     page.content->addWidget(m_block);
 
     auto* runsHead = makeSectionLabel(QStringLiteral("Recent runs"), new Label(QStringLiteral("The last 20, kept by the launcher"), Label::Style::Caption, Theme::Role::Text3));
@@ -222,7 +224,8 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
         if (auto* w = qobject_cast<MainWindow*>(window()))
             w->play(m_s.warmup.game());
     });
-    connect(m_log, &Button::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(WarmupController::logPath())); });
+    for (Button* b : {m_log, m_showLog})
+        connect(b, &Button::clicked, this, [] { QDesktopServices::openUrl(QUrl::fromLocalFile(WarmupController::logPath())); });
     connect(m_dismiss, &Button::clicked, this, [this] {
         m_dismissed = true;
         refresh();
@@ -251,6 +254,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
         refreshRuns();
     });
     connect(&m_s.covers, &CoverArtService::artChanged, this, &WarmupPage::refreshRuns);
+    connect(&m_s.covers, &CoverArtService::artChanged, this, &WarmupPage::refreshGames);
     connect(&m_s.settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::RecentWarmups)) {
             refreshRuns();
@@ -273,8 +277,18 @@ void WarmupPage::refreshGames()
 {
     const QString current = m_game->currentData().toString();
     m_game->clear();
-    for (const Game& g : m_s.library.games())
-        m_game->addItem(g.title(), g.titleId());
+    m_game->setIconSize(QSize(14, 20));
+    const qreal dpr = devicePixelRatioF();
+    for (const Game& g : m_s.library.games()) {
+        QPixmap cover(QSize(14, 20) * dpr);
+        cover.setDevicePixelRatio(dpr);
+        cover.fill(Qt::transparent);
+        QPainter p(&cover);
+        p.setRenderHint(QPainter::Antialiasing);
+        CoverThumb::paint(p, QRectF(0, 0, 14, 20), QPixmap(m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid)), g.title(), 2);
+        p.end();
+        m_game->addItem(QIcon(cover), g.title(), g.titleId());
+    }
     const int i = m_game->findData(current);
     if (i >= 0)
         m_game->setCurrentIndex(i);
@@ -329,7 +343,7 @@ void WarmupPage::refresh()
         m_bannerText->setText(blocker);
     }
 
-    for (Button* b : {m_warm, m_play, m_resume, m_log, m_dismiss, m_cancel})
+    for (Button* b : {m_warm, m_play, m_resume, m_log, m_showLog, m_dismiss, m_cancel})
         b->hide();
     m_block->setNote({});
     const bool blockShown = !gameHolds && (active || showResult || picked.isValid() || m_game->count() == 0);
@@ -573,8 +587,7 @@ void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool 
         m_cancel->setText(m_s.warmup.cancelRequested() ? QStringLiteral("Cancelling...") : QStringLiteral("Cancel"));
         m_cancel->setEnabled(!m_s.warmup.cancelRequested());
         m_cancel->show();
-        m_log->setEnabled(true);
-        m_log->show();
+        m_showLog->show();
         return;
     }
 

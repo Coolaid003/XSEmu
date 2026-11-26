@@ -99,9 +99,15 @@ ProgressBlock::ProgressBlock(QWidget* parent)
     v->addWidget(m_bar);
     m_columns->setSpacing(16);
     v->addLayout(m_columns);
+    m_noteRow = new QWidget;
+    m_noteLayout = new QHBoxLayout(m_noteRow);
+    m_noteLayout->setContentsMargins(0, 0, 0, 0);
+    m_noteLayout->setSpacing(8);
+    m_noteLayout->addWidget(new IconView(QStringLiteral("info"), Theme::Role::Text3, 14), 0, Qt::AlignTop);
     m_note->setWordWrap(true);
-    m_note->hide();
-    v->addWidget(m_note);
+    m_noteLayout->addWidget(m_note, 1);
+    m_noteRow->hide();
+    v->addWidget(m_noteRow);
 
     m_subtitle->setTextInteractionFlags(Qt::NoTextInteraction);
     connect(m_action, &Button::clicked, this, &ProgressBlock::actionClicked);
@@ -201,7 +207,12 @@ void ProgressBlock::setActionText(const QString& text)
 void ProgressBlock::setNote(const QString& text)
 {
     m_note->setText(text);
-    m_note->setVisible(!text.isEmpty());
+    m_noteRow->setVisible(!text.isEmpty());
+}
+
+void ProgressBlock::addNoteWidget(QWidget* w)
+{
+    m_noteLayout->addWidget(w, 0, Qt::AlignVCenter);
 }
 
 void ProgressBlock::setColumnTone(int index, Theme::Role role)

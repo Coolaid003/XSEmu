@@ -40,6 +40,7 @@ private:
     Button* m_warm;   // idle: "Warm up <game>" (primary)
     Button* m_resume; // cancelled: "Resume warm-up"; failed: "Retry"; stopped: "Run full pass"
     Button* m_log;
+    Button* m_showLog; // running: in the note line
     Button* m_dismiss;
     Button* m_cancel;
     QGridLayout* m_runs;
