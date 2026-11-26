@@ -341,6 +341,7 @@ void seedArt(Services& s, const Game& g, const QString& kind, bool hero)
         paintArt(kind, QSize(1920, 620)).save(QDir(dir).filePath(e.hero));
     }
     s.covers.cache().put(g.titleId(), e);
+    emit s.covers.artChanged(g.titleId()); // drops the decoded art Services kept from before
 }
 
 // Three games as in the design: one played last with art and ready shaders, one with art and a

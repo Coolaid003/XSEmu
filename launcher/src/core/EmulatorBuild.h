@@ -19,7 +19,8 @@ struct EmulatorBuild {
     QString problem() const;
 
     // Ask the executable --version and --help (hidden, 3 s each). The answer is kept per path, size and
-    // modification time, so each build is asked once. Never call it while another emulator runs.
+    // modification time, so each build is asked once; safe from any thread. Never call it while another
+    // emulator runs.
     static EmulatorBuild probe(const QString& path);
     // The kept answer for the file as it is now, without starting anything; found is false when none.
     static EmulatorBuild cached(const QString& path);

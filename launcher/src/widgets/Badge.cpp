@@ -17,10 +17,38 @@ Badge::Badge(const QString& text, Theme::Tone tone, Kind kind, QWidget* parent)
     connect(&Theme::instance(), &Theme::changed, this, qOverload<>(&QWidget::update));
 }
 
-void Badge::setText(const QString& text) { m_text = text; updateGeometry(); update(); }
-void Badge::setTone(Theme::Tone tone) { m_tone = tone; update(); }
-void Badge::setDotVisible(bool on) { m_dot = on; updateGeometry(); update(); }
-void Badge::setIcon(const QString& name) { m_icon = name; updateGeometry(); update(); }
+// unchanged values return early: a geometry update relays out the whole page around the badge
+void Badge::setText(const QString& text)
+{
+    if (text == m_text)
+        return;
+    m_text = text;
+    updateGeometry();
+    update();
+}
+void Badge::setTone(Theme::Tone tone)
+{
+    if (tone == m_tone)
+        return;
+    m_tone = tone;
+    update();
+}
+void Badge::setDotVisible(bool on)
+{
+    if (on == m_dot)
+        return;
+    m_dot = on;
+    updateGeometry();
+    update();
+}
+void Badge::setIcon(const QString& name)
+{
+    if (name == m_icon)
+        return;
+    m_icon = name;
+    updateGeometry();
+    update();
+}
 
 QFont Badge::textFont() const
 {

@@ -36,7 +36,8 @@ public:
 
     // Something outside this launcher holds the PC's one emulator slot: an XSEmu.exe, xcl.exe or
     // game_scarlett_master.exe running (not counting the launcher itself), or the busy marker file
-    // existing. external() looks now; a timer looks every 2 s and emits changed() when it differs.
+    // existing. external() looks now, for the check right before starting something. A worker thread
+    // looks every 2 s; lastExternal() is what it saw, for display, and changed() follows a difference.
     struct External {
         QStringList processes; // "xcl.exe 1234"
         QString marker;        // the busy marker file, when it exists
@@ -44,6 +45,8 @@ public:
         QString reason() const; // "Emulator busy: ..." or empty
     };
     External external() const;
+    static External externalFor(const QString& marker); // safe from any thread
+    const External& lastExternal() const { return m_external; }
     // The file whose existence means "busy" (AppSettings::busyMarker()); empty: none.
     void setBusyMarker(const QString& path);
     QString busyMarker() const { return m_marker; }
@@ -66,6 +69,8 @@ private:
     bool m_paused = false;
     std::function<void()> m_stop;
     QString m_marker;
-    QString m_lastExternal;
+    void poll();
+    External m_external;
+    bool m_polling = false;
     QTimer m_poll;
 };

@@ -11,6 +11,7 @@ class DetailsHero;
 class InfoCard;
 class Label;
 class RunsWithSelector;
+class SegmentedControl;
 class Services;
 
 // Game details (Game details page): the hero band with cover, title and play record; the action bar
@@ -52,6 +53,11 @@ private:
     InfoCard* m_runCard;
     InfoCard* m_overrides;
     Label* m_overridesNote;
+    QList<SegmentedControl*> m_overrideSegs; // one per override row, built on the first refresh
+    Label* m_overrideCount = nullptr;
+    Button* m_overrideReset = nullptr;
+    QString m_runLog; // the log the Last run card links to; empty when none
+    Label* m_folderPath = nullptr; // the Game card's folder row
 
     // the run in flight, for the last-run record
     QString m_runId;

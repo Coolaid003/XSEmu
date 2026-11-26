@@ -51,6 +51,8 @@ void CoverTile::setArt(const QPixmap& art)
 
 void CoverTile::setStatus(const QString& text, Theme::Tone tone)
 {
+    if (text == m_status && tone == m_tone)
+        return;
     m_status = text;
     m_tone = tone;
     update();
@@ -58,6 +60,8 @@ void CoverTile::setStatus(const QString& text, Theme::Tone tone)
 
 void CoverTile::setLocked(bool locked, const QString& reason)
 {
+    if (locked == m_locked && reason == m_reason)
+        return;
     m_locked = locked;
     m_reason = reason;
     setToolTip(locked ? reason : QString());
@@ -66,6 +70,8 @@ void CoverTile::setLocked(bool locked, const QString& reason)
 
 void CoverTile::setSelected(bool selected)
 {
+    if (selected == m_selected)
+        return;
     m_selected = selected;
     update();
 }

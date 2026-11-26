@@ -5,20 +5,49 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QPointer>
+#include <QThreadPool>
+
+ProcessGate::External ProcessGate::externalFor(const QString& marker)
+{
+    External e;
+    e.processes = runningEmulatorProcesses(QCoreApplication::applicationPid());
+    if (!marker.isEmpty() && QFileInfo::exists(marker))
+        e.marker = marker;
+    return e;
+}
 
 ProcessGate::ProcessGate(QObject* parent)
     : QObject(parent)
 {
-    m_lastExternal = external().reason();
     m_poll.setInterval(2000);
-    connect(&m_poll, &QTimer::timeout, this, [this] {
-        const QString now = external().reason();
-        if (now == m_lastExternal)
-            return;
-        m_lastExternal = now;
-        emit changed();
-    });
+    connect(&m_poll, &QTimer::timeout, this, &ProcessGate::poll);
     m_poll.start();
+    poll();
+}
+
+void ProcessGate::poll()
+{
+    if (m_polling)
+        return;
+    m_polling = true;
+    const QPointer<ProcessGate> self = this;
+    QThreadPool::globalInstance()->start([self, marker = m_marker] {
+        const External seen = externalFor(marker);
+        QMetaObject::invokeMethod(qApp, [self, marker, seen] {
+            if (!self)
+                return;
+            self->m_polling = false;
+            if (marker != self->m_marker) {
+                self->poll();
+                return;
+            }
+            const bool differs = seen.reason() != self->m_external.reason();
+            self->m_external = seen;
+            if (differs)
+                emit self->changed();
+        });
+    });
 }
 
 QString ProcessGate::External::reason() const
@@ -32,11 +61,7 @@ QString ProcessGate::External::reason() const
 
 ProcessGate::External ProcessGate::external() const
 {
-    External e;
-    e.processes = runningEmulatorProcesses(QCoreApplication::applicationPid());
-    if (!m_marker.isEmpty() && QFileInfo::exists(m_marker))
-        e.marker = m_marker;
-    return e;
+    return externalFor(m_marker);
 }
 
 void ProcessGate::setBusyMarker(const QString& path)
@@ -44,7 +69,7 @@ void ProcessGate::setBusyMarker(const QString& path)
     if (path == m_marker)
         return;
     m_marker = path;
-    m_lastExternal = external().reason();
+    poll();
     emit changed();
 }
 

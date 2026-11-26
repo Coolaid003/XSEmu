@@ -21,9 +21,31 @@ Button::Button(const QString& text, Variant variant, Size size, const QString& i
     connect(&Theme::instance(), &Theme::changed, this, [this] { updateGeometry(); update(); });
 }
 
-void Button::setVariant(Variant v) { m_variant = v; updateGeometry(); update(); }
-void Button::setButtonSize(Size s) { m_size = s; updateGeometry(); update(); }
-void Button::setIconName(const QString& icon) { m_icon = icon; updateGeometry(); update(); }
+void Button::setVariant(Variant v)
+{
+    if (v == m_variant)
+        return;
+    m_variant = v;
+    updateGeometry();
+    update();
+}
+void Button::setButtonSize(Size s)
+{
+    if (s == m_size)
+        return;
+    m_size = s;
+    updateGeometry();
+    update();
+}
+// unchanged values return early: a geometry update relays out the whole page around the button
+void Button::setIconName(const QString& icon)
+{
+    if (icon == m_icon)
+        return;
+    m_icon = icon;
+    updateGeometry();
+    update();
+}
 
 QFont Button::textFont() const
 {

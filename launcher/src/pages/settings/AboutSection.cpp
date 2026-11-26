@@ -16,6 +16,8 @@
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QPointer>
+#include <QThreadPool>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -51,15 +53,34 @@ QWidget* SettingsSections::about(Services& s)
     emu->setObjectName(QStringLiteral("emulatorRow"));
     emu->addControl(copy);
     emu->helpLabel()->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    // the path, its --version answer and whether the launcher may start it; never asked while another
-    // emulator (or the busy marker) holds the PC
-    auto refresh = [&s, emu, copy] {
+    // the path, its --version answer and whether the launcher may start it. The emulator is asked on a
+    // worker thread, and never while another emulator (or the busy marker) holds the PC.
+    auto refreshFn = std::make_shared<std::function<void()>>();
+    const std::weak_ptr<std::function<void()>> again = refreshFn;
+    auto asking = std::make_shared<bool>(false);
+    *refreshFn = [&s, emu, copy, again, asking] {
         const QString exe = s.settings.emulatorPath();
-        const ProcessGate::External other = s.gate.external();
-        const EmulatorBuild answer = other.busy() || !s.gate.isFree() ? EmulatorBuild::cached(exe) : EmulatorBuild::probe(exe);
+        const ProcessGate::External& other = s.gate.lastExternal();
+        const EmulatorBuild answer = EmulatorBuild::cached(exe);
+        const bool executable = QFileInfo(exe).isExecutable();
+        if (executable && !answer.found && !other.busy() && s.gate.isFree() && !*asking) {
+            *asking = true;
+            const QPointer<QWidget> row = emu;
+            QThreadPool::globalInstance()->start([exe, marker = s.gate.busyMarker(), row, again, asking] {
+                if (!ProcessGate::externalFor(marker).busy())
+                    EmulatorBuild::probe(exe);
+                QMetaObject::invokeMethod(qApp, [row, again, asking] {
+                    *asking = false;
+                    if (const auto f = again.lock(); f && row)
+                        (*f)();
+                });
+            });
+        }
         QStringList lines{QDir::toNativeSeparators(exe)};
-        if (!QFileInfo(exe).isExecutable())
+        if (!executable)
             lines << QStringLiteral("Not found.");
+        else if (!answer.found && *asking)
+            lines << QStringLiteral("Asking the emulator for its version...");
         else if (!answer.found)
             lines << QStringLiteral("Version not asked yet: the emulator is busy.");
         else
@@ -71,6 +92,7 @@ QWidget* SettingsSections::about(Services& s)
         copy->setEnabled(!answer.version.isEmpty());
         copy->setProperty("version", answer.version);
     };
+    const auto refresh = [refreshFn] { (*refreshFn)(); };
     refresh();
     QObject::connect(&s.gate, &ProcessGate::changed, emu, refresh);
     QObject::connect(&s.settings, &AppSettings::changed, emu, [refresh](const QString& key) {

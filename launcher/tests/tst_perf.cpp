@@ -1,9 +1,12 @@
-// Page switches on a PC-shaped install: a large pipelines.bin, tens of thousands of driver blobs and
-// DXIL files in the shader cache, and 40 games. Every switch must stay under the budget on the UI
-// thread once the background snapshots are warm. XSEMU_PERF_SCALE=1 builds the full PC shape
+// Page switches and emulator stats ticks on a PC-shaped install: a large pipelines.bin, tens of
+// thousands of driver blobs and DXIL files in the shader cache, and 40 games. With the background
+// snapshots warm, a switch to Game details stays under a frame (16 ms), any other switch under
+// 100 ms, and a stats tick under 8 ms, all on the UI thread and judged on the median of nine rounds.
+// XSEMU_PERF_BUDGET_MS replaces every budget. XSEMU_PERF_SCALE=1 builds the full PC shape
 // (about 650 MB of manifest, 30k blobs, 166k DXIL files); the default is a tenth of it.
 // XSEMU_PERF_DIR keeps the generated install in that folder and reuses it on the next run.
 #include "DevFixtures.h"
+#include "EmulatorController.h"
 #include "app/Services.h"
 #include "pages/SettingsPage.h"
 #include "shell/MainWindow.h"
@@ -17,6 +20,7 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
 #include <functional>
 
 class TestPerf : public QObject {
@@ -24,8 +28,11 @@ class TestPerf : public QObject {
 private slots:
     void initTestCase();
     void pageSwitchesStayFast();
+    void statsTicksStayCheap();
 
 private:
+    void warmUp(Services& s, MainWindow& w);
+
     QTemporaryDir m_temp;
     QString m_root;
 };
@@ -49,6 +56,9 @@ void TestPerf::initTestCase()
     qputenv("XCL_DATA_ROOT", root.filePath(QStringLiteral("xcl")).toUtf8());
     qputenv("XSEMU_LAUNCHER_DATA", root.filePath(QStringLiteral("launcher")).toUtf8());
     qputenv("XSEMU_RUNNERS_DIR", root.filePath(QStringLiteral("runners")).toUtf8());
+    qputenv("XSEMU_EMULATOR", XSEMU_FAKE_EMULATOR_PATH);
+    qputenv("FAKE_XSEMU_SCENARIO", "ok");
+    qputenv("FAKE_XSEMU_TICK_MS", "500");
     Theme::instance().install(*qApp);
     const QString done = root.filePath(QStringLiteral("built-%1").arg(scale));
     if (QFileInfo::exists(done)) {
@@ -98,29 +108,56 @@ void TestPerf::initTestCase()
     writeFile(done, "1\n");
 }
 
-void TestPerf::pageSwitchesStayFast()
+static qint64 budgetMs(qint64 standard)
 {
-    const qint64 budget = qEnvironmentVariableIsSet("XSEMU_PERF_BUDGET_MS") ? qEnvironmentVariable("XSEMU_PERF_BUDGET_MS").toLongLong() : 100;
+    return qEnvironmentVariableIsSet("XSEMU_PERF_BUDGET_MS") ? qEnvironmentVariable("XSEMU_PERF_BUDGET_MS").toLongLong() : standard;
+}
+
+static double median(QList<double> v)
+{
+    std::sort(v.begin(), v.end());
+    return v[v.size() / 2];
+}
+
+// The launcher as the user meets it: shown, the library listed and the background snapshots in.
+void TestPerf::warmUp(Services& s, MainWindow& w)
+{
     QElapsedTimer startup;
     startup.start();
-    Services s;
-    s.settings.setFirstLaunchDone(true);
-    s.settings.setGameFolders({QDir(m_root).filePath(QStringLiteral("games"))});
-    MainWindow w(s);
     w.resize(1280, 800);
     w.show();
     QVERIFY(QTest::qWaitForWindowExposed(&w));
     QTRY_VERIFY_WITH_TIMEOUT(s.library.games().size() >= 40, 20000);
     const qint64 shown = startup.elapsed();
-    // the budget is for a warm launcher: the background snapshots have landed
     QTRY_VERIFY_WITH_TIMEOUT(s.shaderCache.hasSnapshot(), 120000);
     QTRY_VERIFY_WITH_TIMEOUT(s.hardware.ready(), 20000);
     qInfo("startup: window shown and library listed in %lld ms, cache snapshot in %lld ms", shown, qint64(startup.elapsed()));
+}
+
+static Services* newServices(const QString& games)
+{
+    auto* s = new Services;
+    s->settings.setFirstLaunchDone(true);
+    s->settings.setLaunchNeedMb(0);
+    s->settings.setGameFolders({games});
+    return s;
+}
+
+void TestPerf::pageSwitchesStayFast()
+{
+    const std::unique_ptr<Services> services(newServices(QDir(m_root).filePath(QStringLiteral("games"))));
+    Services& s = *services;
+    MainWindow w(s);
+    warmUp(s, w);
+    if (QTest::currentTestFailed())
+        return;
     const Game game = s.library.games().first();
+    const Game other = s.library.games().last();
 
     struct Step {
         const char* name;
         std::function<void()> go;
+        qint64 budget;
     };
     auto section = [&w](SettingsPage::Section sec) {
         return [&w, sec] {
@@ -128,37 +165,106 @@ void TestPerf::pageSwitchesStayFast()
             w.settingsPage()->showSection(sec);
         };
     };
+    const qint64 details = budgetMs(16);
+    const qint64 page = budgetMs(100);
     const QList<Step> steps{
-        {"Library", [&] { w.showPage(Page::Library); }},
-        {"Game details", [&] { w.showGameDetails(game); }},
-        {"Warm-up", [&] { w.showPage(Page::Warmup); }},
-        {"Runners", [&] { w.showPage(Page::Runners); }},
-        {"Library", [&] { w.showPage(Page::Library); }},
-        {"Settings: Console", section(SettingsPage::Section::Console)},
-        {"Settings: Network", section(SettingsPage::Section::Network)},
-        {"Settings: Shaders", section(SettingsPage::Section::Shaders)},
-        {"Settings: Overlay", section(SettingsPage::Section::Overlay)},
-        {"Settings: Game folders", section(SettingsPage::Section::GameFolders)},
-        {"Settings: Input", section(SettingsPage::Section::Input)},
-        {"Settings: Graphics", section(SettingsPage::Section::Graphics)},
-        {"Settings: Logs", section(SettingsPage::Section::Logs)},
-        {"Settings: About", section(SettingsPage::Section::About)},
-        {"Game details", [&] { w.showGameDetails(game); }},
+        {"Library", [&] { w.showPage(Page::Library); }, page},
+        {"Game details", [&] { w.showGameDetails(game); }, details},
+        {"Warm-up", [&] { w.showPage(Page::Warmup); }, page},
+        {"Runners", [&] { w.showPage(Page::Runners); }, page},
+        {"Library", [&] { w.showPage(Page::Library); }, page},
+        {"Settings: Console", section(SettingsPage::Section::Console), page},
+        {"Settings: Network", section(SettingsPage::Section::Network), page},
+        {"Settings: Shaders", section(SettingsPage::Section::Shaders), page},
+        {"Settings: Overlay", section(SettingsPage::Section::Overlay), page},
+        {"Settings: Game folders", section(SettingsPage::Section::GameFolders), page},
+        {"Settings: Input", section(SettingsPage::Section::Input), page},
+        {"Settings: Graphics", section(SettingsPage::Section::Graphics), page},
+        {"Settings: Logs", section(SettingsPage::Section::Logs), page},
+        {"Settings: About", section(SettingsPage::Section::About), page},
+        {"Game details (another game)", [&] { w.showGameDetails(other); }, details},
     };
-    QStringList slow;
-    for (int pass = 0; pass < 2; ++pass) {
-        for (const Step& step : steps) {
+    // a first round builds what is built once; then five measured rounds
+    constexpr int rounds = 9;
+    QList<QList<double>> took(steps.size());
+    QList<QList<double>> painting(steps.size());
+    for (int round = 0; round <= rounds; ++round) {
+        for (int i = 0; i < steps.size(); ++i) {
             QElapsedTimer t;
             t.start();
-            step.go();
+            steps[i].go();
             QCoreApplication::processEvents();
+            const double built = double(t.nsecsElapsed()) / 1e6;
             w.repaint();
-            const qint64 ms = t.elapsed();
-            qInfo("pass %d  %-24s %4lld ms", pass + 1, step.name, ms);
-            if (pass == 1 && ms > budget)
-                slow << QStringLiteral("%1 %2 ms").arg(QLatin1String(step.name)).arg(ms);
+            const double ms = double(t.nsecsElapsed()) / 1e6;
+            if (round == 0)
+                continue;
+            took[i] << ms;
+            painting[i] << ms - built;
         }
     }
+    QStringList slow;
+    for (int i = 0; i < steps.size(); ++i) {
+        const double ms = median(took[i]);
+        qInfo("%-28s %6.1f ms median (%.1f ms painting), slowest %.1f ms, budget %lld ms", steps[i].name, ms, median(painting[i]),
+              *std::max_element(took[i].cbegin(), took[i].cend()), steps[i].budget);
+        if (ms > double(steps[i].budget))
+            slow << QStringLiteral("%1 %2 ms").arg(QLatin1String(steps[i].name)).arg(ms, 0, 'f', 1);
+    }
+    QVERIFY2(slow.isEmpty(), qPrintable(slow.join(QStringLiteral(", "))));
+}
+
+// A running game sends stats a few times a second, and every page that shows the game follows them:
+// a tick must cost the UI thread well under a frame on each of them.
+void TestPerf::statsTicksStayCheap()
+{
+    const std::unique_ptr<Services> services(newServices(QDir(m_root).filePath(QStringLiteral("games"))));
+    Services& s = *services;
+    MainWindow w(s);
+    warmUp(s, w);
+    if (QTest::currentTestFailed())
+        return;
+    Game game;
+    for (const Game& g : s.library.games()) {
+        if (g.title() == QLatin1String("Signal Garden"))
+            game = g;
+    }
+    QVERIFY(game.isValid());
+    w.play(game);
+    QTRY_COMPARE_WITH_TIMEOUT(s.emulator.state(), EmulatorController::State::Running, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(s.emulator.stats().fps.has_value(), 10000);
+
+    struct View {
+        const char* name;
+        std::function<void()> show;
+    };
+    const QList<View> views{
+        {"In-game view", [&] { w.enterInGame(); }},
+        {"Library", [&] { w.showPage(Page::Library); }},
+        {"Warm-up", [&] { w.showPage(Page::Warmup); }},
+    };
+    const qint64 budget = budgetMs(8);
+    QStringList slow;
+    for (const View& v : views) {
+        v.show();
+        QCoreApplication::processEvents();
+        w.repaint();
+        QList<double> took;
+        for (int i = 0; i <= 9; ++i) {
+            QElapsedTimer t;
+            t.start();
+            emit s.emulator.statsChanged();
+            QCoreApplication::processEvents();
+            if (i > 0)
+                took << double(t.nsecsElapsed()) / 1e6;
+        }
+        const double ms = median(took);
+        qInfo("stats tick on %-14s %5.2f ms median, slowest %.2f ms, budget %lld ms", v.name, ms, *std::max_element(took.cbegin(), took.cend()), budget);
+        if (ms > double(budget))
+            slow << QStringLiteral("%1 %2 ms").arg(QLatin1String(v.name)).arg(ms, 0, 'f', 2);
+    }
+    s.emulator.stop();
+    QTRY_COMPARE_WITH_TIMEOUT(s.emulator.state(), EmulatorController::State::Idle, 10000);
     QVERIFY2(slow.isEmpty(), qPrintable(slow.join(QStringLiteral(", "))));
 }
 

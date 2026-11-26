@@ -25,11 +25,6 @@ xsemu_test(tst_settingsprofile)
 xsemu_test(tst_runnerstate)
 target_link_libraries(tst_runnerstate PRIVATE xsemu_ui)
 
-# page-switch timings on a generated PC-shaped shader cache and library
-xsemu_test(tst_perf)
-target_link_libraries(tst_perf PRIVATE xsemu_ui)
-set_tests_properties(tst_perf PROPERTIES TIMEOUT 600)
-
 if(WIN32)
     # a window from another process reparented into a Qt host (the test picks the real windows platform)
     add_executable(reparent-helper WIN32 reparent-helper.cpp)
@@ -51,4 +46,11 @@ if(XSEMU_FAKE_EMULATOR)
     target_link_libraries(tst_ingame PRIVATE xsemu_ui)
     add_dependencies(tst_ingame fake-xsemu)
     target_compile_definitions(tst_ingame PRIVATE XSEMU_FAKE_EMULATOR_PATH="$<TARGET_FILE:fake-xsemu>")
+
+    # page switches and stats ticks timed on a generated PC-shaped shader cache and library
+    xsemu_test(tst_perf)
+    target_link_libraries(tst_perf PRIVATE xsemu_ui)
+    add_dependencies(tst_perf fake-xsemu)
+    target_compile_definitions(tst_perf PRIVATE XSEMU_FAKE_EMULATOR_PATH="$<TARGET_FILE:fake-xsemu>")
+    set_tests_properties(tst_perf PROPERTIES TIMEOUT 600)
 endif()

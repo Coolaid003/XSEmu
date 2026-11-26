@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
+#include <QMutex>
 #include <QProcess>
 
 #ifdef Q_OS_WIN
@@ -16,6 +17,8 @@ QString keyFor(const QFileInfo& fi)
 {
     return QStringLiteral("%1|%2|%3").arg(fi.absoluteFilePath()).arg(fi.size()).arg(fi.lastModified().toMSecsSinceEpoch());
 }
+
+QMutex answersLock; // probes may run on a worker thread
 
 QHash<QString, EmulatorBuild>& answers()
 {
@@ -69,6 +72,7 @@ EmulatorBuild EmulatorBuild::cached(const QString& path)
     b.path = path;
     if (!fi.isFile() || !fi.isExecutable())
         return b;
+    const QMutexLocker lock(&answersLock);
     return answers().value(keyFor(fi), b);
 }
 
@@ -80,11 +84,15 @@ EmulatorBuild EmulatorBuild::probe(const QString& path)
     if (!fi.isFile() || !fi.isExecutable())
         return b;
     const QString key = keyFor(fi);
-    if (const auto it = answers().constFind(key); it != answers().constEnd())
-        return *it;
+    {
+        const QMutexLocker lock(&answersLock);
+        if (const auto it = answers().constFind(key); it != answers().constEnd())
+            return *it;
+    }
     b.found = true;
     b.version = ask(path, QStringLiteral("--version")).trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
     b.capable = b.version.startsWith(QLatin1String("XSEmu ")) && speaksProtocol(b.version, ask(path, QStringLiteral("--help")));
+    const QMutexLocker lock(&answersLock);
     answers().insert(key, b);
     return b;
 }

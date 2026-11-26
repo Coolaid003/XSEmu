@@ -5,6 +5,7 @@
 #include "ShareSettingsDialog.h"
 
 #include "app/Services.h"
+#include "core/EmulatorBuild.h"
 #include "core/Format.h"
 #include "core/Paths.h"
 #include "core/ShaderCacheInfo.h"
@@ -20,6 +21,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLinearGradient>
 #include <QMenu>
@@ -28,6 +30,7 @@
 #include <QPainterPath>
 #include <QRegularExpression>
 #include <QScrollArea>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -185,12 +188,13 @@ private:
 };
 
 // A details card: caps title with an optional widget on the right, then 36 px label/value rows with
-// a hairline above each.
+// a hairline above each. The rows sit in one grid, so showing the page lays out one layout per card
+// rather than several per row.
 class InfoCard : public Card {
 public:
     explicit InfoCard(const QString& title)
         : Card(Card::Kind::Surface, 12)
-        , m_rows(new QVBoxLayout)
+        , m_grid(new QGridLayout)
         , m_trailing(new QHBoxLayout)
     {
         auto* v = new QVBoxLayout(this);
@@ -203,8 +207,10 @@ public:
         m_trailing->setSpacing(10);
         head->addLayout(m_trailing);
         v->addLayout(head);
-        m_rows->setSpacing(0);
-        v->addLayout(m_rows);
+        m_grid->setHorizontalSpacing(12);
+        m_grid->setVerticalSpacing(0);
+        m_grid->setColumnStretch(1, 1);
+        v->addLayout(m_grid);
     }
 
     void setTrailing(const QList<QWidget*>& widgets)
@@ -218,62 +224,110 @@ public:
             m_trailing->addWidget(w);
     }
 
-    void clear()
+    // Rows are kept between refreshes. A refresh calls begin(), adds its rows in order and calls end():
+    // a row whose label (and key) matches the row already in that place is updated in place, and from
+    // the first mismatch on the rows are rebuilt. Building rows is what made switching games slow.
+    void begin() { m_next = 0; }
+    void end() { truncate(m_next); }
+
+    // True when the custom row in this place has this label and key, so the caller keeps it as it is.
+    bool reuse(const QString& label, const QString& key)
     {
-        while (QLayoutItem* item = m_rows->takeAt(0)) {
-            if (item->widget())
-                item->widget()->deleteLater();
-            delete item;
-        }
+        if (m_next >= m_entries.size() || m_entries[m_next].text || m_entries[m_next].label != label || m_entries[m_next].key != key)
+            return false;
+        ++m_next;
+        return true;
     }
 
-    QWidget* addRow(const QString& label, QWidget* value, QWidget* below = nullptr)
+    // Returns the row's label, for a tooltip.
+    QWidget* addRow(const QString& label, QWidget* value, QWidget* below = nullptr, const QString& key = {}, Qt::Alignment align = {})
     {
-        auto* row = new Row;
-        auto* v = new QVBoxLayout(row);
-        v->setContentsMargins(0, 1, 0, 0);
-        v->setSpacing(0);
-        auto* h = new QHBoxLayout;
-        h->setContentsMargins(0, 0, 0, 0);
-        h->setSpacing(12);
-        auto* l = new Label(label, Label::Style::Small, Theme::Role::Text2);
-        l->setFixedWidth(132);
-        h->addWidget(l);
-        h->addWidget(value, 1);
-        auto* line = new QWidget;
-        line->setMinimumHeight(35);
-        line->setLayout(h);
-        v->addWidget(line);
-        if (below) {
-            auto* b = new QHBoxLayout;
-            b->setContentsMargins(144, 0, 0, 8);
-            b->addWidget(below);
-            v->addLayout(b);
-        }
-        m_rows->addWidget(row);
-        return row;
+        truncate(m_next);
+        return append({label, key, nullptr, nullptr, value, below, nullptr, Theme::Role::Text}, align);
     }
 
-    QWidget* addText(const QString& label, const QString& value, Theme::Role role = Theme::Role::Text)
+    void addText(const QString& label, const QString& value, Theme::Role role = Theme::Role::Text)
     {
+        if (m_next < m_entries.size() && m_entries[m_next].text && m_entries[m_next].label == label) {
+            Entry& e = m_entries[m_next++];
+            e.text->setText(value);
+            if (e.role != role) {
+                e.text->setRole(role);
+                e.role = role;
+            }
+            return;
+        }
+        truncate(m_next);
         auto* v = new Label(value, Label::Style::SmallMedium, role);
         v->setWordWrap(true);
         v->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        return addRow(label, v);
+        append({label, {}, nullptr, nullptr, v, nullptr, v, role}, {});
     }
 
 private:
-    class Row : public QWidget {
+    class Hairline : public QWidget {
+    public:
+        Hairline() { setFixedHeight(1); }
+
     protected:
         void paintEvent(QPaintEvent*) override
         {
             QPainter p(this);
-            p.fillRect(QRect(0, 0, width(), 1), Theme::color(Theme::Role::Border));
+            p.fillRect(rect(), Theme::color(Theme::Role::Border));
         }
     };
 
-    QVBoxLayout* m_rows;
+    struct Entry {
+        QString label;
+        QString key;
+        QWidget* line;    // the hairline above the row
+        QWidget* caption; // the label column
+        QWidget* value;
+        QWidget* below;   // a note under the value, in a grid row of its own; may be null
+        Label* text;      // the value of a text row; null for a custom row
+        Theme::Role role;
+        int gridRow = 0;
+    };
+
+    QWidget* append(Entry e, Qt::Alignment align)
+    {
+        e.gridRow = m_entries.isEmpty() ? 0 : m_entries.last().gridRow + (m_entries.last().below ? 2 : 1);
+        auto* caption = new Label(e.label, Label::Style::Small, Theme::Role::Text2);
+        caption->setFixedWidth(132);
+        e.caption = caption;
+        e.line = new Hairline;
+        m_grid->setRowMinimumHeight(e.gridRow, 36);
+        m_grid->addWidget(e.line, e.gridRow, 0, 1, 2, Qt::AlignTop);
+        m_grid->addWidget(caption, e.gridRow, 0, Qt::AlignVCenter);
+        m_grid->addWidget(e.value, e.gridRow, 1, align | Qt::AlignVCenter);
+        if (e.below) {
+            e.below->setContentsMargins(0, 0, 0, 8);
+            m_grid->setRowMinimumHeight(e.gridRow + 1, 0);
+            m_grid->addWidget(e.below, e.gridRow + 1, 1);
+        }
+        m_entries.append(e);
+        ++m_next;
+        return caption;
+    }
+
+    void truncate(qsizetype n)
+    {
+        while (m_entries.size() > n) {
+            const Entry e = m_entries.takeLast();
+            for (QWidget* w : {e.line, e.caption, e.value, e.below}) {
+                if (!w)
+                    continue;
+                m_grid->removeWidget(w);
+                w->deleteLater();
+            }
+            m_grid->setRowMinimumHeight(e.gridRow, 0);
+        }
+    }
+
+    QGridLayout* m_grid;
     QHBoxLayout* m_trailing;
+    QList<Entry> m_entries;
+    qsizetype m_next = 0;
 };
 
 namespace {
@@ -355,6 +409,7 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
     auto* right = new QVBoxLayout;
     right->setSpacing(16);
     right->addWidget(m_cacheCard);
+    m_cacheCard->setTrailing({new Label(QStringLiteral("Shared by all games"), Label::Style::Caption, Theme::Role::Text3)});
     right->addWidget(m_overrides);
     m_overridesNote->setWordWrap(true);
     right->addWidget(m_overridesNote);
@@ -604,49 +659,60 @@ void GameDetailsPage::refresh()
         }
     }
     // an older emulator build, or another emulator (or job) holding the PC: Play and Warm-up wait, saying why
-    using P = EmulatorController::LaunchCheck::Problem;
-    const EmulatorController::LaunchCheck check = playingThis ? EmulatorController::LaunchCheck{} : m_s.emulator.checkLaunch(g);
-    const bool held = check.problem == P::OtherEmulatorRunning || check.problem == P::EmulatorTooOld;
+    // shown from the gate's last look and the emulator's kept answer, so a refresh starts no process;
+    // Play and Warm-up check again before they start anything
+    QString heldReason;
+    bool tooOld = false;
+    if (!playingThis && m_s.gate.isFree()) {
+        if (const ProcessGate::External& other = m_s.gate.lastExternal(); other.busy()) {
+            heldReason = other.reason();
+        } else if (runner.isBuiltIn()) {
+            const EmulatorBuild build = EmulatorBuild::cached(m_s.settings.emulatorPath());
+            tooOld = build.found && !build.capable;
+            if (tooOld)
+                heldReason = build.problem();
+        }
+    }
+    const bool held = !heldReason.isEmpty();
     for (Button* b : {m_primary, m_secondary}) {
         b->setEnabled(!held);
-        b->setToolTip(held ? check.reason : QString());
+        b->setToolTip(heldReason);
     }
     if (held) {
-        stateText = check.problem == P::EmulatorTooOld ? QStringLiteral("XSEmu build too old") : QStringLiteral("Emulator busy");
-        tone = check.problem == P::EmulatorTooOld ? Theme::Tone::Danger : Theme::Tone::Warning;
+        stateText = tooOld ? QStringLiteral("XSEmu build too old") : QStringLiteral("Emulator busy");
+        tone = tooOld ? Theme::Tone::Danger : Theme::Tone::Warning;
     }
     m_state->setText(stateText);
-    m_state->setToolTip(held ? check.reason : QString());
+    m_state->setToolTip(heldReason);
     m_state->setTone(tone);
 
     // GAME
-    m_gameCard->clear();
+    m_gameCard->begin();
     m_gameCard->addText(QStringLiteral("Version"), g.version.isEmpty() ? QStringLiteral("Unknown") : g.version);
     m_gameCard->addText(QStringLiteral("Publisher"), g.publisher.isEmpty() ? QStringLiteral("Unknown") : g.publisher);
     m_gameCard->addText(QStringLiteral("Install size"), g.sizeBytes < 0 ? QStringLiteral("Not measured") : Format::bytes(g.sizeBytes));
-    {
+    if (!m_gameCard->reuse(QStringLiteral("Folder"), {})) {
         auto* box = new QWidget;
         auto* h = new QHBoxLayout(box);
         h->setContentsMargins(0, 0, 0, 0);
         h->setSpacing(8);
-        const QString native = QDir::toNativeSeparators(g.folder);
-        auto* path = new Label(native, Label::Style::Mono, Theme::Role::Text);
-        path->setFont(Theme::mono(12));
-        path->setToolTip(native);
-        path->setMinimumWidth(40);
-        path->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
-        path->setText(QFontMetrics(path->font()).elidedText(native, Qt::ElideMiddle, 230));
-        h->addWidget(path, 1);
+        m_folderPath = new Label({}, Label::Style::Mono, Theme::Role::Text);
+        m_folderPath->setFont(Theme::mono(12));
+        m_folderPath->setMinimumWidth(40);
+        m_folderPath->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        h->addWidget(m_folderPath, 1);
         auto* show = new Button(QStringLiteral("Show"), Button::Variant::Ghost, Button::Size::Tiny);
-        const QString folder = g.folder;
-        connect(show, &Button::clicked, this, [folder] { QDesktopServices::openUrl(QUrl::fromLocalFile(folder)); });
+        connect(show, &Button::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(m_game.folder)); });
         h->addWidget(show);
         m_gameCard->addRow(QStringLiteral("Folder"), box);
     }
+    const QString native = QDir::toNativeSeparators(g.folder);
+    m_folderPath->setToolTip(native);
+    m_folderPath->setText(QFontMetrics(m_folderPath->font()).elidedText(native, Qt::ElideMiddle, 230));
+    m_gameCard->end();
 
     // SHADER CACHE (machine-wide; per title only what this launcher's warm-ups recorded)
-    m_cacheCard->clear();
-    m_cacheCard->setTrailing({new Label(QStringLiteral("Shared by all games"), Label::Style::Caption, Theme::Role::Text3)});
+    m_cacheCard->begin();
     m_cacheCard->addText(QStringLiteral("State"), cacheState, cacheRole);
     if (lastWarmup && lastWarmup->total > 0)
         m_cacheCard->addText(QStringLiteral("Pipelines"), QStringLiteral("%1 of %2 built · %3 failed")
@@ -655,17 +721,21 @@ void GameDetailsPage::refresh()
         m_cacheCard->addText(QStringLiteral("Pipelines"), cache.pipelines >= 0 ? QStringLiteral("%1 recorded on this PC").arg(Format::count(cache.pipelines)) : QStringLiteral("0 cached"));
     m_cacheCard->addText(QStringLiteral("Last warm-up"), lastWarmup ? QStringLiteral("%1 · %2").arg(when(lastWarmup->finishedAt), lastWarmup->tookS >= 60 ? minutes(qint64(lastWarmup->tookS)) : Format::shortDuration(lastWarmup->tookS))
                                                                    : QStringLiteral("Never"));
+    m_cacheCard->end();
 
     // LAST RUN
-    m_runCard->clear();
+    m_runCard->begin();
     const QVariantMap run = m_s.settings.lastRun(id);
-    const QString log = Paths::xclLog(id);
-    if (QFileInfo::exists(log)) {
-        auto* open = new Button(QStringLiteral("Open log"), Button::Variant::Link, Button::Size::Tiny);
-        connect(open, &Button::clicked, this, [log] { QDesktopServices::openUrl(QUrl::fromLocalFile(log)); });
-        m_runCard->setTrailing({open});
-    } else {
-        m_runCard->setTrailing({});
+    const QString log = QFileInfo::exists(Paths::xclLog(id)) ? Paths::xclLog(id) : QString();
+    if (log != m_runLog) {
+        m_runLog = log;
+        QList<QWidget*> trailing;
+        if (!log.isEmpty()) {
+            auto* open = new Button(QStringLiteral("Open log"), Button::Variant::Link, Button::Size::Tiny);
+            connect(open, &Button::clicked, this, [log] { QDesktopServices::openUrl(QUrl::fromLocalFile(log)); });
+            trailing << open;
+        }
+        m_runCard->setTrailing(trailing);
     }
     if (run.isEmpty()) {
         m_runCard->addText(QStringLiteral("Result"), played > 0 ? QStringLiteral("Not recorded") : QStringLiteral("Not played yet"), Theme::Role::Text3);
@@ -688,6 +758,7 @@ void GameDetailsPage::refresh()
         if (!ram.isEmpty())
             m_runCard->addText(QStringLiteral("Peak RAM"), ram.join(QStringLiteral(" · ")));
     }
+    m_runCard->end();
 
     refreshOverrides();
 }
@@ -729,18 +800,20 @@ void GameDetailsPage::refreshOverrides()
     const QString tomlPath = Paths::xclToml(id);
     const QVariantMap chosen = m_s.settings.gameOverrides(id);
 
-    m_overrides->clear();
+    // the rows are built once; a refresh only sets each control's labels and choice
+    const bool build = m_overrideSegs.isEmpty();
     int count = 0;
-    for (const OverrideSpec& spec : specs) {
+    for (int i = 0; i < specs.size(); ++i) {
+        const OverrideSpec& spec = specs[i];
         QStringList labels = spec.labels;
         int current = 0;
         if (spec.backed) {
             const QVariant value = chosen.value(spec.key);
             if (value.isValid() && !sameValue(value, spec.defaultValue)) {
                 current = -1;
-                for (int i = 1; i < spec.values.size(); ++i) {
-                    if (sameValue(value, spec.values[i]))
-                        current = i;
+                for (int v = 1; v < spec.values.size(); ++v) {
+                    if (sameValue(value, spec.values[v]))
+                        current = v;
                 }
                 if (current < 0) {
                     labels << (value.typeId() == QMetaType::Double ? QStringLiteral("%1×").arg(value.toDouble()) : value.toString());
@@ -749,54 +822,56 @@ void GameDetailsPage::refreshOverrides()
                 ++count;
             }
         }
-        auto* seg = new SegmentedControl(labels);
-        seg->setCurrentIndex(current);
-        seg->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-        auto* holder = new QWidget;
-        auto* hh = new QHBoxLayout(holder);
-        hh->setContentsMargins(0, 0, 0, 0);
-        hh->addWidget(seg);
-        hh->addStretch(1);
-        Label* note = nullptr;
-        if (!spec.backed) {
-            seg->setEnabled(false);
-            note = new Label(QStringLiteral("Not in this XSEmu build yet"), Label::Style::Caption, Theme::Role::Text3);
+        if (build) {
+            auto* seg = new SegmentedControl(labels);
+            seg->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+            Label* note = nullptr;
+            if (!spec.backed) {
+                seg->setEnabled(false);
+                note = new Label(QStringLiteral("Not in this XSEmu build yet"), Label::Style::Caption, Theme::Role::Text3);
+            }
+            const QString tip = spec.launcherSide ? QString() : QStringLiteral("%1 in xcl.toml").arg(spec.key);
+            m_overrides->addRow(spec.label, seg, note, {}, Qt::AlignLeft)->setToolTip(tip);
+            seg->setToolTip(tip);
+            m_overrideSegs << seg;
+            if (spec.backed) {
+                const QVariantList values = spec.values;
+                const QString key = spec.key;
+                connect(seg, &SegmentedControl::currentChanged, this, [this, key, values](int index) {
+                    if (index >= values.size())
+                        return;
+                    if (index == 0)
+                        m_s.settings.clearGameOverride(m_game.titleId(), key);
+                    else
+                        m_s.settings.setGameOverride(m_game.titleId(), key, values[index]);
+                    QTimer::singleShot(0, this, &GameDetailsPage::refreshOverrides);
+                });
+            }
         }
-        QWidget* row = m_overrides->addRow(spec.label, holder, note);
-        row->setToolTip(spec.launcherSide ? QString() : QStringLiteral("%1 in xcl.toml").arg(spec.key));
-        if (!spec.backed)
-            continue;
-        const QVariantList values = spec.values;
-        const QString key = spec.key;
-        connect(seg, &SegmentedControl::currentChanged, this, [this, id, key, values](int index) {
-            if (index >= values.size())
-                return;
-            if (index == 0)
-                m_s.settings.clearGameOverride(id, key);
-            else
-                m_s.settings.setGameOverride(id, key, values[index]);
-            QTimer::singleShot(0, this, &GameDetailsPage::refreshOverrides);
-        });
+        SegmentedControl* seg = m_overrideSegs[i];
+        const QSignalBlocker quiet(seg);
+        if (seg->items() != labels)
+            seg->setItems(labels);
+        seg->setCurrentIndex(current);
     }
 
-    QList<QWidget*> trailing;
-    trailing << new Label(count == 0 ? QStringLiteral("None") : count == 1 ? QStringLiteral("1 override") : QStringLiteral("%1 overrides").arg(count),
-                          Label::Style::Caption, Theme::Role::Text3);
-    if (count > 0) {
-        auto* reset = new Button(QStringLiteral("Use defaults"), Button::Variant::Link, Button::Size::Tiny);
+    if (build) {
+        m_overrideCount = new Label({}, Label::Style::Caption, Theme::Role::Text3);
+        m_overrideReset = new Button(QStringLiteral("Use defaults"), Button::Variant::Link, Button::Size::Tiny);
         QStringList keys;
         for (const OverrideSpec& spec : specs) {
             if (spec.backed)
                 keys << spec.key;
         }
-        connect(reset, &Button::clicked, this, [this, id, keys] {
+        connect(m_overrideReset, &Button::clicked, this, [this, keys] {
             for (const QString& k : keys)
-                m_s.settings.clearGameOverride(id, k);
+                m_s.settings.clearGameOverride(m_game.titleId(), k);
             QTimer::singleShot(0, this, &GameDetailsPage::refreshOverrides);
         });
-        trailing << reset;
+        m_overrides->setTrailing({m_overrideCount, m_overrideReset});
     }
-    m_overrides->setTrailing(trailing);
+    m_overrideCount->setText(count == 0 ? QStringLiteral("None") : count == 1 ? QStringLiteral("1 override") : QStringLiteral("%1 overrides").arg(count));
+    m_overrideReset->setVisible(count > 0);
 
     const bool playingThis = m_s.emulator.isActive() && m_s.emulator.game().titleId() == id;
     const RunnerSpec& runner = m_s.emulator.runnerFor(m_game);
