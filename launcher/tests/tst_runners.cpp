@@ -53,6 +53,7 @@ private slots:
     void installsReleaseAsset();
     void rejectsWrongHash();
     void buildsFromSource();
+    void stepProgramsUseTheStepsPath();
 
 private:
     QTemporaryDir m_dir;
@@ -278,4 +279,27 @@ void TestRunners::buildsFromSource()
 }
 
 QTEST_GUILESS_MAIN(TestRunners)
+void TestRunners::stepProgramsUseTheStepsPath()
+{
+    // a cargo the install bootstrapped is on the step's PATH only, never on the launcher's
+    QTemporaryDir dir;
+    const QString bin = QDir(dir.path()).filePath(QStringLiteral("cargo/bin"));
+    QVERIFY(QDir().mkpath(bin));
+#ifdef Q_OS_WIN
+    const QString cargo = QDir(bin).filePath(QStringLiteral("xsemu-test-cargo.exe"));
+#else
+    const QString cargo = QDir(bin).filePath(QStringLiteral("xsemu-test-cargo"));
+#endif
+    QFile f(cargo);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("#!/bin/sh\n");
+    f.close();
+    f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+    QProcessEnvironment env;
+    env.insert(QStringLiteral("PATH"), QDir::toNativeSeparators(bin));
+    QCOMPARE(QFileInfo(RunnerInstall::resolveProgram(QStringLiteral("xsemu-test-cargo"), env)).canonicalFilePath(), QFileInfo(cargo).canonicalFilePath());
+    QCOMPARE(RunnerInstall::resolveProgram(QStringLiteral("xsemu-test-missing"), env), QStringLiteral("xsemu-test-missing"));
+    QCOMPARE(RunnerInstall::resolveProgram(cargo, {}), cargo);
+}
+
 #include "tst_runners.moc"

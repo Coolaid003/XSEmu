@@ -273,7 +273,16 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
         }
         next();
     });
-    m_process->startTree(command.value(0), command.mid(1));
+    m_process->startTree(resolveProgram(command.value(0), m_env), command.mid(1));
+}
+
+QString RunnerInstall::resolveProgram(const QString& program, const QProcessEnvironment& env)
+{
+    if (program.isEmpty() || program.contains(QLatin1Char('/')) || program.contains(QLatin1Char('\\')))
+        return program;
+    const QStringList path = env.value(QStringLiteral("PATH")).split(QDir::listSeparator(), Qt::SkipEmptyParts);
+    const QString found = QStandardPaths::findExecutable(program, path);
+    return found.isEmpty() ? program : found;
 }
 
 void RunnerInstall::ensureGit()

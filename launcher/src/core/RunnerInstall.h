@@ -32,6 +32,10 @@ public:
     // The unpack command for an archive (Windows: the system tar.exe, which reads zip; elsewhere
     // unzip for .zip and tar for the rest), tested.
     static QStringList unpackCommand(const QString& archive, const QString& intoDir);
+    // The program a step runs, found on the PATH the step gets (env), not the launcher's: Windows looks
+    // a bare name up on the parent's PATH, which lacks the Rust the install bootstrapped. Unchanged when
+    // it is already a path or is not found there.
+    static QString resolveProgram(const QString& program, const QProcessEnvironment& env);
 
 signals:
     void progressChanged();
