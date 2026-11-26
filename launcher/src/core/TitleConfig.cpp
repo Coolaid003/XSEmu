@@ -213,7 +213,7 @@ bool TitleConfig::set(const QVariantMap& values)
 QVariantMap TitleConfig::parse(const QString& text)
 {
     QVariantMap out;
-    const QStringList lines = text.split(QLatin1Char('\n'));
+    const QStringList lines = QString(text).replace(QLatin1String("\r\n"), QLatin1String("\n")).split(QLatin1Char('\n'));
     for (const QString& line : lines) {
         if (isTableHeader(line))
             break;
@@ -282,8 +282,13 @@ QString TitleConfig::formatValue(const QVariant& value)
     return out;
 }
 
-QString TitleConfig::apply(const QString& text, const QVariantMap& values)
+QString TitleConfig::apply(const QString& input, const QVariantMap& values)
 {
+    // A file saved with Windows line endings keeps them: edit with \n, write back with \r\n.
+    const bool crlf = input.contains(QLatin1String("\r\n"));
+    QString text = input;
+    if (crlf)
+        text.replace(QLatin1String("\r\n"), QLatin1String("\n"));
     QStringList lines = text.isEmpty() ? QStringList() : text.split(QLatin1Char('\n'));
     const bool trailingNewline = text.isEmpty() || text.endsWith(QLatin1Char('\n'));
     if (trailingNewline && !lines.isEmpty())
@@ -330,8 +335,9 @@ QString TitleConfig::apply(const QString& text, const QVariantMap& values)
             lines.insert(at + k, added[k]);
     }
 
-    QString out = lines.join(QLatin1Char('\n'));
+    const QString eol = crlf ? QStringLiteral("\r\n") : QStringLiteral("\n");
+    QString out = lines.join(eol);
     if (trailingNewline)
-        out += QLatin1Char('\n');
+        out += eol;
     return out;
 }

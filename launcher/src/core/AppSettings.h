@@ -66,7 +66,9 @@ public:
 
     static constexpr int kRecentWarmupLimit = 20;
     static constexpr int kDefaultGiantCompileCap = 3;
-    static constexpr int kDefaultLaunchNeedMb = 6 * 1024;
+    // RAM a launch needs on top of EmulatorController::kRamFloorMb. 0: no estimate, so a launch only
+    // needs the 1 GB floor free (the emulator admits work while it fits above that floor).
+    static constexpr int kDefaultLaunchNeedMb = 0;
 
     // Opens Paths::settingsFile(), or the given ini file.
     explicit AppSettings(QObject* parent = nullptr);

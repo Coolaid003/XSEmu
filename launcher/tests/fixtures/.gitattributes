@@ -1,0 +1,2 @@
+# Fixtures stand for files the emulator writes; keep their bytes identical on every checkout.
+* -text

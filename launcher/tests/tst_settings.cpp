@@ -31,7 +31,7 @@ void TestSettings::defaultsFollowTheHouseRules()
     QVERIFY(!s.firstLaunchDone());
     QCOMPARE(s.theme(), AppSettings::ThemeMode::System);
     QCOMPARE(s.giantCompileCap(), 3);
-    QCOMPARE(s.launchNeedMb(), 6 * 1024);
+    QCOMPARE(s.launchNeedMb(), 0);
     QVERIFY(s.artLookups());
     QVERIFY(s.steamGridDbKey().isEmpty());
 }

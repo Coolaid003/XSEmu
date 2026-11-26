@@ -19,6 +19,7 @@ private slots:
     void setReplacesInPlaceAndKeepsEverythingElse();
     void setAddsMissingKeysBeforeTheFirstTable();
     void tablesAreNotTopLevel();
+    void keepsWindowsLineEndings();
     void createsAMissingFileWithOnlyTheKeys();
     void formatsEveryScalar();
     void parsesQuotingAndComments();
@@ -88,6 +89,14 @@ void TestTitleConfig::tablesAreNotTopLevel()
     QCOMPARE(v.size(), 1);
     const QString out = TitleConfig::apply(text, {{QStringLiteral("b"), 3}});
     QCOMPARE(out, QStringLiteral("a = 1\nb = 3\n[stub_returns]\nb = 2\n"));
+}
+
+void TestTitleConfig::keepsWindowsLineEndings()
+{
+    const QString crlf = QStringLiteral("# head\r\ndevice_type = \"lockhart\"\r\nwindow_width = 1280\r\n\r\n[mounts]\r\n\"G:\" = \"{game}\"\r\n");
+    QCOMPARE(TitleConfig::parse(crlf).value(QStringLiteral("window_width")).toLongLong(), 1280);
+    QCOMPARE(TitleConfig::apply(crlf, {{QStringLiteral("device_type"), QStringLiteral("anaconda")}, {QStringLiteral("raytracing"), QStringLiteral("off")}}),
+             QStringLiteral("# head\r\ndevice_type = \"anaconda\"\r\nwindow_width = 1280\r\nraytracing = \"off\"\r\n\r\n[mounts]\r\n\"G:\" = \"{game}\"\r\n"));
 }
 
 void TestTitleConfig::createsAMissingFileWithOnlyTheKeys()

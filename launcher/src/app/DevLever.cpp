@@ -246,9 +246,9 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         } else if (st == QLatin1String("error-not-enough-ram")) {
             EmulatorController::LaunchCheck check;
             check.problem = EmulatorController::LaunchCheck::Problem::NotEnoughRam;
-            check.needMb = 6 * 1024 + EmulatorController::kRamFloorMb;
-            check.freeMb = 4300;
-            check.reason = QStringLiteral("%1 needs about 7.0 GB of free RAM to start, and XSEmu keeps 1 GB free while it runs.").arg(coast.title());
+            check.needMb = EmulatorController::kRamFloorMb;
+            check.freeMb = 640;
+            check.reason = QStringLiteral("Not enough free memory to start: %1 needs about 1.0 GB free and this PC has 0.6 GB free.").arg(coast.title());
             LaunchErrors::showLaunchProblem(&w, s, coast, check, [] {});
         } else {
             EmulatorController::ExitInfo info;

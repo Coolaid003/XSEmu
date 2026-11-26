@@ -107,13 +107,17 @@ void FakeWarmup::tick()
 
     const double secs = qMax(0.05, m_phaseClock.elapsed() / 1000.0);
     const double rate = m_done / secs;
+    // No fixed cap: a giant compile (about 1.4 GB in the driver) is admitted while it fits in free
+    // RAM above the 1 GB floor, so the number that can run at once follows free memory.
+    const int ramFree = m_holdForRam ? 1010 : 12288 - int(m_done % 700);
+    const int giantsFit = qMax(0, (ramFree - 1024) / 1434);
     QJsonObject o{{QStringLiteral("ev"), QStringLiteral("warmup_progress")},
                   {QStringLiteral("done"), m_done},
                   {QStringLiteral("total"), ph.total},
                   {QStringLiteral("keys_per_s"), qRound(rate * 10) / 10.0},
-                  {QStringLiteral("ram_free_mb"), m_holdForRam ? 1010 : 12288 - int(m_done % 700)},
-                  {QStringLiteral("giants_compiling"), qstrcmp(ph.id, "giants") == 0 ? 2 : 0},
-                  {QStringLiteral("giants_max"), 3},
+                  {QStringLiteral("ram_free_mb"), ramFree},
+                  {QStringLiteral("giants_compiling"), qstrcmp(ph.id, "giants") == 0 ? qMin(2, giantsFit) : 0},
+                  {QStringLiteral("giants_max"), giantsFit},
                   {QStringLiteral("in_flight"), m_holdForRam ? 0 : 5},
                   {QStringLiteral("failed"), m_failed},
                   {QStringLiteral("phase"), QLatin1String(ph.id)},

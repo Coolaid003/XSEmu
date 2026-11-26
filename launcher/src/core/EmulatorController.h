@@ -74,7 +74,7 @@ public:
     ~EmulatorController() override;
 
     LaunchCheck checkLaunch(const Game& game) const;
-    // Free RAM a launch needs: AppSettings::launchNeedMb() + kRamFloorMb.
+    // Free RAM a launch needs: the 1 GB floor plus AppSettings::launchNeedMb() (0 unless set).
     qint64 launchNeedMb() const;
 
     // Start the game. hostWindow is the native handle of the in-game view's host widget (0: the
