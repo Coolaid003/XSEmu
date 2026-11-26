@@ -14,6 +14,7 @@
 #include "widgets/Text.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <algorithm>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -86,7 +87,7 @@ StepRow makeStep(const QString& name)
     h->setSpacing(10);
     r.done = new IconView(QStringLiteral("check"), Theme::Role::Success, 14);
     r.spin = new Spinner(14);
-    r.wait = new IconView(QStringLiteral("clock"), Theme::Role::Text3, 14);
+    r.wait = new IconView(QStringLiteral("pending"), Theme::Role::Text3, 14);
     r.name = new Label(name, Label::Style::SmallMedium);
     r.name->setFixedWidth(170);
     r.detail = new Label({}, Label::Style::Small, Theme::Role::Text2);
@@ -216,9 +217,14 @@ public:
             barRow->addWidget(m_bars.last());
             sv->addLayout(barRow);
         }
-        m_foot = new Label(QStringLiteral("Runs in the background and hidden; you can keep using XSEmu. Files go to %1.").arg(QDir::toNativeSeparators(spec.dataDir())),
-                           Label::Style::Caption, Theme::Role::Text3);
-        m_foot->setWordWrap(true);
+        m_foot = new QWidget;
+        auto* fh = new QHBoxLayout(m_foot);
+        fh->setContentsMargins(0, 4, 0, 0);
+        fh->setSpacing(6);
+        fh->addWidget(new IconView(QStringLiteral("info"), Theme::Role::Text3, 12), 0, Qt::AlignTop);
+        auto* footText = new Label(QStringLiteral("Runs in the background; you can keep using XSEmu."), Label::Style::Caption, Theme::Role::Text3);
+        footText->setWordWrap(true);
+        fh->addWidget(footText, 1);
         sv->addWidget(m_foot);
         m_error = new Label({}, Label::Style::Small, Theme::Role::Danger);
         m_error->setWordWrap(true);
@@ -267,8 +273,12 @@ public:
             m_rows[i].name->setRole(done || active ? Theme::Role::Text : Theme::Role::Text3);
             m_bars[i]->setVisible(active && st.state == S::Installing);
             if (!active || st.state != S::Installing) {
-                if (!done)
-                    m_rows[i].detail->setText(i == 2 ? QDir::toNativeSeparators(m_spec.installDir()) : QString());
+                if (i == 0)
+                    m_rows[i].detail->setText(done ? m_spec.pinnedVersion() : QString());
+                else if (i == 2)
+                    m_rows[i].detail->setText(QStringLiteral("In ") + QDir::toNativeSeparators(QFileInfo(m_spec.dataDir()).path()));
+                else if (!done)
+                    m_rows[i].detail->clear();
                 continue;
             }
             const RunnerManager::Progress& p = st.progress;
@@ -300,7 +310,7 @@ private:
     Card* m_steps;
     QList<StepRow> m_rows;
     QList<Bar*> m_bars;
-    Label* m_foot;
+    QWidget* m_foot;
     Label* m_error;
     int m_lastPhase = 0;
 };
@@ -344,7 +354,7 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
     reorder();
 
     connect(&m_s.runners, &RunnerManager::changed, this, [this](const QString& id) {
-        if (m_s.runners.busyId() != m_busy)
+        if (installingId() != m_busy)
             reorder();
         for (RunnerCard* c : std::as_const(m_cards))
             c->refresh();
@@ -356,20 +366,28 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
     });
 }
 
+QString RunnersPage::installingId() const
+{
+    for (const RunnerSpec& r : Runners::curated())
+        if (m_s.runners.status(r.id).state == RunnerManager::State::Installing)
+            return r.id;
+    return {};
+}
+
 void RunnersPage::reorder()
 {
-    m_busy = m_s.runners.busyId();
+    m_busy = installingId();
     for (RunnerCard* c : std::as_const(m_cards))
         m_list->removeWidget(c);
-    // XSEmu, the install in progress, the runner recommended for this PC, installed ones, then the rest
+    // the install in progress, XSEmu, the runner recommended for this PC, installed ones, then the rest
     const QString recommended = RunnerUi::recommendation(m_s).runnerId;
     QList<const RunnerSpec*> order;
     for (const RunnerSpec& r : Runners::curated())
         order << &r;
     auto rank = [&](const RunnerSpec* r) {
-        if (r->isBuiltIn())
-            return 0;
         if (r->id == m_busy)
+            return 0;
+        if (r->isBuiltIn())
             return 1;
         if (r->id == recommended)
             return 2;

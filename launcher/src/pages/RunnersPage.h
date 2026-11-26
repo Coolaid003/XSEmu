@@ -18,6 +18,7 @@ public:
 
 private:
     void reorder();
+    QString installingId() const;
 
     Services& m_s;
     QVBoxLayout* m_list;

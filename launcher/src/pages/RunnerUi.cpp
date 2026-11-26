@@ -92,7 +92,7 @@ QString statusDetail(Services& s, const RunnerSpec& spec, const RunnerManager::S
             return QStringLiteral("%1 \u2192 %2").arg(st.installedVersion, st.pinnedVersion);
         return QStringLiteral("%1 \u00B7 %2").arg(when, size);
     }
-    case S::Installing: return QStringLiteral("Started %1").arg(QLocale().toString(st.progress.startedAt.time(), QLocale::ShortFormat));
+    case S::Installing: return QStringLiteral("Since %1").arg(QLocale().toString(st.progress.startedAt.time(), QLocale::ShortFormat));
     case S::NotInstalled:
         return spec.install == RunnerSpec::Install::BuildFromSource ? QStringLiteral("Builds from source on this PC; build time not measured yet.")
                                                                     : QStringLiteral("Downloads %1").arg(spec.assetName);
