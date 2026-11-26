@@ -69,6 +69,7 @@ void updateStatusBadge(Badge* b, const RunnerManager::Status& st)
     case S::NotInstalled: b->setText(QStringLiteral("Not installed")); b->setTone(Theme::Tone::Neutral); break;
     case S::Unavailable: b->setText(QStringLiteral("Not available on this PC")); b->setTone(Theme::Tone::Neutral); break;
     case S::Failed: b->setText(QStringLiteral("Install failed")); b->setTone(Theme::Tone::Danger); break;
+    case S::Uninstalling: b->setText(QStringLiteral("Uninstalling")); b->setTone(Theme::Tone::Neutral); break;
     case S::Moving: {
         const bool known = st.progress.total > 0 && st.progress.done >= 0;
         b->setText(known ? QStringLiteral("Moving \u00B7 %1%").arg(qRound(100.0 * double(st.progress.done) / double(st.progress.total))) : QStringLiteral("Moving"));
@@ -107,6 +108,7 @@ QString statusDetail(Services& s, const RunnerSpec& spec, const RunnerManager::S
         return bytes < 0 ? when : QStringLiteral("%1 \u00B7 %2").arg(when, Format::bytes(bytes));
     }
     case S::Installing: return QStringLiteral("Since %1").arg(QLocale().toString(st.progress.startedAt.time(), QLocale::ShortFormat));
+    case S::Uninstalling: return QStringLiteral("Deleting %1").arg(st.progress.detail);
     case S::Moving:
         return st.progress.total > 0 ? QStringLiteral("Moving to %1 \u00B7 %2 of %3").arg(st.progress.detail, Format::bytes(st.progress.done), Format::bytes(st.progress.total))
                                      : QStringLiteral("Moving to %1").arg(st.progress.detail);
