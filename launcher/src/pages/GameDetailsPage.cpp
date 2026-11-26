@@ -1,6 +1,8 @@
 #include "GameDetailsPage.h"
 
+#include "ImportSettingsDialog.h"
 #include "RunsWithPicker.h"
+#include "ShareSettingsDialog.h"
 
 #include "app/Services.h"
 #include "core/Format.h"
@@ -387,7 +389,17 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
         QAction* findArt = nullptr;
         if (m_s.covers.canLookUp())
             findArt = menu.addAction(QStringLiteral("Find art again"));
+        menu.addSeparator();
+        QAction* share = menu.addAction(QStringLiteral("Share settings..."));
+        QAction* paste = menu.addAction(QStringLiteral("Paste settings code\tCtrl+Shift+V"));
+        QAction* importFile = menu.addAction(QStringLiteral("Import settings file..."));
         QAction* chosen = menu.exec(m_more->mapToGlobal(QPoint(0, m_more->height() + 4)));
+        if (chosen == share)
+            SettingsShare::openForGame(window(), m_s, m_game.titleId());
+        else if (chosen == paste)
+            SettingsImport::fromClipboard(window(), m_s, m_game.titleId());
+        else if (chosen == importFile)
+            SettingsImport::chooseFile(window(), m_s, m_game.titleId());
         if (chosen == openToml)
             QDesktopServices::openUrl(QUrl::fromLocalFile(toml));
         else if (chosen == openLogs)

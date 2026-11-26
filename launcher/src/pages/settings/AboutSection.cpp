@@ -4,6 +4,7 @@
 #include "app/Services.h"
 #include "core/EmulatorBuild.h"
 #include "core/Paths.h"
+#include "pages/ShareSettingsDialog.h"
 #include "widgets/Button.h"
 #include "widgets/Icon.h"
 #include "widgets/Text.h"
@@ -86,6 +87,7 @@ QWidget* SettingsSections::about(Services& s)
         QGuiApplication::clipboard()->setText(QStringLiteral("%1, launcher %2").arg(copy->property("version").toString(), QStringLiteral(XSEMU_VERSION)));
     });
     sec.row(QStringLiteral("Launcher"), QStringLiteral("%1. New code under the GNU General Public License v2.").arg(QStringLiteral(XSEMU_VERSION)));
+    SettingsShare::addSettingsRows(sec, s);
 
     sec.caps(QStringLiteral("Credits"));
     auto* credits = new Label(QStringLiteral("XSEmu is built on <b>XCL</b>, the Xbox Series compatibility layer by the xcl-dev contributors (GPL-2.0). "

@@ -13,6 +13,9 @@
 #include "core/TitleConfig.h"
 #include "pages/FirstLaunchPage.h"
 #include "pages/GameDetailsPage.h"
+#include "pages/ImportSettingsDialog.h"
+#include "pages/ShareSettingsDialog.h"
+#include "core/SettingsProfile.h"
 #include "pages/RunsWithPicker.h"
 #include "pages/SettingsPage.h"
 #include "shell/FloatingBar.h"
@@ -29,6 +32,7 @@
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QLineEdit>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -409,6 +413,7 @@ QStringList DevLever::states()
         QStringLiteral("runners-install-error"), QStringLiteral("runners-change-location"), QStringLiteral("details-runs-with-kelvaroq"),
         QStringLiteral("details-runs-with-picker"),
         QStringLiteral("warmup-runner"), QStringLiteral("library-runner-own-window"), QStringLiteral("library-runner-floating-bar"),
+        QStringLiteral("share-settings"), QStringLiteral("import-preview"), QStringLiteral("import-error"),
     };
 }
 
@@ -536,6 +541,16 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.showGameDetails(coast);
     } else if (st == QLatin1String("details-runs-with-picker"))
         w.showGameDetails(coast);
+    else if (st == QLatin1String("share-settings") || st.startsWith(QLatin1String("import-"))) {
+        if (st == QLatin1String("share-settings")) {
+            s.settings.setGameOverride(coast.titleId(), QStringLiteral("device_type"), QStringLiteral("anaconda"));
+            s.settings.setGameOverride(coast.titleId(), QStringLiteral("display_mode"), QStringLiteral("1920x1080"));
+            s.settings.setGameOverride(coast.titleId(), QStringLiteral("raytracing"), QStringLiteral("tier1_1"));
+            s.settings.setGameOverride(coast.titleId(), QStringLiteral("overlay"), true);
+            s.settings.setGameOverride(coast.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+        }
+        w.showGameDetails(coast);
+    }
     else if (st.startsWith(QLatin1String("warmup"))) {
         w.showPage(Page::Warmup);
         if (st == QLatin1String("warmup-runner"))
@@ -683,6 +698,39 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
     if (st == QLatin1String("settings-shaders-clear")) {
         if (auto* clear = w.settingsPage()->sectionPage(SettingsPage::Section::Shaders)->findChild<QAbstractButton*>(QStringLiteral("clearShaderCache")))
             QTimer::singleShot(300, clear, &QAbstractButton::click);
+    }
+    if (st == QLatin1String("share-settings")) {
+        QTimer::singleShot(0, &w, [&w, &s, id = coast.titleId()] {
+            SettingsShare::openForGame(&w, s, id);
+            if (auto* note = w.findChild<QLineEdit*>(QStringLiteral("shareNote"))) {
+                note->setText(QStringLiteral("Locked 60 in the city on an RTX 5080. Series X needs 32 GB of RAM."));
+                note->setCursorPosition(0);
+            }
+        });
+    } else if (st.startsWith(QLatin1String("import-"))) {
+        // a profile made on another PC: three changes, a runner this PC lacks, a feature this build
+        // doesn't have, a value out of range and a key this launcher doesn't know
+        const QByteArray shared = QJsonDocument(QJsonObject{
+            {QStringLiteral("schema"), QStringLiteral("xsemu-settings")},
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("name"), QStringLiteral("Coastline Drive · 1440p 120 Hz")},
+            {QStringLiteral("note"), QStringLiteral("Smooth in the city at 120 Hz. Series X needs 32 GB of RAM.")},
+            {QStringLiteral("madeWith"), QJsonObject{{QStringLiteral("launcher"), QStringLiteral("0.1.0")}, {QStringLiteral("gpuVendor"), QStringLiteral("AMD")},
+                                                     {QStringLiteral("gpu"), QStringLiteral("AMD Radeon RX 7900 XTX")}}},
+            {QStringLiteral("game"), QJsonObject{{QStringLiteral("titleId"), coast.titleId()}, {QStringLiteral("title"), coast.title()}}},
+            {QStringLiteral("settings"), QJsonObject{{QStringLiteral("device_type"), QStringLiteral("anaconda")},
+                                                     {QStringLiteral("display_mode"), QStringLiteral("2560x1440@120")},
+                                                     {QStringLiteral("raytracing"), QStringLiteral("tier1_1")},
+                                                     {QStringLiteral("mouse_sensitivity"), 9},
+                                                     {QStringLiteral("startIn"), QStringLiteral("fullscreen")},
+                                                     {QStringLiteral("fsr_sharpness"), 0.4}}},
+            {QStringLiteral("runner"), QJsonObject{{QStringLiteral("id"), QStringLiteral("victory-7900xtx")},
+                                                   {QStringLiteral("version"), Runners::find(QStringLiteral("victory-7900xtx"))->pinnedVersion()}}},
+        }).toJson(QJsonDocument::Compact);
+        const QString code = QLatin1String(SettingsProfile::kCodePrefix)
+                             + QString::fromLatin1(qCompress(shared).toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+        const QByteArray input = st == QLatin1String("import-error") ? code.left(code.size() - 24).toUtf8() : code.toUtf8();
+        QTimer::singleShot(0, &w, [&w, &s, input, id = coast.titleId()] { SettingsImport::fromText(&w, s, input, id); });
     }
     if (st == QLatin1String("library-stop-first"))
         w.play(quiet); // the real launch check: Busy while Coastline Drive is paused

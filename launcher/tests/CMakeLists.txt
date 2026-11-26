@@ -19,6 +19,7 @@ xsemu_test(tst_coverart)
 xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
 xsemu_test(tst_runners)
+xsemu_test(tst_settingsprofile)
 
 # a DexNom-shaped source build read back through every runner surface, then after a restart
 xsemu_test(tst_runnerstate)
