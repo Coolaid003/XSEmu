@@ -20,6 +20,11 @@ xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
 xsemu_test(tst_runners)
 
+# page-switch timings on a generated PC-shaped shader cache and library
+xsemu_test(tst_perf)
+target_link_libraries(tst_perf PRIVATE xsemu_ui)
+set_tests_properties(tst_perf PROPERTIES TIMEOUT 600)
+
 if(WIN32)
     # a window from another process reparented into a Qt host (the test picks the real windows platform)
     add_executable(reparent-helper WIN32 reparent-helper.cpp)
