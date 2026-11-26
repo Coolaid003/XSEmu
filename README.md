@@ -1,39 +1,165 @@
+<div align="center">
+
 # XSEmu
+
+**Run Xbox Series X|S (GDK) titles on Windows, built on the XCL translation layer.**
+
+[![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue)](LICENSE)
+[![Language: Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust)](Cargo.toml)
+[![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#requirements)
+[![Status: experimental](https://img.shields.io/badge/status-experimental-red)](#status)
+
+</div>
 
 XSEmu runs Xbox Series X|S (GDK) titles on Windows x64. It is built on
 [XCL](https://github.com/ivall/xcl), a compatibility layer by ivall and its
 contributors, and it works the way Wine does: the title's x64 code runs natively
 on the host CPU, and XCL stands in for the console libraries that Windows does
-not have. It does not emulate the console's CPU or hardware.
+not have. XSEmu does not emulate the console's CPU or hardware.
 
-**Status:** experimental research software. Expect crashes, missing features and
+## Contents
+
+- [Status](#status)
+- [How it works](#how-it-works)
+- [Shader pipeline](#shader-pipeline)
+- [Requirements](#requirements)
+- [Build and test](#build-and-test)
+- [Usage](#usage)
+- [Repository layout](#repository-layout)
+- [Upstream and licence](#upstream-and-licence)
+- [Legal](#legal)
+
+## Status
+
+XSEmu is experimental research software. Expect crashes, missing features and
 rendering errors. This repository makes no compatibility claims for any title.
 The [upstream README](UPSTREAM.md) records the results that XCL reported; those
 are XCL's results, not XSEmu's.
 
 ## How it works
 
-The translation layer lives in `crates/xcl`. Its main parts are:
+`xcl run` maps the title's executable and DLLs into its own process and runs
+them on the host CPU. Each import goes to an XCL replacement, the title's own
+DLL, the Windows DLL of the same name, or a logged stub. Graphics calls go
+through a D3D12.X layer that creates real PC D3D12 objects.
 
-- **PE loader and runtime shims.** The loader maps the title's executable and
-  DLLs and routes each import to an XCL implementation (`kernelx`, XGameRuntime,
-  GameInput, XAudio2 and others), to the matching Windows DLL, or to a logged
-  stub.
+```mermaid
+flowchart TB
+    run["xcl run"] --> loader["PE loader<br/>loader.rs, pe.rs, tls.rs"]
+    loader -->|maps and starts| title["Title EXE and DLLs<br/>native x64 code"]
+    title -->|imports| resolver{"Resolver"}
+    resolver -->|console library| hle["HLE replacements<br/>kernelx, XGameRuntime,<br/>GameInput, XAudio2"]
+    resolver -->|title DLL| gamedll["Title's own DLLs"]
+    resolver -->|same name| windll["Windows DLLs"]
+    resolver -->|not found| stub["Logged stub"]
+    title -->|"console paths G:, GAME:, S:, T:"| vfs["VFS<br/>vfs.rs, vfs_hooks.rs"]
+    vfs -->|reads| gamefolder[("Game folder<br/>read only")]
+    vfs -->|writes| datafolder[("Title data folder<br/>overlay, saves, logs")]
+    title -->|"xcrdapi.dll"| dstorage["DirectStorage<br/>hle/dstorage.rs"]
+    dstorage -->|reads through| vfs
+    dstorage -->|"zlib, then BCPack<br/>(xcl-bcpack)"| memory[("Title memory")]
+    title -->|"d3d12_xs.dll"| d3d12x["D3D12.X layer<br/>hle/d3d12x"]
+    d3d12x -->|console shaders| recomp["Shader recompiler<br/>gpu/recomp"]
+    recomp -->|DXIL| d3d12x
+    d3d12x -->|"devices, resources,<br/>command lists, PresentX"| pcd3d12["PC D3D12 and driver"]
+    pcd3d12 --> gpu["GPU"]
+```
+
+- **PE loader and runtime shims.** The loader handles relocations, imports,
+  delay-loads, TLS callbacks and exception tables. Console libraries such as
+  `kernelx`, XGameRuntime, GameInput and XAudio2 are implemented in
+  `crates/xcl/src/hle`. Functions that behave the same as on Windows go to the
+  real Windows export.
 - **D3D12.X to D3D12.** The console's `d3d12_xs.dll` is replaced by real PC
   D3D12 objects. Console-only device slots, descriptor heaps, command lists and
-  `PresentX` are translated to PC D3D12.
-- **Shader recompiler.** Console shaders ship as RDNA2 machine code with no
-  usable DXIL. The recompiler translates each program to HLSL (vertex, pixel,
-  compute, geometry and mesh/NGG stages) and compiles that HLSL to DXIL. DXC is
-  the default compiler. An optional direct DXIL backend (`crates/xcl-dxil`)
-  compiles the same HLSL without DXC and hands anything it does not support
-  back to DXC. On GPUs that run only 32-lane waves, console wave64 programs run
-  as two 32-lane halves ([details](docs/wave64-on-wave32.md)).
-- **Textures and storage.** GFX10 tiled textures are converted to PC layouts.
-  The console's DirectStorage (`xcrdapi.dll`) is implemented, including BCPack
-  texture decompression (`crates/xcl-bcpack`).
+  `PresentX` are translated to PC D3D12. GFX10 tiled textures are converted to
+  PC layouts.
+- **DirectStorage.** The console's `xcrdapi.dll` reads files through the VFS and
+  decompresses zlib and BCPack data into title memory. BCPack needs a table file
+  that is not part of this repository.
 - **Virtual file system.** Console paths map to the game folder. The game folder
   is only read: writes, saves and logs go to a per-title data folder.
+
+## Shader pipeline
+
+Console shaders ship as RDNA2 machine code with no usable DXIL. The recompiler
+translates each program (vertex, pixel, compute, geometry and mesh/NGG stages)
+to HLSL, and a compiler turns that HLSL into DXIL. Three disk caches keep the
+work between runs, and a manifest records every pipeline the title made so that
+`xcl warm-up` can rebuild them before the next run.
+
+```mermaid
+flowchart TB
+    shader["Console shader<br/>RDNA2 code"] --> translated{"Translated<br/>cache"}
+    translated -->|hit| dxil["DXIL"]
+    translated -->|miss| recomp["Recompiler<br/>gpu/recomp"]
+    recomp --> hlsl["HLSL"]
+    hlsl --> dxilcache{"DXIL<br/>cache"}
+    dxilcache -->|hit| dxil
+    dxilcache -->|miss| backend{"Shader<br/>backend"}
+    backend -->|"hlsl (default)"| dxc["DXC<br/>dxcompiler.dll"]
+    backend -->|dxil| direct["Direct DXIL backend<br/>crates/xcl-dxil"]
+    direct -->|"unsupported or error"| dxc
+    direct --> dxil
+    dxc --> dxil
+    dxil --> blobcache{"Driver blob<br/>cache"}
+    blobcache -->|hit| pso["Pipeline state"]
+    blobcache -->|miss| driver["Driver compile"]
+    driver --> pso
+    driver -.->|"kept if it took 250 ms or more"| blobcache
+    pso --> manifest[("Pipeline manifest")]
+    manifest -.->|"replayed by xcl warm-up"| shader
+```
+
+- The **translated cache** holds the DXIL of each console program, keyed by the
+  program's bytes, its stage, a hash of the translator sources and the DXC
+  toolchain. The **DXIL cache** is keyed by the HLSL, the XCL version, the
+  compiler identity and the shader profile. A change to the translator or to the
+  DXC DLLs gives new keys, so stale entries are not used.
+  `XCL_TRANSLATED_CACHE=0` turns off the translated cache.
+- The direct DXIL backend compiles only the HLSL dialect that the recompiler
+  emits. Anything outside it goes to DXC. DXC and the direct backend never share
+  a cache entry.
+- The **driver blob cache** lives in `<DXIL cache>\driver\` and is keyed by
+  the DXIL hash and flags. A blob is kept when its driver compile took 250 ms
+  or more. The driver refuses a blob from another driver, adapter or root
+  signature, and XCL then compiles the program again. `XCL_PSO_DISK_CACHE=0` turns it off.
+- The **pipeline manifest** lives in `<DXIL cache>\pipelines\`. It keeps the console shaders
+  and the pipeline description, not the translation, so a warm-up after a
+  translator change builds every pipeline from the new translation.
+  `XCL_PSO_MANIFEST=0` turns it off.
+- On GPUs that run only 32-lane waves, console wave64 programs run as two
+  32-lane halves ([details](docs/wave64-on-wave32.md)).
+
+### Non-blocking pipeline creation
+
+A title creates thousands of pipelines while it loads, and a DXC compile takes
+from 0.2 s to several seconds. So when a pipeline's DXIL is not cached yet, the
+title gets a stand-in pipeline at once and the real one is built on a
+background worker (`hle/d3d12x/pso_async.rs`):
+
+```mermaid
+sequenceDiagram
+    participant T as Title
+    participant X as D3D12.X layer
+    participant W as Background worker
+    participant D as PC D3D12 driver
+    T->>X: Create pipeline state
+    X-->>T: Stand-in pipeline, returned at once
+    X->>W: Queue the real build
+    W->>W: Translate to HLSL, compile to DXIL
+    W->>D: Create pipeline state
+    alt Title binds before the build is done
+        T->>X: Bind pipeline
+        Note over X: Graphics: the stand-in draws nothing.<br/>Compute: the bind waits, and its build<br/>goes ahead of the others.
+    end
+    D-->>W: Real pipeline
+    W-->>X: Real pipeline replaces the stand-in
+    T->>X: Bind pipeline
+    X->>D: Bind the real pipeline
+```
+
+`XCL_ASYNC_PSO=0` builds every pipeline inside the create call instead.
 
 ## Requirements
 
@@ -91,31 +217,30 @@ xcl warm-up --giants-only --floor-mb N
 xcl --version
 ```
 
-- `shaders --precompile` translates every VS, PS, MS and CS program in a shader
-  package and compiles it into the DXIL cache, so a title does not wait for DXC
-  on first use. It skips programs that are already cached. `--pipelines` also
-  creates each compute pipeline on the GPU, so the driver caches its own
-  compile.
-- `warm-up` rebuilds the pipelines that earlier runs created, so the driver
-  compiles less while a title loads. By default it stops after 20 minutes
-  (`XCL_WARMUP_BUDGET_S`) and leaves out programs over 1 MB of DXIL. `--full`
-  builds everything with no time limit and resumes where an earlier `--full`
-  pass stopped.
-- `warm-up --mesh-only` builds only the missing driver blobs for mesh
-  pipelines. `warm-up --giants-only --floor-mb N` builds the large compute
-  programs one at a time and keeps N MB of RAM free (N must be 1024 or more).
-- `warm-up` refuses to start while another `xcl.exe` is running. Run one XCL
-  process tree at a time.
+| Command | What it does |
+|---|---|
+| `shaders --precompile` | Translates every VS, PS, MS and CS program in a shader package and compiles it into the DXIL cache, so a title does not wait for DXC on first use. Cached programs are skipped. `--pipelines` also creates each compute pipeline on the GPU, so the driver caches its own compile. |
+| `warm-up` | Rebuilds the pipelines in the manifest, so the driver compiles less while a title loads. It stops after 20 minutes (`XCL_WARMUP_BUDGET_S`), leaves out programs over 1 MB of DXIL, and leaves out pipelines that none of the last 3 runs made. |
+| `warm-up --full` | Builds everything, with no time limit, and resumes where an earlier `--full` pass stopped. |
+| `warm-up --mesh-only` | Builds only the missing driver blobs for mesh pipelines. |
+| `warm-up --giants-only --floor-mb N` | Builds the large compute programs one at a time and keeps N MB of RAM free (N must be 1024 or more). |
+
+`warm-up` refuses to start while another `xcl.exe` is running. Run one XCL
+process tree at a time.
+
+### Title data and configuration
 
 Each title gets a data folder at `%LOCALAPPDATA%\XCL\<title>\` (or
 `%XCL_DATA_ROOT%\<title>\`). It holds `xcl.toml`, the write overlay, saves,
 the title's `S:\` and `T:\` storage, caches, `logs\xcl.log` and
 `logs\report.json`. The report lists called stubs, unknown D3D12.X slots,
-shader statistics and the crash, if there was one. In `xcl.toml`,
-`device_type = "lockhart"` makes the title see a Series S; the default,
-`"anaconda"`, is a Series X.
+shader statistics and the crash, if there was one.
 
-### Environment variables
+In `xcl.toml`, `device_type = "lockhart"` makes the title see a Series S; the
+default, `"anaconda"`, is a Series X.
+
+<details>
+<summary><strong>Environment variables</strong></summary>
 
 | Variable | Effect |
 |---|---|
@@ -124,7 +249,11 @@ shader statistics and the crash, if there was one. In `xcl.toml`,
 | `XCL_D3D12_DIR` | Folder that holds the D3D12 Agility SDK. |
 | `XCL_ADAPTER` | GPU to use, by index (`1`) or by name (`radeon`). |
 | `XCL_SHADER_BACKEND` | `hlsl` (default) compiles with DXC. `dxil` uses the direct DXIL backend, with DXC as the fallback. |
+| `XCL_DXIL_CACHE` | Folder of the DXIL cache, instead of `%LOCALAPPDATA%\xcl\dxil`. |
 | `XCL_TRANSLATED_CACHE=0` | Turns off the disk cache of translated shaders. |
+| `XCL_PSO_DISK_CACHE=0` | Turns off the driver blob cache. |
+| `XCL_PSO_MANIFEST=0` | Stops recording pipelines in the manifest. |
+| `XCL_ASYNC_PSO=0` | Builds every pipeline inside the create call, with no stand-in. |
 | `XCL_WARMUP_BUDGET_S` | Time limit in seconds for `xcl warm-up` without `--full`. |
 | `XCL_NETWORK=0` | Runs the title with no network, as on a console that is offline. Loopback still works. |
 | `XCL_STORE=offline-error` | Every store query fails with the GDK store network error. No licence is granted. |
@@ -134,6 +263,8 @@ shader statistics and the crash, if there was one. In `xcl.toml`,
 
 The code reads many more `XCL_*` variables for tracing and diagnostics. See the
 source for those.
+
+</details>
 
 ## Repository layout
 
