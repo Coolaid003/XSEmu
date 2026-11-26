@@ -9,6 +9,7 @@
 #include "core/NativeWindow.h"
 #include "pages/FirstLaunchPage.h"
 #include "pages/GameDetailsPage.h"
+#include "pages/ImportSettingsDialog.h"
 #include "pages/LibraryPage.h"
 #include "pages/SettingsPage.h"
 #include "pages/RunnersPage.h"
@@ -132,6 +133,10 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
         setWindowIcon(Icon::appIcon());
         update();
     });
+
+    SettingsImport::install(
+        this, m_s, [this] { return m_pages->currentWidget() == m_details ? m_details->game().titleId() : QString(); },
+        [this] { return !m_inGameMode && m_s.settings.firstLaunchDone(); });
 
 #ifndef Q_OS_WIN
     qApp->installEventFilter(this);
