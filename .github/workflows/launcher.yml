@@ -1,0 +1,86 @@
+name: Launcher
+
+on:
+  pull_request:
+    paths:
+      - launcher/**
+      - assets/logo/**
+      - docs/launcher-protocol.md
+      - .github/workflows/launcher.yml
+  push:
+    branches: [main]
+    paths:
+      - launcher/**
+      - assets/logo/**
+      - docs/launcher-protocol.md
+      - .github/workflows/launcher.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install Qt 6.8 (MSVC 2022, x64)
+        uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06 # v4.5.0
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+      - name: Set up the MSVC environment
+        uses: ilammy/msvc-dev-cmd@7defe9254715b088f12dddd9942945a3d75cdad5 # v1.9.0
+        with:
+          arch: x64
+      - name: Configure
+        run: cmake -S launcher -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DXSEMU_LAUNCHER_TESTS=ON -DXSEMU_FAKE_EMULATOR=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --timeout 120
+      - name: Install and deploy Qt
+        run: cmake --install build --prefix dist
+      - name: Upload XSEmuLauncher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: XSEmuLauncher-windows
+          path: dist/
+          if-no-files-found: error
+
+  ubuntu:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install Qt 6 and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ qt6-base-dev qt6-svg-dev libgl-dev
+      - name: Configure
+        run: cmake -S launcher -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        working-directory: build
+        run: ctest --output-on-failure --timeout 120
+      - name: Render every design state headless
+        working-directory: build
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          mkdir -p grabs
+          for theme in light dark; do
+            for state in $(./XSEmuLauncher --list-states); do
+              ./XSEmuLauncher --theme "$theme" --state "$state" --grab "grabs/$theme-$state.png"
+            done
+          done
