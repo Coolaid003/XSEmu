@@ -71,6 +71,7 @@ void TestInGame::init()
 {
     m_dir = std::make_unique<QTemporaryDir>();
     qputenv("XCL_DATA_ROOT", m_dir->filePath(QStringLiteral("xcl")).toUtf8());
+    qputenv("XSEMU_LAUNCHER_DATA", m_dir->filePath(QStringLiteral("launcher")).toUtf8()); // settings start fresh for each test
     qputenv("FAKE_XSEMU_SCENARIO", "ok");
     m_s = std::make_unique<Services>();
     m_s->settings.setLaunchNeedMb(0);
