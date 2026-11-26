@@ -409,7 +409,8 @@ void WarmupPage::refresh()
             if (run.failed > 0)
                 m_block->setNote(QStringLiteral("%1 pipelines failed to build; the game compiles them when it needs them. The log names them.").arg(Format::count(run.failed)));
             if (canPlay) {
-                m_play->setText(QStringLiteral("Play %1").arg(m_s.warmup.game().title()));
+                const QString name = m_s.warmup.game().title();
+                m_play->setText(name.size() > 24 ? QStringLiteral("Play") : QStringLiteral("Play %1").arg(name));
                 m_play->show();
             }
             if (run.failed > 0)
@@ -449,10 +450,19 @@ void WarmupPage::refresh()
         case State::Failed: {
             m_block->setState(ProgressBlock::State::Failed);
             m_block->setTitle(QStringLiteral("Warm-up failed"));
-            m_block->setSubtitle(comparable ? at : game);
-            m_block->setFraction(comparable ? fractionOf(run.done, run.total) : -1);
             m_block->setColumns({});
-            const QString kept = run.done > 0 ? QStringLiteral(" The %1 finished pipelines are kept.").arg(Format::count(qMax<qint64>(0, run.done - run.failed))) : QString();
+            QString kept;
+            if (!m_s.warmup.doneLine() && pr.total > 0) {
+                // no warmup_done line: say where the last progress line had it
+                m_block->setSubtitle(QStringLiteral("in %1, at %2 of %3").arg(WarmupController::phaseLabel(pr.phase).toLower(), Format::count(pr.done), Format::count(pr.total)));
+                m_block->setFraction(pr.phaseFraction());
+                kept = QStringLiteral(" Finished pipelines are kept.");
+            } else {
+                m_block->setSubtitle(comparable ? at : game);
+                m_block->setFraction(comparable ? fractionOf(run.done, run.total) : -1);
+                if (run.done > 0)
+                    kept = QStringLiteral(" The %1 finished pipelines are kept.").arg(Format::count(qMax<qint64>(0, run.done - run.failed)));
+            }
             const QString why = m_s.warmup.errorMessage().isEmpty() ? QString() : QStringLiteral(" ") + sentence(m_s.warmup.errorMessage());
             m_block->setNote(QStringLiteral("XSEmu exited with code %1.").arg(Format::exitCode(run.exitCode)) + kept + why);
             m_resume->setText(QStringLiteral("Retry"));
