@@ -75,8 +75,9 @@ void TestReparent::helperWindowFollowsTheHost()
     QTRY_COMPARE_WITH_TIMEOUT(childRectInHost(reinterpret_cast<HWND>(child), hostWindow), hostClient(hostWindow), 5000);
     QCOMPARE(hostClient(hostWindow).size(), QSize(1024, 600) * host.devicePixelRatioF());
 
+    // keep handling messages while it closes: a child's DestroyWindow notifies the host (our thread) synchronously
     NativeWindow::requestClose(child, false);
-    QVERIFY(helper.waitForFinished(10000));
+    QTRY_COMPARE_WITH_TIMEOUT(helper.state(), QProcess::NotRunning, 10000);
     QCOMPARE(helper.exitStatus(), QProcess::NormalExit);
     QCOMPARE(helper.exitCode(), 0);
 }
