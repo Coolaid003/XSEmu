@@ -1,0 +1,109 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(XSEmuLauncher VERSION 0.1.0 DESCRIPTION "XSEmu launcher" LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+
+if(WIN32)
+    set(_xsemu_dev_default OFF)
+    set(_xsemu_fake_default OFF)
+else()
+    set(_xsemu_dev_default ON)
+    set(_xsemu_fake_default ON)
+endif()
+option(XSEMU_LAUNCHER_TESTS "Build the launcher unit tests" ${_xsemu_fake_default})
+option(XSEMU_FAKE_EMULATOR "Build fake-xsemu, a stand-in for XSEmu.exe that speaks the launcher protocol" ${_xsemu_fake_default})
+option(XSEMU_DEV_TOOLS "Build the screenshot lever (--state/--grab) and the widget gallery" ${_xsemu_dev_default})
+option(XSEMU_DEPLOY_QT "Run windeployqt after building and installing (Windows)" ON)
+
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets Network Svg)
+
+function(xsemu_warnings target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 /Zc:__cplusplus)
+        target_compile_definitions(${target} PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
+    else()
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wshadow=local -Wno-missing-field-initializers)
+    endif()
+endfunction()
+
+# ---- core: services without any UI (tested) ----
+add_library(xsemu_core STATIC
+    src/core/AppSettings.cpp src/core/AppSettings.h
+    src/core/CoverArtService.cpp src/core/CoverArtService.h
+    src/core/DevFixtures.cpp src/core/DevFixtures.h
+    src/core/EmulatorController.cpp src/core/EmulatorController.h
+    src/core/Format.cpp src/core/Format.h
+    src/core/Game.cpp src/core/Game.h
+    src/core/GameManifest.cpp src/core/GameManifest.h
+    src/core/HardwareInfo.cpp src/core/HardwareInfo.h
+    src/core/Library.cpp src/core/Library.h
+    src/core/Paths.cpp src/core/Paths.h
+    src/core/ProcessGate.cpp src/core/ProcessGate.h
+    src/core/ProcessTree.cpp src/core/ProcessTree.h
+    src/core/Protocol.cpp src/core/Protocol.h
+    src/core/ShaderCacheInfo.cpp src/core/ShaderCacheInfo.h
+    src/core/TitleConfig.cpp src/core/TitleConfig.h
+    src/core/WarmupController.cpp src/core/WarmupController.h
+)
+target_include_directories(xsemu_core PUBLIC src src/core)
+target_link_libraries(xsemu_core PUBLIC Qt6::Core Qt6::Network)
+if(WIN32)
+    target_link_libraries(xsemu_core PUBLIC dxgi psapi)
+endif()
+xsemu_warnings(xsemu_core)
+
+# ---- the launcher ----
+file(GLOB_RECURSE XSEMU_UI_SOURCES CONFIGURE_DEPENDS
+    src/app/*.cpp src/app/*.h
+    src/theme/*.cpp src/theme/*.h
+    src/widgets/*.cpp src/widgets/*.h
+    src/shell/*.cpp src/shell/*.h
+    src/pages/*.cpp src/pages/*.h
+)
+set(XSEMU_RESOURCES resources/launcher.qrc)
+if(WIN32)
+    list(APPEND XSEMU_RESOURCES resources/branding/app.rc)
+endif()
+
+add_executable(XSEmuLauncher WIN32 src/main.cpp ${XSEMU_UI_SOURCES} ${XSEMU_RESOURCES})
+target_include_directories(XSEmuLauncher PRIVATE src)
+target_link_libraries(XSEmuLauncher PRIVATE xsemu_core Qt6::Gui Qt6::Widgets Qt6::Svg)
+target_compile_definitions(XSEmuLauncher PRIVATE XSEMU_VERSION="${PROJECT_VERSION}")
+if(XSEMU_DEV_TOOLS)
+    target_compile_definitions(XSEmuLauncher PRIVATE XSEMU_DEV_TOOLS XSEMU_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+endif()
+xsemu_warnings(XSEmuLauncher)
+
+# ---- fake-xsemu ----
+if(XSEMU_FAKE_EMULATOR)
+    add_subdirectory(tools/fake-xsemu)
+    add_dependencies(XSEmuLauncher fake-xsemu)
+endif()
+
+# ---- install / deploy ----
+include(GNUInstallDirs)
+install(TARGETS XSEmuLauncher RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} BUNDLE DESTINATION .)
+if(WIN32 AND XSEMU_DEPLOY_QT)
+    get_target_property(_qmake Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(_qtbin "${_qmake}" DIRECTORY)
+    find_program(WINDEPLOYQT windeployqt HINTS "${_qtbin}")
+    if(WINDEPLOYQT)
+        add_custom_command(TARGET XSEmuLauncher POST_BUILD
+            COMMAND "${WINDEPLOYQT}" --no-translations --no-system-d3d-compiler --no-opengl-sw "$<TARGET_FILE:XSEmuLauncher>"
+            COMMENT "windeployqt (build tree)")
+        install(CODE "execute_process(COMMAND \"${WINDEPLOYQT}\" --no-translations --no-system-d3d-compiler --no-opengl-sw \"\${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/XSEmuLauncher.exe\" COMMAND_ERROR_IS_FATAL ANY)")
+    else()
+        message(WARNING "windeployqt not found next to qmake; the launcher will not be deployed")
+    endif()
+endif()
+
+# ---- tests ----
+if(XSEMU_LAUNCHER_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

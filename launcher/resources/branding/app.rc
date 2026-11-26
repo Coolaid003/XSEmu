@@ -1,0 +1,2 @@
+// Windows resources of XSEmuLauncher.exe. The icon is the repository's app logo (assets/logo/).
+IDI_ICON1 ICON "../../../assets/logo/XSEmu.ico"

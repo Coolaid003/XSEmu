@@ -1,0 +1,46 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+  <qresource prefix="/">
+    <file>icons/back.svg</file>
+    <file>icons/bolt.svg</file>
+    <file>icons/check.svg</file>
+    <file>icons/chevron-down.svg</file>
+    <file>icons/chevron-right.svg</file>
+    <file>icons/chip.svg</file>
+    <file>icons/close.svg</file>
+    <file>icons/external.svg</file>
+    <file>icons/file.svg</file>
+    <file>icons/folder.svg</file>
+    <file>icons/fullscreen.svg</file>
+    <file>icons/gamepad.svg</file>
+    <file>icons/gear.svg</file>
+    <file>icons/info.svg</file>
+    <file>icons/key.svg</file>
+    <file>icons/keyboard.svg</file>
+    <file>icons/library.svg</file>
+    <file>icons/lock.svg</file>
+    <file>icons/monitor.svg</file>
+    <file>icons/network-off.svg</file>
+    <file>icons/network.svg</file>
+    <file>icons/overlay.svg</file>
+    <file>icons/pause.svg</file>
+    <file>icons/play.svg</file>
+    <file>icons/plus.svg</file>
+    <file>icons/refresh.svg</file>
+    <file>icons/search.svg</file>
+    <file>icons/stop.svg</file>
+    <file>icons/warning.svg</file>
+    <file>icons/win-close.svg</file>
+    <file>icons/win-max.svg</file>
+    <file>icons/win-min.svg</file>
+    <file>icons/win-restore.svg</file>
+  </qresource>
+  <!-- The app logo lives in assets/logo/ at the repository root (one source for every use). -->
+  <qresource prefix="/branding">
+    <file alias="mark.svg">../../assets/logo/xsemu-mark.svg</file>
+    <file alias="mark-dark.svg">../../assets/logo/xsemu-mark-dark.svg</file>
+    <file alias="mark-mono.svg">../../assets/logo/xsemu-mark-mono.svg</file>
+    <file alias="wordmark-light.svg">../../assets/logo/xsemu-wordmark-light.svg</file>
+    <file alias="wordmark-dark.svg">../../assets/logo/xsemu-wordmark-dark.svg</file>
+  </qresource>
+</RCC>
