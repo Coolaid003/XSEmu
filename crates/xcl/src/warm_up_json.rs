@@ -21,7 +21,6 @@ pub enum Event {
         eta_s: Option<u64>,
         ram_free_mb: u64,
         giants_compiling: usize,
-        giants_max: usize,
         in_flight: usize,
         failed: usize,
         phase: &'static str,
@@ -122,7 +121,6 @@ mod tests {
             eta_s: Some(60),
             ram_free_mb: 12288,
             giants_compiling: 2,
-            giants_max: 3,
             in_flight: 5,
             failed: 0,
             phase: "bound",
@@ -130,10 +128,10 @@ mod tests {
         };
         assert_eq!(
             line(&progress),
-            r#"{"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"giants_max":3,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false}"#
+            r#"{"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false}"#
         );
-        let Event::WarmupProgress { done, total, keys_per_s, ram_free_mb, giants_compiling, giants_max, in_flight, failed, phase, .. } = progress else { unreachable!() };
-        let unknown = Event::WarmupProgress { done, total, keys_per_s, eta_s: None, ram_free_mb, giants_compiling, giants_max, in_flight, failed, phase, paused_for_ram: true };
+        let Event::WarmupProgress { done, total, keys_per_s, ram_free_mb, giants_compiling, in_flight, failed, phase, .. } = progress else { unreachable!() };
+        let unknown = Event::WarmupProgress { done, total, keys_per_s, eta_s: None, ram_free_mb, giants_compiling, in_flight, failed, phase, paused_for_ram: true };
         assert!(!line(&unknown).contains("eta_s"), "no ETA is left out, not invented");
         assert!(line(&unknown).ends_with(r#""paused_for_ram":true}"#));
         assert_eq!(
