@@ -4,6 +4,7 @@
 
 #include "Services.h"
 #include "core/DevFixtures.h"
+#include "core/DiskSpace.h"
 #include "core/EmulatorController.h"
 #include "core/Paths.h"
 #include "core/Runner.h"
@@ -24,6 +25,7 @@
 #include <QApplication>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QScrollArea>
 #include <QDir>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -393,6 +395,7 @@ QStringList DevLever::states()
         QStringLiteral("settings"), QStringLiteral("settings-network"), QStringLiteral("settings-shaders"),
         QStringLiteral("settings-shaders-clear"), QStringLiteral("settings-overlay"), QStringLiteral("settings-folders"),
         QStringLiteral("settings-input"), QStringLiteral("settings-graphics"), QStringLiteral("settings-logs"),
+        QStringLiteral("settings-runners-folder"),
         QStringLiteral("settings-about"),
         QStringLiteral("first-launch"), QStringLiteral("first-launch-network"), QStringLiteral("first-launch-folders"),
         QStringLiteral("first-launch-folders-found"),
@@ -403,7 +406,8 @@ QStringList DevLever::states()
         QStringLiteral("in-game-fullscreen"), QStringLiteral("in-game-crashed"), QStringLiteral("in-game-device-removed"),
         QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
         QStringLiteral("runners"), QStringLiteral("runners-install-confirm"), QStringLiteral("runners-building"),
-        QStringLiteral("runners-install-error"), QStringLiteral("details-runs-with-kelvaroq"), QStringLiteral("details-runs-with-picker"),
+        QStringLiteral("runners-install-error"), QStringLiteral("runners-change-location"), QStringLiteral("details-runs-with-kelvaroq"),
+        QStringLiteral("details-runs-with-picker"),
         QStringLiteral("warmup-runner"), QStringLiteral("library-runner-own-window"), QStringLiteral("library-runner-floating-bar"),
     };
 }
@@ -600,6 +604,12 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
             w.settingsPage()->showSection(SettingsPage::Section::Overlay);
         else if (st == QLatin1String("settings-folders"))
             w.settingsPage()->showSection(SettingsPage::Section::GameFolders);
+        else if (st == QLatin1String("settings-runners-folder")) {
+            // the Runners folder as a user sets it: from settings, not from the lever's XSEMU_RUNNERS_DIR
+            qunsetenv("XSEMU_RUNNERS_DIR");
+            s.settings.setRunnersFolder(root(QStringLiteral("runners")));
+            w.settingsPage()->showSection(SettingsPage::Section::GameFolders);
+        }
         else if (st == QLatin1String("settings-input"))
             w.settingsPage()->showSection(SettingsPage::Section::Input);
         else if (st == QLatin1String("settings-graphics"))
@@ -658,6 +668,18 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         QTimer::singleShot(0, &w, [&w] { w.gameDetailsPage()->runsWith()->openPicker(); });
     if (st == QLatin1String("runners-install-confirm"))
         QTimer::singleShot(0, &w, [&w, &s] { RunnerUi::confirmInstall(&w, s, QStringLiteral("victory-7900xtx")); });
+    if (st == QLatin1String("runners-change-location")) {
+        // an installed runner moving to another drive with little room left on it (the free space is invented)
+        DiskSpace::setFreeBytesFunction([](const QString&) { return 14LL * 1024 * 1024 * 1024; });
+        QTimer::singleShot(0, &w, [&w, &s] { RunnerUi::changeLocation(&w, s, QStringLiteral("victory-dexnom"), root(QStringLiteral("Games/Runners"))); });
+    }
+    if (st == QLatin1String("settings-runners-folder")) {
+        QWidget* page = w.settingsPage()->sectionPage(SettingsPage::Section::GameFolders);
+        if (auto* scroll = qobject_cast<QScrollArea*>(page->parentWidget() ? page->parentWidget()->parentWidget() : nullptr)) {
+            if (QWidget* row = page->findChild<QWidget*>(QStringLiteral("runnersFolder")))
+                QTimer::singleShot(0, scroll, [scroll, row] { scroll->ensureWidgetVisible(row, 0, 160); });
+        }
+    }
     if (st == QLatin1String("settings-shaders-clear")) {
         if (auto* clear = w.settingsPage()->sectionPage(SettingsPage::Section::Shaders)->findChild<QAbstractButton*>(QStringLiteral("clearShaderCache")))
             QTimer::singleShot(300, clear, &QAbstractButton::click);

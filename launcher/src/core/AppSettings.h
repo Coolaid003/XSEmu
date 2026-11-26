@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDateTime>
+#include <QHash>
 #include <QList>
 #include <QMetaType>
 #include <QObject>
@@ -58,6 +59,8 @@ public:
         static constexpr const char* ArtLookups = "covers/lookups";
         static constexpr const char* WindowGameBarAutoHide = "ingame/windowBarAutoHide";
         static constexpr const char* DefaultRunner = "runners/default";
+        static constexpr const char* RunnersFolder = "runners/folder";
+        static constexpr const char* RunnerLocations = "runners/locations";
         static constexpr const char* StoreOfflineError = "network/storeOfflineError";
         static constexpr const char* CrashDumps = "logs/crashDumps";
         static constexpr const char* ShaderCacheDir = "shaders/cacheDir";
@@ -121,6 +124,12 @@ public:
     void setDefaultRunner(const QString& id);
     // The runner this game runs with: its override, else the default.
     QString runnerFor(const QString& titleId) const;
+    // Where runners are kept (empty: %LOCALAPPDATA%\XSEmu\runners; XSEMU_RUNNERS_DIR wins over it).
+    QString runnersFolder() const;
+    void setRunnersFolder(const QString& dir);
+    // Runners moved somewhere else: id -> the folder that holds <id>. An empty folder clears it.
+    QHash<QString, QString> runnerLocations() const;
+    void setRunnerLocation(const QString& id, const QString& folder);
 
     // On by default: games start with XCL_STORE=offline-error (store context opens, every store
     // query fails with the store network error). Off: the store API is refused as unavailable.

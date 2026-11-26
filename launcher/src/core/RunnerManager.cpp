@@ -1,5 +1,6 @@
 #include "RunnerManager.h"
 
+#include "AppSettings.h"
 #include "Paths.h"
 #include "RunnerInstall.h"
 
@@ -24,6 +25,27 @@ QJsonObject readJson(const QString& path)
 
 QJsonObject installRecord(const QString& id) { return readJson(QDir(Paths::runnerDir(id)).filePath(QStringLiteral("runner.json"))); }
 
+QString clean(const QString& path) { return path.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(path)); }
+
+bool inside(const QString& path, const QString& dir) { return path == dir || path.startsWith(dir + QLatin1Char('/')); }
+
+struct Tree {
+    qint64 files = 0;
+    qint64 bytes = 0;
+};
+
+Tree measure(const QString& dir)
+{
+    Tree t;
+    QDirIterator it(dir, QDir::Files | QDir::Hidden | QDir::System | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        ++t.files;
+        t.bytes += it.fileInfo().size();
+    }
+    return t;
+}
+
 }
 
 RunnerManager::RunnerManager(QObject* parent)
@@ -35,6 +57,228 @@ RunnerManager::~RunnerManager()
 {
     if (m_task)
         m_task->cancel();
+}
+
+void RunnerManager::setSettings(AppSettings* settings)
+{
+    m_settings = settings;
+    applyLocations();
+    connect(settings, &AppSettings::changed, this, [this](const QString& key) {
+        if (key == QLatin1String(AppSettings::Key::RunnersFolder) || key == QLatin1String(AppSettings::Key::RunnerLocations))
+            applyLocations();
+    });
+}
+
+void RunnerManager::setInUseCheck(std::function<QString(const QString& id)> check) { m_inUse = std::move(check); }
+
+void RunnerManager::applyLocations()
+{
+    Paths::setRunnersFolder(m_settings->runnersFolder());
+    Paths::setRunnerLocations(m_settings->runnerLocations());
+    m_sizes.clear();
+    for (const RunnerSpec& r : Runners::curated()) {
+        if (r.isBuiltIn())
+            continue;
+        emit changed(r.id);
+        emit stateChanged(r.id);
+    }
+}
+
+void RunnerManager::setLocation(const QString& id, const QString& folder)
+{
+    const QString runners = Paths::runnersDir();
+    m_settings->setRunnerLocation(id, clean(folder) == runners ? QString() : clean(folder));
+}
+
+QString RunnerManager::location(const QString& id) const { return Paths::runnerLocation(id); }
+
+QString RunnerManager::busyReason(const QString& id) const
+{
+    const RunnerSpec* spec = Runners::find(id);
+    const QString name = spec ? spec->name : id;
+    if (m_move) {
+        const RunnerSpec* moving = Runners::find(m_move->id);
+        return QStringLiteral("%1 is being moved; wait for it to finish.").arg(moving ? moving->name : m_move->id);
+    }
+    if (m_task && m_taskId == id) {
+        const bool building = spec && spec->install == RunnerSpec::Install::BuildFromSource;
+        return QStringLiteral("%1 is %2; wait for it or cancel it first.").arg(name, building ? QStringLiteral("building") : QStringLiteral("installing"));
+    }
+    return m_inUse ? m_inUse(id) : QString();
+}
+
+bool RunnerManager::relocate(const QString& id, const QString& folder, Relocation how, QString* error)
+{
+    auto refuse = [error](const QString& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec || spec->isBuiltIn())
+        return refuse(QStringLiteral("XSEmu comes with the launcher; it has no folder of its own to move."));
+    if (!m_settings)
+        return refuse(QStringLiteral("Runner locations need the launcher settings."));
+    if (const QString busy = busyReason(id); !busy.isEmpty())
+        return refuse(busy);
+    const QString target = clean(folder);
+    if (target.isEmpty() || !QDir::isAbsolutePath(target))
+        return refuse(QStringLiteral("Pick a folder for %1.").arg(spec->name));
+    const QString from = clean(Paths::runnerDir(id));
+    const QString to = clean(QDir(target).filePath(id));
+    if (to == from)
+        return refuse(QStringLiteral("%1 is already in %2.").arg(spec->name, QDir::toNativeSeparators(target)));
+    if (inside(to, from))
+        return refuse(QStringLiteral("%1 can't move into its own folder.").arg(spec->name));
+    if (QDir(to).exists() && !QDir(to).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+        return refuse(QStringLiteral("%1 already has a %2 folder; pick another folder or delete that one first.").arg(QDir::toNativeSeparators(target), id));
+
+    const QJsonObject rec = installRecord(id);
+    if (how == Relocation::Rebuild && !rec.isEmpty()) {
+        m_rebuild = Rebuild{id, m_settings->runnerLocations().value(id), from};
+        setLocation(id, target);
+        if (!install(id, error)) {
+            m_settings->setRunnerLocation(id, m_rebuild->previous);
+            m_rebuild.reset();
+            return false;
+        }
+        return true;
+    }
+    if (!QFileInfo::exists(from)) {
+        setLocation(id, target);
+        emit relocated(id, true, {});
+        return true;
+    }
+
+    const QString exeRel = rec.isEmpty() ? QString() : QDir(from).relativeFilePath(QDir(spec->installDir()).filePath(rec.value(QLatin1String("executable")).toString()));
+    m_move = Move{id, target, to, 0, -1, QDateTime::currentDateTime()};
+    emit changed(id);
+    emit stateChanged(id);
+    const QPointer<RunnerManager> self = this;
+    QThreadPool::globalInstance()->start([self, id, from, to, exeRel] {
+        const auto progress = [self, id](qint64 done, qint64 total) {
+            QMetaObject::invokeMethod(qApp, [self, id, done, total] {
+                if (!self || !self->m_move || self->m_move->id != id)
+                    return;
+                self->m_move->done = done;
+                self->m_move->total = total;
+                emit self->changed(id);
+            });
+        };
+        QString why;
+        QString note;
+        const bool ok = moveFolder(from, to, exeRel, &why, &note, progress);
+        QMetaObject::invokeMethod(qApp, [self, ok, why, note] {
+            if (self)
+                self->finishMove(ok, ok ? note : why);
+        });
+    });
+    return true;
+}
+
+void RunnerManager::finishMove(bool ok, const QString& message)
+{
+    const Move move = *m_move;
+    m_move.reset();
+    if (ok)
+        setLocation(move.id, move.folder);
+    m_sizes.remove(move.id);
+    emit changed(move.id);
+    emit stateChanged(move.id);
+    emit relocated(move.id, ok, message);
+}
+
+bool RunnerManager::moveFolder(const QString& from, const QString& to, const QString& exeRel, QString* error, QString* note,
+                               const std::function<void(qint64, qint64)>& progress, bool allowRename)
+{
+    auto failed = [error, to](const QString& why) {
+        QDir(to).removeRecursively();
+        *error = why;
+        return false;
+    };
+    QDir().mkpath(QFileInfo(to).absolutePath());
+    if (allowRename && QDir(to).exists() && QDir(to).isEmpty(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System))
+        QDir().rmdir(to);
+    if (allowRename && QDir().rename(from, to)) {
+        if (!exeRel.isEmpty() && !QFileInfo::exists(QDir(to).filePath(exeRel))) {
+            QDir().rename(to, from);
+            *error = QStringLiteral("After the move %1 was missing, so the runner stayed where it was.").arg(QDir::toNativeSeparators(exeRel));
+            return false;
+        }
+        return true;
+    }
+
+    if (!QFileInfo(from).isDir()) {
+        *error = QStringLiteral("%1 is not there any more.").arg(QDir::toNativeSeparators(from));
+        return false;
+    }
+    // another drive: copy every file, check the copy, then delete the original
+    const Tree source = measure(from);
+    qint64 done = 0;
+    qint64 reported = 0;
+    if (progress)
+        progress(0, source.bytes);
+    QDirIterator it(from, QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    if (!QDir().mkpath(to))
+        return failed(QStringLiteral("Cannot create %1.").arg(QDir::toNativeSeparators(to)));
+    while (it.hasNext()) {
+        it.next();
+        const QFileInfo fi = it.fileInfo();
+        const QString dst = QDir(to).filePath(QDir(from).relativeFilePath(fi.absoluteFilePath()));
+        if (fi.isDir()) {
+            if (!QDir().mkpath(dst))
+                return failed(QStringLiteral("Cannot create %1.").arg(QDir::toNativeSeparators(dst)));
+            continue;
+        }
+        QDir().mkpath(QFileInfo(dst).absolutePath());
+        QFile src(fi.absoluteFilePath());
+        if (!src.copy(dst))
+            return failed(QStringLiteral("Cannot copy %1: %2. Nothing was moved.").arg(QDir::toNativeSeparators(fi.absoluteFilePath()), src.errorString()));
+        done += fi.size();
+        if (progress && (done - reported > 64LL * 1024 * 1024 || done == source.bytes)) {
+            reported = done;
+            progress(done, source.bytes);
+        }
+    }
+    const Tree copy = measure(to);
+    if (copy.files != source.files || copy.bytes != source.bytes)
+        return failed(QStringLiteral("The copy has %1 files and %2 bytes, the original %3 and %4, so nothing was moved.")
+                          .arg(copy.files).arg(copy.bytes).arg(source.files).arg(source.bytes));
+    if (!exeRel.isEmpty() && (!QFileInfo::exists(QDir(to).filePath(exeRel)) || QFileInfo(QDir(to).filePath(exeRel)).size() != QFileInfo(QDir(from).filePath(exeRel)).size()))
+        return failed(QStringLiteral("The copied %1 does not match the original, so nothing was moved.").arg(QDir::toNativeSeparators(exeRel)));
+    if (!QDir(from).removeRecursively() && note)
+        *note = QStringLiteral("Moved. Some files in %1 could not be deleted; delete that folder yourself.").arg(QDir::toNativeSeparators(from));
+    return true;
+}
+
+bool RunnerManager::setRunnersFolder(const QString& folder, QString* error)
+{
+    auto refuse = [error](const QString& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    if (!m_settings)
+        return refuse(QStringLiteral("The Runners folder needs the launcher settings."));
+    if (Paths::runnersDirFromEnvironment())
+        return refuse(QStringLiteral("XSEMU_RUNNERS_DIR sets the Runners folder; unset it to choose one here."));
+    if (m_task) {
+        const RunnerSpec* busy = Runners::find(m_taskId);
+        return refuse(QStringLiteral("%1 is installing and uses the Runners folder; wait for it or cancel it first.").arg(busy ? busy->name : m_taskId));
+    }
+    if (m_move)
+        return refuse(busyReason(m_move->id));
+    const QString next = clean(folder).isEmpty() ? Paths::defaultRunnersDir() : clean(folder);
+    const QString current = Paths::runnersDir();
+    if (next != current) {
+        const QHash<QString, QString> locations = m_settings->runnerLocations();
+        for (const RunnerSpec& r : Runners::curated()) {
+            if (!r.isBuiltIn() && !locations.contains(r.id) && QFileInfo::exists(Paths::runnerDir(r.id)))
+                m_settings->setRunnerLocation(r.id, current);
+        }
+    }
+    m_settings->setRunnersFolder(next == Paths::defaultRunnersDir() ? QString() : next);
+    return true;
 }
 
 RunnerManager::Status RunnerManager::status(const QString& id) const
@@ -60,6 +304,16 @@ RunnerManager::Status RunnerManager::status(const QString& id) const
     if (m_taskId == id && m_task) {
         s.state = State::Installing;
         s.progress = m_task->progress();
+        return s;
+    }
+    if (m_move && m_move->id == id) {
+        s.state = State::Moving;
+        s.progress.step = QStringLiteral("Moving");
+        s.progress.bytes = true;
+        s.progress.done = m_move->done;
+        s.progress.total = m_move->total;
+        s.progress.detail = QDir::toNativeSeparators(m_move->to);
+        s.progress.startedAt = m_move->startedAt;
         return s;
     }
     s.error = m_errors.value(id);
@@ -109,6 +363,8 @@ bool RunnerManager::install(const QString& id, QString* error)
         const RunnerSpec* busy = Runners::find(m_taskId);
         return refuse(QStringLiteral("%1 is installing; wait for it or cancel it first.").arg(busy ? busy->name : m_taskId));
     }
+    if (m_move)
+        return refuse(busyReason(id));
     m_errors.remove(id);
     m_taskId = id;
     m_task = new RunnerInstall(*spec, this);
@@ -120,6 +376,18 @@ bool RunnerManager::install(const QString& id, QString* error)
         m_task.clear();
         m_taskId.clear();
         m_sizes.remove(id);
+        if (m_rebuild && m_rebuild->id == id) {
+            const Rebuild rebuild = *m_rebuild;
+            m_rebuild.reset();
+            if (ok) {
+                QThreadPool::globalInstance()->start([dir = rebuild.oldDir] { QDir(dir).removeRecursively(); });
+            } else {
+                // the old copy still works: keep running it from where it was
+                m_settings->setRunnerLocation(id, rebuild.previous);
+                m_errors.insert(id, QStringLiteral("%1 It still runs from %2.").arg(why, QDir::toNativeSeparators(rebuild.oldDir)));
+            }
+            emit relocated(id, ok, ok ? QString() : m_errors.value(id));
+        }
         emit changed(id);
         emit stateChanged(id);
         emit installFinished(id, ok, why);
@@ -144,9 +412,9 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
             *error = QStringLiteral("XSEmu comes with the launcher and cannot be uninstalled here.");
         return false;
     }
-    if (m_taskId == id && m_task) {
+    if ((m_taskId == id && m_task) || (m_move && m_move->id == id)) {
         if (error)
-            *error = QStringLiteral("%1 is installing; cancel it first.").arg(spec->name);
+            *error = busyReason(id);
         return false;
     }
     m_errors.remove(id);

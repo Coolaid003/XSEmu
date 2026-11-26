@@ -30,4 +30,9 @@ QList<const RunnerSpec*> displayOrder(Services& s, const QString& first = {});
 // it is tuned for another GPU vendor than this PC's, then Install.
 void confirmInstall(QWidget* window, Services& s, const QString& runnerId);
 
+// "Change where VIctory is kept": where it is now, the folder it moves to (a folder picker) and the
+// free space there with a warning when it is low, Move or Rebuild there for an installed runner, and
+// why it can't move now (installing, building, running). proposed pre-fills the new folder.
+void changeLocation(QWidget* window, Services& s, const QString& runnerId, const QString& proposed = {});
+
 }

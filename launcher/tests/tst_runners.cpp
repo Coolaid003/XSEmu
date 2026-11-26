@@ -1,5 +1,7 @@
 // Runners: the curated list, the recommendation, progress parsing, and real installs (a release
 // asset over file:// with its SHA-256, and a source build from a local Git repository).
+#include "AppSettings.h"
+#include "DiskSpace.h"
 #include "Paths.h"
 #include "ProgressParsers.h"
 #include "Runner.h"
@@ -54,8 +56,18 @@ private slots:
     void rejectsWrongHash();
     void buildsFromSource();
     void stepProgramsUseTheStepsPath();
+    void locationPersistsAcrossRestarts();
+    void moveKeepsTheInstall();
+    void moveCopiesAcrossDrives();
+    void rebuildThere();
+    void refusesWhileBusy();
+    void runnersFolderKeepsInstalledRunners();
+    void freeSpaceWarning();
 
 private:
+    void ensureBuilt(RunnerManager& m, const QString& id);
+    void resetLocations();
+
     QTemporaryDir m_dir;
     QString m_zip;
     bool m_haveGit = false;
@@ -306,6 +318,327 @@ void TestRunners::stepProgramsUseTheStepsPath()
     QCOMPARE(QFileInfo(RunnerInstall::resolveProgram(QStringLiteral("xsemu-test-cargo"), env)).canonicalFilePath(), QFileInfo(cargo).canonicalFilePath());
     QCOMPARE(RunnerInstall::resolveProgram(QStringLiteral("xsemu-test-missing"), env), QStringLiteral("xsemu-test-missing"));
     QCOMPARE(RunnerInstall::resolveProgram(cargo, {}), cargo);
+}
+
+void TestRunners::resetLocations()
+{
+    Paths::setRunnersFolder({});
+    Paths::setRunnerLocations({});
+}
+
+void TestRunners::ensureBuilt(RunnerManager& m, const QString& id)
+{
+    if (m.status(id).state == RunnerManager::State::Installed)
+        return;
+    QSignalSpy done(&m, &RunnerManager::installFinished);
+    QString error;
+    QVERIFY2(m.install(id, &error), qPrintable(error));
+    QVERIFY(done.wait(60000));
+    QVERIFY2(done.first().at(1).toBool(), qPrintable(done.first().at(2).toString()));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+}
+
+void TestRunners::locationPersistsAcrossRestarts()
+{
+    QTemporaryDir dir;
+    const QString ini = dir.filePath(QStringLiteral("settings.ini"));
+    const QString elsewhere = dir.filePath(QStringLiteral("D/Games"));
+    const QString id = QStringLiteral("victory-7900xtx");
+    {
+        AppSettings settings(ini);
+        RunnerManager m;
+        m.setSettings(&settings);
+        QCOMPARE(m.location(id), Paths::runnersDir());
+        QSignalSpy moved(&m, &RunnerManager::relocated); // its failed install's log and record come along
+        QString error;
+        QVERIFY2(m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error), qPrintable(error));
+        QVERIFY(moved.count() == 1 || moved.wait(30000));
+        QVERIFY2(moved.first().at(1).toBool(), qPrintable(moved.first().at(2).toString()));
+        QCOMPARE(Paths::runnerDir(id), QDir(elsewhere).filePath(id));
+        QCOMPARE(m.status(id).state, RunnerManager::State::Failed);
+    }
+    resetLocations();
+    QCOMPARE(Paths::runnerDir(id), QDir(Paths::runnersDir()).filePath(id));
+
+    AppSettings settings(ini);
+    RunnerManager m;
+    m.setSettings(&settings);
+    QCOMPARE(m.location(id), QDir::cleanPath(elsewhere));
+    const RunnerSpec* spec = Runners::find(id);
+    QCOMPARE(spec->dataDir(), QDir(elsewhere).filePath(id));
+    QCOMPARE(spec->installDir(), QDir(elsewhere).filePath(id + QStringLiteral("/app")));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Failed);
+    QSignalSpy moved(&m, &RunnerManager::relocated);
+    QVERIFY(m.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move));
+    QVERIFY(moved.count() == 1 || moved.wait(30000));
+    QVERIFY(settings.runnerLocations().isEmpty()); // back in the Runners folder: nothing to remember
+    resetLocations();
+}
+
+void TestRunners::moveKeepsTheInstall()
+{
+    if (!m_haveGit)
+        QSKIP("git is not installed");
+    QTemporaryDir dir;
+    const QString ini = dir.filePath(QStringLiteral("settings.ini"));
+    const QString elsewhere = dir.filePath(QStringLiteral("E/runners"));
+    const QString id = QStringLiteral("victory-dexnom");
+    const RunnerSpec* spec = Runners::find(id);
+    {
+        AppSettings settings(ini);
+        RunnerManager m;
+        m.setSettings(&settings);
+        ensureBuilt(m, id);
+        const QString oldDir = spec->dataDir();
+        QSignalSpy moved(&m, &RunnerManager::relocated);
+        QString error;
+        QVERIFY2(m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error), qPrintable(error));
+        QVERIFY(moved.count() == 1 || moved.wait(30000));
+        QVERIFY2(moved.first().at(1).toBool(), qPrintable(moved.first().at(2).toString()));
+
+        const RunnerManager::Status s = m.status(id);
+        QCOMPARE(s.state, RunnerManager::State::Installed);
+        QCOMPARE(s.installedVersion, m_commit.left(7));
+        QCOMPARE(s.executable, QDir(elsewhere).filePath(id + QStringLiteral("/bin/runner.tar")));
+        QVERIFY(QFileInfo(s.executable).size() > 0);
+        QVERIFY(m.isRunnable(id));
+        QVERIFY(!QFileInfo::exists(oldDir));
+        QVERIFY(QFileInfo::exists(QDir(elsewhere).filePath(id + QStringLiteral("/s/README"))));
+
+        // what a launch gets: every token and the cache follow the new folder
+        const auto tokens = spec->tokens(QStringLiteral("/g"), QStringLiteral("/g/Game.exe"), QStringLiteral("T"), QStringLiteral("lockhart"), 0);
+        const auto token = [&tokens](const char* name) {
+            for (const auto& [k, v] : tokens)
+                if (k == QLatin1String(name))
+                    return QDir::fromNativeSeparators(v);
+            return QString();
+        };
+        QCOMPARE(token("runnerDir"), QDir(elsewhere).filePath(id));
+        QCOMPARE(token("installDir"), QDir(elsewhere).filePath(id + QStringLiteral("/bin")));
+        QCOMPARE(RunnerSpec::expand(QStringLiteral("{runnerDir}/data/victory.toml"), tokens), QDir::toNativeSeparators(QDir(elsewhere).filePath(id)) + QStringLiteral("/data/victory.toml"));
+        QCOMPARE(QDir::fromNativeSeparators(spec->resolvedCacheDir()), QDir(elsewhere).filePath(id + QStringLiteral("/cache")));
+        QCOMPARE(QDir::fromNativeSeparators(m.cachePath(id)), QDir(elsewhere).filePath(id + QStringLiteral("/cache")));
+    }
+    resetLocations();
+
+    // a restart: the install is found where it went
+    AppSettings settings(ini);
+    RunnerManager m;
+    m.setSettings(&settings);
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+    QCOMPARE(m.status(id).executable, QDir(elsewhere).filePath(id + QStringLiteral("/bin/runner.tar")));
+
+    // and back, so the tests after this one find it in the Runners folder
+    QSignalSpy moved(&m, &RunnerManager::relocated);
+    QVERIFY(m.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move));
+    QVERIFY(moved.count() == 1 || moved.wait(30000));
+    QVERIFY(moved.first().at(1).toBool());
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+    resetLocations();
+}
+
+void TestRunners::moveCopiesAcrossDrives()
+{
+    QTemporaryDir dir;
+    const QString from = dir.filePath(QStringLiteral("C/runners/victory-dexnom"));
+    const QString to = dir.filePath(QStringLiteral("D/runners/victory-dexnom"));
+    QVERIFY(QDir().mkpath(from + QStringLiteral("/bin")));
+    QVERIFY(QDir().mkpath(from + QStringLiteral("/t/x86_64-pc-windows-msvc/release")));
+    QVERIFY(QDir().mkpath(from + QStringLiteral("/t/release/incremental"))); // empty folders come along too
+    for (const auto& [path, size] : {qMakePair(QStringLiteral("bin/victory.exe"), 4096), qMakePair(QStringLiteral("runner.json"), 120),
+                                     qMakePair(QStringLiteral("t/x86_64-pc-windows-msvc/release/victory-warm.exe"), 70000)}) {
+        QFile f(QDir(from).filePath(path));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(QByteArray(size, 'x'));
+    }
+    qint64 last = -1;
+    qint64 total = -1;
+    QString error;
+    QString note;
+    QVERIFY2(RunnerManager::moveFolder(from, to, QStringLiteral("bin/victory.exe"), &error, &note,
+                                       [&](qint64 d, qint64 t) {
+                                           last = d;
+                                           total = t;
+                                       },
+                                       false),
+             qPrintable(error));
+    QVERIFY(note.isEmpty());
+    QCOMPARE(total, qint64(4096 + 120 + 70000));
+    QCOMPARE(last, total);
+    QVERIFY(!QFileInfo::exists(from));
+    QCOMPARE(QFileInfo(QDir(to).filePath(QStringLiteral("bin/victory.exe"))).size(), qint64(4096));
+    QCOMPARE(QFileInfo(QDir(to).filePath(QStringLiteral("t/x86_64-pc-windows-msvc/release/victory-warm.exe"))).size(), qint64(70000));
+    QVERIFY(QFileInfo(QDir(to).filePath(QStringLiteral("t/release/incremental"))).isDir());
+
+    // a missing source fails and leaves nothing half-copied behind
+    QVERIFY(!RunnerManager::moveFolder(dir.filePath(QStringLiteral("nothing")), dir.filePath(QStringLiteral("D/x")), QStringLiteral("bin/victory.exe"), &error, &note, {}, false));
+    QVERIFY(!QFileInfo::exists(dir.filePath(QStringLiteral("D/x"))));
+}
+
+void TestRunners::rebuildThere()
+{
+    if (!m_haveGit)
+        QSKIP("git is not installed");
+    QTemporaryDir dir;
+    AppSettings settings(dir.filePath(QStringLiteral("settings.ini")));
+    RunnerManager m;
+    m.setSettings(&settings);
+    const QString id = QStringLiteral("victory-dexnom");
+    ensureBuilt(m, id);
+    const QString oldDir = Runners::find(id)->dataDir();
+    const QString elsewhere = dir.filePath(QStringLiteral("F"));
+    QSignalSpy done(&m, &RunnerManager::installFinished);
+    QString error;
+    QVERIFY2(m.relocate(id, elsewhere, RunnerManager::Relocation::Rebuild, &error), qPrintable(error));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installing);
+    QVERIFY(done.wait(60000));
+    QVERIFY2(done.first().at(1).toBool(), qPrintable(done.first().at(2).toString()));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+    QCOMPARE(m.status(id).executable, QDir(elsewhere).filePath(id + QStringLiteral("/bin/runner.tar")));
+    QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(oldDir), 10000);
+    QCOMPARE(settings.runnerLocations().value(id), QDir::cleanPath(elsewhere));
+    QVERIFY(m.uninstall(id));
+    QVERIFY(m.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move));
+    resetLocations();
+}
+
+void TestRunners::refusesWhileBusy()
+{
+    QTemporaryDir dir;
+    AppSettings settings(dir.filePath(QStringLiteral("settings.ini")));
+    RunnerManager m;
+    m.setSettings(&settings);
+    const QString id = QStringLiteral("victory-dexnom");
+    const QString elsewhere = dir.filePath(QStringLiteral("G"));
+
+    // a game or a pre-cache running with it (EmulatorController, WarmupController through Services)
+    m.setInUseCheck([id](const QString& which) { return which == id ? QStringLiteral("VIctory (DexNom) is running Signal Garden; stop the game first.") : QString(); });
+    QString error;
+    QVERIFY(!m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error));
+    QCOMPARE(error, QStringLiteral("VIctory (DexNom) is running Signal Garden; stop the game first."));
+    QVERIFY(m.relocate(QStringLiteral("kelvaroq"), elsewhere, RunnerManager::Relocation::Move, &error)); // another runner is free
+    QVERIFY(m.relocate(QStringLiteral("kelvaroq"), Paths::runnersDir(), RunnerManager::Relocation::Move, &error));
+    m.setInUseCheck({});
+
+    // installing or building
+    if (m_haveGit) {
+        QSignalSpy done(&m, &RunnerManager::installFinished);
+        QVERIFY(m.install(id));
+        QVERIFY(!m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error));
+        QVERIFY2(error.contains(QStringLiteral("is building")), qPrintable(error));
+        QVERIFY(!m.relocate(id, elsewhere, RunnerManager::Relocation::Rebuild, &error));
+        const QByteArray env = qgetenv("XSEMU_RUNNERS_DIR");
+        qunsetenv("XSEMU_RUNNERS_DIR");
+        QVERIFY(!m.setRunnersFolder(elsewhere, &error)); // it bootstraps into the Runners folder
+        qputenv("XSEMU_RUNNERS_DIR", env);
+        QVERIFY2(error.contains(QStringLiteral("installing")), qPrintable(error));
+        QVERIFY(done.wait(60000));
+        QVERIFY(m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error));
+        QVERIFY(m.busyReason(id).isEmpty() || m.status(id).state == RunnerManager::State::Moving);
+        QSignalSpy moved(&m, &RunnerManager::relocated);
+        if (m.status(id).state == RunnerManager::State::Moving) {
+            QVERIFY(!m.install(id, &error)); // and while it moves
+            QVERIFY2(error.contains(QStringLiteral("being moved")), qPrintable(error));
+            QVERIFY(!m.uninstall(id, &error));
+            QVERIFY(moved.wait(30000));
+        }
+        QVERIFY(m.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move, &error));
+        QTRY_COMPARE_WITH_TIMEOUT(m.status(id).state, RunnerManager::State::Installed, 30000);
+    }
+
+    // a folder that already has one, or its own folder
+    QVERIFY(QDir().mkpath(QDir(elsewhere).filePath(id + QStringLiteral("/stuff"))));
+    QVERIFY(!m.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error));
+    QVERIFY2(error.contains(QStringLiteral("already has")), qPrintable(error));
+    QVERIFY(!m.relocate(id, Runners::find(id)->dataDir(), RunnerManager::Relocation::Move, &error));
+    QVERIFY(!m.relocate(QStringLiteral("xsemu"), elsewhere, RunnerManager::Relocation::Move, &error));
+    resetLocations();
+}
+
+void TestRunners::runnersFolderKeepsInstalledRunners()
+{
+    QTemporaryDir dir;
+    const QByteArray env = qgetenv("XSEMU_RUNNERS_DIR");
+    qunsetenv("XSEMU_RUNNERS_DIR");
+    const QString ini = dir.filePath(QStringLiteral("settings.ini"));
+    const QString a = dir.filePath(QStringLiteral("A"));
+    const QString b = dir.filePath(QStringLiteral("B"));
+    {
+        AppSettings settings(ini);
+        settings.setRunnersFolder(a);
+        RunnerManager m;
+        m.setSettings(&settings);
+        QCOMPARE(Paths::runnersDir(), QDir::cleanPath(a));
+        // one installed runner in A
+        const RunnerSpec* k = Runners::find(QStringLiteral("kelvaroq"));
+        QVERIFY(QDir().mkpath(QDir(k->installDir()).filePath(QStringLiteral("native"))));
+        QFile exe(QDir(k->installDir()).filePath(k->executable));
+        QVERIFY(exe.open(QIODevice::WriteOnly));
+        exe.write("engine");
+        exe.close();
+        QFile rec(QDir(k->dataDir()).filePath(QStringLiteral("runner.json")));
+        QVERIFY(rec.open(QIODevice::WriteOnly));
+        rec.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), k->id}, {QStringLiteral("version"), k->pinnedVersion()}, {QStringLiteral("executable"), k->executable}}).toJson());
+        rec.close();
+        QCOMPARE(m.status(k->id).state, RunnerManager::State::Installed);
+
+        QString error;
+        QVERIFY2(m.setRunnersFolder(b, &error), qPrintable(error));
+        QCOMPARE(Paths::runnersDir(), QDir::cleanPath(b));
+        QCOMPARE(m.status(k->id).state, RunnerManager::State::Installed); // it stayed in A
+        QCOMPARE(k->dataDir(), QDir(a).filePath(k->id));
+        QCOMPARE(Runners::find(QStringLiteral("victory-dexnom"))->dataDir(), QDir(b).filePath(QStringLiteral("victory-dexnom")));
+    }
+    resetLocations();
+    {
+        AppSettings settings(ini);
+        RunnerManager m;
+        m.setSettings(&settings);
+        QCOMPARE(Paths::runnersDir(), QDir::cleanPath(b));
+        QCOMPARE(m.status(QStringLiteral("kelvaroq")).state, RunnerManager::State::Installed);
+        QCOMPARE(Runners::find(QStringLiteral("kelvaroq"))->dataDir(), QDir(a).filePath(QStringLiteral("kelvaroq")));
+        QVERIFY(m.setRunnersFolder({}));
+        QCOMPARE(Paths::runnersDir(), Paths::defaultRunnersDir());
+        QVERIFY(settings.runnersFolder().isEmpty());
+    }
+    resetLocations();
+    qputenv("XSEMU_RUNNERS_DIR", env);
+    {
+        AppSettings settings(ini);
+        RunnerManager m;
+        m.setSettings(&settings);
+        QString error;
+        QVERIFY(!m.setRunnersFolder(b, &error)); // the environment wins
+        QVERIFY(error.contains(QStringLiteral("XSEMU_RUNNERS_DIR")));
+    }
+    resetLocations();
+}
+
+void TestRunners::freeSpaceWarning()
+{
+    constexpr qint64 gb = 1024LL * 1024 * 1024;
+    QString asked;
+    DiskSpace::setFreeBytesFunction([&asked](const QString& path) {
+        asked = path;
+        return 5 * gb;
+    });
+    DiskSpace::Check c = DiskSpace::checkRunnerFolder(m_dir.filePath(QStringLiteral("not/made/yet")));
+    QCOMPARE(asked, m_dir.filePath(QStringLiteral("not/made/yet")));
+    QVERIFY(c.low);
+    QCOMPARE(c.freeBytes, 5 * gb);
+    QVERIFY2(c.text.startsWith(QStringLiteral("Only 5.0 GB free")) && c.text.contains(QStringLiteral("20.0 GB")), qPrintable(c.text));
+    DiskSpace::setFreeBytesFunction([](const QString&) { return DiskSpace::kRunnerLowBytes; });
+    c = DiskSpace::checkRunnerFolder(m_dir.path());
+    QVERIFY(!c.low);
+    QVERIFY2(c.text.endsWith(QStringLiteral(" free on ") + c.drive), qPrintable(c.text));
+    DiskSpace::setFreeBytesFunction([](const QString&) { return DiskSpace::kRunnerLowBytes - 1; });
+    QVERIFY(DiskSpace::checkRunnerFolder(m_dir.path()).low);
+    DiskSpace::setFreeBytesFunction([](const QString&) { return qint64(-1); });
+    c = DiskSpace::checkRunnerFolder(m_dir.path());
+    QVERIFY(!c.low);
+    QVERIFY(c.text.contains(QStringLiteral("unknown")));
+    DiskSpace::setFreeBytesFunction(nullptr);
+    QVERIFY(DiskSpace::freeBytes(m_dir.filePath(QStringLiteral("not/made/yet"))) > 0); // the real drive, from the nearest folder that exists
 }
 
 #include "tst_runners.moc"

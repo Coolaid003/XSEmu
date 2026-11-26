@@ -3,7 +3,8 @@
 #include <QString>
 
 // Every file location the launcher reads or writes, mirroring the emulator (crates/xcl/src/launcher.rs,
-// config.rs Boot::logs_dir/cache_dir, gpu/recomp/dxc.rs cache_dir). Pure functions of the environment.
+// config.rs Boot::logs_dir/cache_dir, gpu/recomp/dxc.rs cache_dir). Functions of the environment and,
+// for runners, of the folders the user chose (RunnerManager::setSettings applies them).
 namespace Paths {
 
 // %XCL_DATA_ROOT%, else %LOCALAPPDATA%\XCL (Linux: $XCL_DATA_ROOT, else ~/.local/share/XCL).
@@ -30,10 +31,18 @@ QString launcherDataDir();
 QString settingsFile(); // <launcher data>\settings.ini
 QString coverCacheDir(); // <launcher data>\covers
 
-// Third-party runners: %XSEMU_RUNNERS_DIR%, else %LOCALAPPDATA%\\XSEmu\\runners (Linux: ~/.local/share/XSEmu/runners).
+// Third-party runners: %XSEMU_RUNNERS_DIR%, else the Runners folder the user chose, else
+// %LOCALAPPDATA%\\XSEmu\\runners (Linux: ~/.local/share/XSEmu/runners). The Rust toolchain cache
+// (_toolchains) lives here.
 QString runnersDir();
+QString defaultRunnersDir();
+bool runnersDirFromEnvironment();
+void setRunnersFolder(const QString& dir); // empty: the default
+// Per runner: the folder the user moved it to, which holds <folder>\\<id>; it wins over the rest.
+void setRunnerLocations(const QHash<QString, QString>& folderById);
+QString runnerLocation(const QString& runnerId); // the folder that holds runnerDir(runnerId)
 QString localAppDataDir(); // %LOCALAPPDATA% (Linux: ~/.local/share), where runners keep their caches
-QString runnerDir(const QString& runnerId); // <runners>\\<id>
+QString runnerDir(const QString& runnerId); // <runnerLocation(id)>\\<id>
 
 // The emulator executable's default location: XSEmu.exe next to the launcher (Linux: fake-xsemu).
 QString defaultEmulatorPath();

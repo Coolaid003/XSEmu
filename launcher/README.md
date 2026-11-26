@@ -92,6 +92,8 @@ variables come from `LaunchConfig::runEnvironment`.
 | Overlay | Position, size, metrics | Disabled: not in the protocol |
 | Game folders | Folders, rescan | `gameFolders` |
 | Game folders | SteamGridDB API key, art lookups | `steamGridDbKey`, `artLookups` |
+| Game folders | Runners folder (free space, warning under 20 GB; `XSEMU_RUNNERS_DIR` wins) | `runnersFolder` (`RunnerManager::setRunnersFolder`) |
+| Runners page | Change location on a runner's card (Move or Rebuild there) | `runnerLocations` (`RunnerManager::relocate`) |
 | Input | Keyboard and mouse as gamepad | `keyboard_mouse` |
 | Input | Mouse sensitivity | `mouse_sensitivity` |
 | Input | Controller | XInput state (Windows only) |

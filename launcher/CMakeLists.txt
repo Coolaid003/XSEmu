@@ -36,6 +36,7 @@ add_library(xsemu_core STATIC
     src/core/AppSettings.cpp src/core/AppSettings.h
     src/core/CoverArtService.cpp src/core/CoverArtService.h
     src/core/DevFixtures.cpp src/core/DevFixtures.h
+    src/core/DiskSpace.cpp src/core/DiskSpace.h
     src/core/EmulatorController.cpp src/core/EmulatorController.h
     src/core/Format.cpp src/core/Format.h
     src/core/Game.cpp src/core/Game.h

@@ -8,11 +8,13 @@
 #include "RunnerManager.h"
 #include "app/Services.h"
 #include "pages/GameDetailsPage.h"
+#include "pages/RunnerUi.h"
 #include "pages/RunsWithPicker.h"
 #include "shell/MainWindow.h"
 #include "theme/Theme.h"
 #include "widgets/Badge.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QDir>
 #include <QFile>
@@ -70,6 +72,7 @@ class TestRunnerState : public QObject {
 private slots:
     void initTestCase();
     void dexnomReadsInstalledEverywhere();
+    void changeLocationWaitsForItsRuns();
 
 private:
     struct Surfaces {
@@ -279,6 +282,74 @@ void TestRunnerState::dexnomReadsInstalledEverywhere()
     QVERIFY2(!anyContains(later.details, QStringLiteral("not installed")), qPrintable(later.details.join(QLatin1Char('|'))));
     QVERIFY2(anyContains(later.picker, QStringLiteral("Installed")), qPrintable(later.picker.join(QLatin1Char('|'))));
     QVERIFY2(!anyContains(later.warmup, QStringLiteral("not installed")), qPrintable(later.warmup.join(QLatin1Char('|'))));
+}
+
+void TestRunnerState::changeLocationWaitsForItsRuns()
+{
+    const Game g = game();
+    Services s;
+    s.settings.setGameOverride(g.titleId(), QStringLiteral("runner"), kId);
+    MainWindow w(s);
+    w.resize(1280, 800);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    const QString elsewhere = m_dir.filePath(QStringLiteral("D/runners"));
+
+    // a game running with it
+    s.emulator.simulateForScreenshot(EmulatorController::State::Running, g, {});
+    QString error;
+    QVERIFY(!s.runners.relocate(kId, elsewhere, RunnerManager::Relocation::Move, &error));
+    QCOMPARE(error, QStringLiteral("VIctory (DexNom) is running Signal Garden; stop the game first."));
+    // the card's dialog says why and keeps Move disabled
+    w.showPage(Page::Runners);
+    QWidget* card = w.findChild<QWidget*>(QStringLiteral("runner-") + kId);
+    auto* change = card->findChild<QAbstractButton*>(QStringLiteral("location-") + kId);
+    QVERIFY(change && change->isVisible());
+    QTest::mouseClick(change, Qt::LeftButton);
+    QWidget* dialog = w.findChild<QWidget*>(QStringLiteral("changeLocation"));
+    QVERIFY(dialog);
+    QVERIFY(anyContains(shown(dialog), QStringLiteral("stop the game first")));
+    QVERIFY(!dialog->findChild<QAbstractButton*>(QStringLiteral("locationConfirm"))->isEnabled());
+    QMetaObject::invokeMethod(dialog, "dismiss");
+    s.emulator.simulateForScreenshot(EmulatorController::State::Idle, g, {});
+
+    // its pre-cache running
+    WarmupController::Progress p;
+    p.runnerId = kId;
+    s.warmup.simulateForScreenshot(WarmupController::State::Running, g, p);
+    QVERIFY(!s.runners.relocate(kId, elsewhere, RunnerManager::Relocation::Move, &error));
+    QCOMPARE(error, QStringLiteral("VIctory (DexNom) is pre-caching Signal Garden; cancel the pre-cache first."));
+    s.warmup.simulateForScreenshot(WarmupController::State::Idle, g, {});
+
+    // free again: Move from the dialog, and every surface reads Installed at the new place
+    QVERIFY(s.runners.busyReason(kId).isEmpty());
+    QSignalSpy moved(&s.runners, &RunnerManager::relocated);
+    RunnerUi::changeLocation(&w, s, kId, elsewhere);
+    dialog = w.findChildren<QWidget*>(QStringLiteral("changeLocation")).last();
+    QVERIFY(dialog->findChild<QWidget*>(QStringLiteral("locationMove"))->isVisibleTo(dialog));
+    auto* confirm = dialog->findChild<QAbstractButton*>(QStringLiteral("locationConfirm"));
+    QVERIFY(confirm->isEnabled());
+    QTest::mouseClick(confirm, Qt::LeftButton);
+    QVERIFY(moved.count() == 1 || moved.wait(30000));
+    QVERIFY2(moved.first().at(1).toBool(), qPrintable(moved.first().at(2).toString()));
+    QCOMPARE(s.runners.status(kId).state, RunnerManager::State::Installed);
+    QCOMPARE(s.runners.status(kId).executable, QDir(elsewhere).filePath(kId + QStringLiteral("/bin/victory.exe")));
+    const Surfaces after = surfaces(s, w);
+    QVERIFY2(anyContains(after.card, QStringLiteral("Installed")), qPrintable(after.card.join(QLatin1Char('|'))));
+    QVERIFY2(!anyContains(after.details, QStringLiteral("not installed")), qPrintable(after.details.join(QLatin1Char('|'))));
+    QVERIFY(s.emulator.checkLaunch(g).problem != EmulatorController::LaunchCheck::Problem::RunnerNotInstalled);
+    QVERIFY(s.warmup.checkStart(g).isEmpty());
+
+    // an open picker follows a location change (every runner's state at once) as one picker
+    w.showGameDetails(g);
+    w.gameDetailsPage()->runsWith()->openPicker();
+    s.settings.setRunnerLocation(QStringLiteral("kelvaroq"), m_dir.filePath(QStringLiteral("K")));
+    QTest::qWait(50);
+    int open = 0;
+    for (QWidget* pop : w.findChildren<QWidget*>(QStringLiteral("runsWithPicker")))
+        open += pop->isVisible() ? 1 : 0;
+    QCOMPARE(open, 1);
+    s.settings.setRunnerLocation(QStringLiteral("kelvaroq"), {});
 }
 
 QTEST_MAIN(TestRunnerState)

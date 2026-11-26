@@ -186,6 +186,16 @@ public:
         m_detail->setWordWrap(true);
         m_detail->setFixedWidth(240);
         right->addWidget(m_detail, 0, Qt::AlignRight);
+        m_location = new Button(QStringLiteral("Change location..."), Button::Variant::Link, Button::Size::Tiny, QStringLiteral("folder"));
+        m_location->setObjectName(QStringLiteral("location-") + spec.id);
+        right->addWidget(m_location, 0, Qt::AlignRight);
+        m_moveNote = new Label({}, Label::Style::Caption, Theme::Role::Danger);
+        m_moveNote->setObjectName(QStringLiteral("moveNote-") + spec.id);
+        m_moveNote->setAlignment(Qt::AlignRight);
+        m_moveNote->setWordWrap(true);
+        m_moveNote->setFixedWidth(240);
+        m_moveNote->hide();
+        right->addWidget(m_moveNote, 0, Qt::AlignRight);
         right->addStretch(1);
         auto* actions = new QHBoxLayout;
         actions->setSpacing(8);
@@ -242,6 +252,14 @@ public:
 
         connect(m_install, &Button::clicked, this, [this] { RunnerUi::confirmInstall(window(), m_s, m_spec.id); });
         connect(m_cancel, &Button::clicked, this, [this] { m_s.runners.cancel(); });
+        connect(m_location, &Button::clicked, this, [this] { RunnerUi::changeLocation(window(), m_s, m_spec.id); });
+        connect(&m_s.runners, &RunnerManager::relocated, this, [this](const QString& id, bool ok, const QString& message) {
+            if (id != m_spec.id)
+                return;
+            m_moveNote->setText(message);
+            m_moveNote->setRole(ok ? Theme::Role::Text3 : Theme::Role::Danger);
+            m_moveNote->setVisible(!message.isEmpty());
+        });
         connect(m_log, &Button::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(m_s.runners.installLogPath(m_spec.id))); });
         connect(m_uninstall, &Button::clicked, this, [this] { m_s.runners.uninstall(m_spec.id); });
         connect(m_makeDefault, &Button::clicked, this, [this] { m_s.settings.setDefaultRunner(m_spec.id); });
@@ -260,6 +278,9 @@ public:
         m_uninstall->setVisible(st.state == S::Installed || st.state == S::UpdateAvailable);
         m_makeDefault->setVisible(m_s.runners.isRunnable(m_spec.id) && m_s.settings.defaultRunner() != m_spec.id);
         m_cancel->setVisible(st.state == S::Installing);
+        m_location->setVisible(!m_spec.isBuiltIn()
+                               && (st.state == S::NotInstalled || st.state == S::Failed || st.state == S::Installed || st.state == S::UpdateAvailable));
+        m_location->setToolTip(QStringLiteral("In %1. Keep its source, build, program and cache in another folder or drive.").arg(QDir::toNativeSeparators(m_spec.dataDir())));
         m_install->setVisible(st.state == S::NotInstalled || st.state == S::UpdateAvailable || st.state == S::Failed);
         m_install->setEnabled(m_s.runners.busyId().isEmpty());
         m_install->setText(st.state == S::UpdateAvailable ? QStringLiteral("Update") : st.state == S::Failed ? QStringLiteral("Try again") : QStringLiteral("Install"));
@@ -317,6 +338,8 @@ private:
     Button* m_uninstall;
     Button* m_cancel;
     Button* m_install;
+    Button* m_location;
+    Label* m_moveNote;
     Card* m_steps;
     QList<StepRow> m_rows;
     QList<Bar*> m_bars;

@@ -105,6 +105,7 @@ public:
     State state() const { return m_state; }
     bool isActive() const { return m_state != State::Idle; }
     Game game() const { return m_game; }
+    QString runnerId() const { return m_runnerId; } // the runner of the game running now (or last)
     Stats stats() const { return m_stats; }
     std::optional<Protocol::Hello> hello() const { return m_hello; }
     qint64 helloAfterMs() const { return m_helloAfterMs; } // from start() to the hello line, -1 before it

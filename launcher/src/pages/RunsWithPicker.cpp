@@ -33,6 +33,7 @@ QString pickerLine(Services& s, const RunnerSpec& spec)
     case S::Installed: return QStringLiteral("Installed \u00B7 %1 \u00B7 its own shader cache").arg(shows);
     case S::UpdateAvailable: return QStringLiteral("Installed, update available \u00B7 %1").arg(shows);
     case S::Installing: return QStringLiteral("Installing now \u00B7 %1").arg(shows);
+    case S::Moving: return QStringLiteral("Moving to a new folder \u00B7 %1").arg(shows);
     case S::NotInstalled:
         return spec.install == RunnerSpec::Install::BuildFromSource ? QStringLiteral("Not installed \u00B7 builds from source on this PC")
                                                                     : QStringLiteral("Not installed \u00B7 downloads the pinned release");
@@ -353,6 +354,8 @@ void RunsWithSelector::openPicker()
     v->addLayout(foot);
     // an install that starts or ends elsewhere while the picker is open: show the rows as they are now
     connect(&m_s.runners, &RunnerManager::stateChanged, pop, [this, pop] {
+        if (!pop->isVisible())
+            return; // closed already, by an earlier change in the same burst
         pop->close();
         QTimer::singleShot(0, this, &RunsWithSelector::openPicker);
     });

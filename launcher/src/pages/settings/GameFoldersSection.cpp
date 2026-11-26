@@ -3,14 +3,18 @@
 
 #include "app/Services.h"
 #include "core/CoverArtService.h"
+#include "core/DiskSpace.h"
 #include "core/Format.h"
+#include "core/Paths.h"
 #include "widgets/Button.h"
 #include "widgets/Icon.h"
+#include "widgets/InfoNote.h"
 #include "widgets/Text.h"
 #include "widgets/Toggle.h"
 
 #include <QDateTime>
 #include <QDir>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -150,6 +154,58 @@ QWidget* SettingsSections::gameFolders(Services& s, std::function<void()> addFol
     watch->setChecked(true);
     sec.row(QStringLiteral("Watch folders for changes"), QStringLiteral("Adds and removes games without a restart."), watch)
         ->setUnavailable(QStringLiteral("Always on in this launcher."));
+
+    sec.caps(QStringLiteral("Runners"));
+    auto* runnersRow = new QWidget;
+    runnersRow->setObjectName(QStringLiteral("runnersFolder"));
+    auto* rh = new QHBoxLayout(runnersRow);
+    rh->setContentsMargins(0, 12, 0, 6);
+    rh->setSpacing(8);
+    auto* runnersPath = new SettingsKit::PathField;
+    auto* runnersReset = new Button(QStringLiteral("Use default"), Button::Variant::Ghost, Button::Size::Small);
+    auto* runnersChange = new Button(QStringLiteral("Change..."), Button::Variant::Secondary, Button::Size::Small);
+    runnersChange->setObjectName(QStringLiteral("runnersFolderChange"));
+    rh->addWidget(runnersPath, 1);
+    rh->addWidget(runnersReset);
+    rh->addWidget(runnersChange);
+    sec.add(runnersRow);
+    auto* runnersHelp = new Label({}, Label::Style::Caption, Theme::Role::Text3);
+    runnersHelp->setWordWrap(true);
+    sec.add(runnersHelp);
+    auto* runnersSpace = new InfoNote({}, Theme::Tone::Neutral, QStringLiteral("info"));
+    runnersSpace->setObjectName(QStringLiteral("runnersFolderSpace"));
+    sec.add(runnersSpace, 10);
+    const auto refreshRunners = [&s, runnersPath, runnersReset, runnersChange, runnersHelp, runnersSpace] {
+        const QString dir = Paths::runnersDir();
+        runnersPath->setPath(QDir::toNativeSeparators(dir));
+        const bool fromEnv = Paths::runnersDirFromEnvironment();
+        runnersChange->setEnabled(!fromEnv);
+        runnersReset->setVisible(!fromEnv && !s.settings.runnersFolder().isEmpty());
+        runnersHelp->setText(fromEnv ? QStringLiteral("Set by XSEMU_RUNNERS_DIR in the environment.")
+                                     : QStringLiteral("Community runners are downloaded and built here, with the Rust toolchain their builds need. Runners already installed stay where they are; use Change location on the Runners page to move one."));
+        const DiskSpace::Check space = DiskSpace::checkRunnerFolder(dir);
+        runnersSpace->setText(space.text);
+        runnersSpace->setTone(space.low ? Theme::Tone::Warning : Theme::Tone::Neutral);
+    };
+    refreshRunners();
+    const auto chooseRunners = [&s, runnersSpace](const QString& dir) {
+        QString error;
+        if (!s.runners.setRunnersFolder(dir, &error)) {
+            runnersSpace->setText(error);
+            runnersSpace->setTone(Theme::Tone::Danger);
+        }
+    };
+    QObject::connect(runnersChange, &Button::clicked, runnersRow, [runnersRow, chooseRunners] {
+        const QString dir = QFileDialog::getExistingDirectory(runnersRow->window(), QStringLiteral("Choose a folder for runners"), Paths::runnersDir());
+        if (!dir.isEmpty())
+            chooseRunners(dir);
+    });
+    QObject::connect(runnersReset, &Button::clicked, runnersRow, [chooseRunners] { chooseRunners({}); });
+    QObject::connect(&s.settings, &AppSettings::changed, runnersRow, [refreshRunners](const QString& key) {
+        if (key == QLatin1String(AppSettings::Key::RunnersFolder))
+            refreshRunners();
+    });
+    SettingsKit::onShow(sec.page, refreshRunners);
 
     sec.caps(QStringLiteral("Cover art"));
     auto* key = new QLineEdit(s.settings.steamGridDbKey());

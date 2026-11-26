@@ -9,6 +9,16 @@ Services::Services(QObject* parent)
     , warmup(settings, gate)
     , covers(settings)
 {
+    runners.setSettings(&settings);
+    runners.setInUseCheck([this](const QString& id) -> QString {
+        const RunnerSpec* spec = Runners::find(id);
+        const QString name = spec ? spec->name : id;
+        if (emulator.isActive() && emulator.runnerId() == id)
+            return QStringLiteral("%1 is running %2; stop the game first.").arg(name, emulator.game().title());
+        if (warmup.isActive() && warmup.progress().runnerId == id)
+            return QStringLiteral("%1 is pre-caching %2; cancel the pre-cache first.").arg(name, warmup.game().title());
+        return {};
+    });
     emulator.setRunners(&runners);
     warmup.setRunners(&runners);
     Theme::instance().setMode(Theme::Mode(int(settings.theme())));
