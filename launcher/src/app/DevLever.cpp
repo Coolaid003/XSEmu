@@ -463,7 +463,7 @@ bool DevLever::prepare(QString* error)
         *error = QStringLiteral("cannot copy the fixtures from %1").arg(fixtures);
         return false;
     }
-    QDir().mkpath(root(QStringLiteral("dxil")));
+    seedShaderCache(); // the driver blobs the fixtures' finished warm-ups left
     qputenv("XSEMU_LAUNCHER_DATA", root(QStringLiteral("launcher")).toUtf8());
     qputenv("XCL_DATA_ROOT", root(QStringLiteral("xcl")).toUtf8());
     qputenv("XCL_DXIL_CACHE", root(QStringLiteral("dxil")).toUtf8());
@@ -592,7 +592,6 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
     } else if (st.startsWith(QLatin1String("settings"))) {
         w.showPage(Page::Settings);
         if (st.startsWith(QLatin1String("settings-shaders"))) {
-            seedShaderCache();
             w.settingsPage()->showSection(SettingsPage::Section::Shaders);
         } else if (st == QLatin1String("settings-network"))
             w.settingsPage()->showSection(SettingsPage::Section::Network);

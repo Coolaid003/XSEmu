@@ -89,6 +89,15 @@ void TestShaderCache::titleState()
     QCOMPARE(titleShaderState(QStringLiteral("A"), {bad, ok}, cache), TitleShaderState::LastRunFailed);
     QCOMPARE(titleShaderState(QStringLiteral("A"), {ok, bad}, cache), TitleShaderState::Ready);
     QCOMPARE(titleShaderState(QStringLiteral("B"), {ok}, cache), TitleShaderState::Unknown);
+
+    // after Clear the finished warm-up no longer makes the game ready
+    ShaderCacheInfo cleared;
+    cleared.exists = true;
+    cleared.blobs = -1;
+    QCOMPARE(titleShaderState(QStringLiteral("A"), {ok}, cleared), TitleShaderState::NeverWarmed);
+    cleared.blobs = 0;
+    QCOMPARE(titleShaderState(QStringLiteral("A"), {ok}, cleared), TitleShaderState::NeverWarmed);
+    QCOMPARE(titleShaderState(QStringLiteral("A"), {bad, ok}, cleared), TitleShaderState::LastRunFailed);
 }
 
 void TestShaderCache::clearKeepsWhatIsNotTheCaches()

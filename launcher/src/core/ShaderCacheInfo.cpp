@@ -83,17 +83,19 @@ ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir)
 
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache)
 {
+    // a finished warm-up counts only while its driver blobs are still there (Clear empties the cache)
+    const bool empty = !cache.exists || cache.blobs <= 0;
     for (const WarmupRun& r : recent) {
         if (r.titleId != titleId || !r.runnerId.isEmpty()) // a runner's pre-cache fills its own cache, not XSEmu's
             continue;
         switch (r.result) {
-        case WarmupRun::Result::Finished: return TitleShaderState::Ready;
+        case WarmupRun::Result::Finished: return empty ? TitleShaderState::NeverWarmed : TitleShaderState::Ready;
         case WarmupRun::Result::Failed: return TitleShaderState::LastRunFailed;
         case WarmupRun::Result::Cancelled:
         case WarmupRun::Result::StoppedPartWay: return TitleShaderState::LastRunIncomplete;
         }
     }
-    if (!cache.exists || cache.blobs == 0 || cache.blobs == -1)
+    if (empty)
         return TitleShaderState::NeverWarmed;
     return TitleShaderState::Unknown;
 }

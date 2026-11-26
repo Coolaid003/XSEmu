@@ -49,7 +49,8 @@ struct ShaderCacheInfo {
 
 // A game's warm-up state as far as the launcher can tell: from its own warm-up records (the
 // emulator keeps no per-title shader state, so a game nobody warmed up from this launcher is Unknown
-// unless the machine-wide cache is empty).
+// unless the machine-wide cache is empty). A finished warm-up is Ready only while the cache still
+// holds driver blobs, so a cleared cache reads as NeverWarmed.
 enum class TitleShaderState { Unknown, NeverWarmed, Ready, LastRunIncomplete, LastRunFailed };
 
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache);
