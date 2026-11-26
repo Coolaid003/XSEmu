@@ -382,7 +382,8 @@ void TestControllers::coolfoxRunsWithItsOwnEnvironment()
         QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(e.value(QStringLiteral("VICTORY_DATA_DIR")).toString())), QDir(spec->dataDir()).filePath(QStringLiteral("data")));
         QCOMPARE(e.value(QStringLiteral("VICTORY_AMBIENT")).toString(), ambient ? QStringLiteral("0.8") : QString());
         QCOMPARE(e.value(QStringLiteral("VICTORY_AMBIENT_AIR")).toString(), ambient ? QStringLiteral("1.5") : QString());
-        QCOMPARE(QDir::cleanPath(lastRecord(record).value(QStringLiteral("cwd")).toString()), QDir::cleanPath(spec->installDir()));
+        // QFileInfo compares canonical paths, case-insensitively on Windows (drive letters, short names)
+        QCOMPARE(QFileInfo(lastRecord(record).value(QStringLiteral("cwd")).toString()), QFileInfo(spec->installDir()));
     };
     QDir(QDir(spec->dataDir()).filePath(QStringLiteral("cache/pipelines"))).removeRecursively();
     const Game game = fixtureGame(QStringLiteral("Signal Garden"));

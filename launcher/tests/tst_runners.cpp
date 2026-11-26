@@ -386,7 +386,7 @@ void TestRunners::fetchFallsBackAndChecksIds()
     head.setWorkingDirectory(spec->checkoutDir());
     head.start(QStringLiteral("git"), {QStringLiteral("rev-parse"), QStringLiteral("HEAD"), QStringLiteral("HEAD^{tree}")});
     QVERIFY(head.waitForFinished());
-    QCOMPARE(QString::fromLatin1(head.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts), (QStringList{m_commit, m_tree}));
+    QCOMPARE(QString::fromLatin1(head.readAllStandardOutput()).simplified().split(QLatin1Char(' ')), (QStringList{m_commit, m_tree}));
 
     // the pinned commit with a tree other than the pinned one is refused at every source
     RunnerSpec wrongTree = *spec;

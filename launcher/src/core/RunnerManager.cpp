@@ -27,7 +27,14 @@ QJsonObject installRecord(const QString& id) { return readJson(QDir(Paths::runne
 
 QString clean(const QString& path) { return path.isEmpty() ? QString() : QDir::cleanPath(QDir::fromNativeSeparators(path)); }
 
-bool inside(const QString& path, const QString& dir) { return path == dir || path.startsWith(dir + QLatin1Char('/')); }
+// Paths from clean(): Windows file names (and drive letters) ignore case, so C:/Runners is c:/runners there.
+#ifdef Q_OS_WIN
+constexpr Qt::CaseSensitivity kPathCase = Qt::CaseInsensitive;
+#else
+constexpr Qt::CaseSensitivity kPathCase = Qt::CaseSensitive;
+#endif
+bool samePath(const QString& a, const QString& b) { return a.compare(b, kPathCase) == 0; }
+bool inside(const QString& path, const QString& dir) { return samePath(path, dir) || path.startsWith(dir + QLatin1Char('/'), kPathCase); }
 
 struct Tree {
     qint64 files = 0;
@@ -86,8 +93,7 @@ void RunnerManager::applyLocations()
 
 void RunnerManager::setLocation(const QString& id, const QString& folder)
 {
-    const QString runners = Paths::runnersDir();
-    m_settings->setRunnerLocation(id, clean(folder) == runners ? QString() : clean(folder));
+    m_settings->setRunnerLocation(id, samePath(clean(folder), clean(Paths::runnersDir())) ? QString() : clean(folder));
 }
 
 QString RunnerManager::location(const QString& id) const { return Paths::runnerLocation(id); }
@@ -128,7 +134,7 @@ bool RunnerManager::relocate(const QString& id, const QString& folder, Relocatio
         return refuse(QStringLiteral("Pick a folder for %1.").arg(spec->name));
     const QString from = clean(Paths::runnerDir(id));
     const QString to = clean(QDir(target).filePath(id));
-    if (to == from)
+    if (samePath(to, from))
         return refuse(QStringLiteral("%1 is already in %2.").arg(spec->name, QDir::toNativeSeparators(target)));
     if (inside(to, from))
         return refuse(QStringLiteral("%1 can't move into its own folder.").arg(spec->name));
