@@ -440,6 +440,7 @@ pub fn on_tls_event(reason: u32) {
         },
         0 => {
             // DLL_PROCESS_DETACH (ExitProcess): write the report while everything is alive.
+            crate::control::title_exited();
             crate::report::write_final(None);
             crate::log::flush();
         }

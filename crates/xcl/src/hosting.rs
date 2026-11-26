@@ -3,7 +3,9 @@
 //! centred 16:9 rectangle of the widget's client area (the swap chain stretches the frame over
 //! the whole window, so a 16:9 window is the letterbox; the bars are the widget's own
 //! background) and follows the widget's size, which a child window does not learn on its own,
-//! by polling it. Without the option nothing here runs and the window is the top-level one.
+//! by polling it. The launcher's shortcuts (F1, F3, F11, Escape) pressed in it go to the
+//! launcher (`control::key`), not to the title. Without the option nothing here runs and the
+//! window is the top-level one.
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +18,7 @@ pub const HOST_HWND_ENV: &str = "XSEMU_HOST_HWND";
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RunArgs {
     pub host_hwnd: Option<isize>,
+    pub control_pipe: Option<String>,
     pub target: String,
     pub game_args: Vec<String>,
 }
@@ -30,6 +33,11 @@ pub fn parse_run_args(args: &[String]) -> Result<RunArgs, String> {
             "--host-hwnd" => {
                 let v = args.get(i + 1).ok_or("--host-hwnd needs a window handle (hex)")?;
                 run.host_hwnd = Some(parse_hwnd(v).ok_or_else(|| format!("--host-hwnd: {v:?} is not a window handle (hex, with or without 0x)"))?);
+                i += 2;
+            }
+            "--control-pipe" => {
+                let v = args.get(i + 1).filter(|v| !v.trim().is_empty()).ok_or("--control-pipe needs a pipe name")?;
+                run.control_pipe = Some(v.clone());
                 i += 2;
             }
             _ => break,
@@ -52,6 +60,10 @@ impl RunArgs {
         match self.host_hwnd {
             Some(h) => std::env::set_var(HOST_HWND_ENV, format!("{h:x}")),
             None => std::env::remove_var(HOST_HWND_ENV),
+        }
+        match &self.control_pipe {
+            Some(name) => std::env::set_var(crate::control::CONTROL_PIPE_ENV, name),
+            None => std::env::remove_var(crate::control::CONTROL_PIPE_ENV),
         }
     }
 }
@@ -83,11 +95,18 @@ extern "system" {
     fn SetFocus(hwnd: *mut c_void) -> *mut c_void;
     fn SetTimer(hwnd: *mut c_void, id: usize, ms: u32, f: *const c_void) -> usize;
     fn SetProcessDpiAwarenessContext(context: isize) -> i32;
+    fn PostMessageW(hwnd: *mut c_void, msg: u32, wp: usize, lp: isize) -> i32;
 }
 
 const WM_DESTROY: u32 = 0x0002;
 const WM_TIMER: u32 = 0x0113;
 const WM_LBUTTONDOWN: u32 = 0x0201;
+const WM_KEYDOWN: u32 = 0x0100;
+const WM_KEYUP: u32 = 0x0101;
+const WM_SYSKEYDOWN: u32 = 0x0104;
+const WM_SYSKEYUP: u32 = 0x0105;
+/// WM_APP + 0x5C1: take the keyboard focus (`focus`, from the control pipe's thread)
+const WM_TAKE_FOCUS: u32 = 0x8000 + 0x5C1;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_NOACTIVATE: u32 = 0x0010;
 const SWP_ASYNCWINDOWPOS: u32 = 0x4000;
@@ -116,9 +135,31 @@ pub fn start() {
     if crate::hle::d3d12x::present::window().is_none() {
         let msg = format!("could not make the game window in the launcher's window {parent:#x}");
         crate::xlog_error!("{msg}");
+        crate::control::exit(0x7C1_0003, "error", &msg);
         crate::report::write_final(Some(msg));
         crate::log::flush();
         std::process::exit(0x7C1_0003);
+    }
+}
+
+/// The launcher's shortcut a virtual key is (`key` in docs/launcher-protocol.md).
+pub fn launcher_key(vk: usize) -> Option<&'static str> {
+    match vk {
+        0x70 => Some("F1"),
+        0x72 => Some("F3"),
+        0x7A => Some("F11"),
+        0x1B => Some("Escape"),
+        _ => None,
+    }
+}
+
+/// The launcher asked for the keyboard focus: the window thread takes it.
+pub fn focus() {
+    if host_hwnd().is_none() {
+        return;
+    }
+    if let Some(hwnd) = crate::hle::d3d12x::present::window() {
+        unsafe { PostMessageW(hwnd as *mut c_void, WM_TAKE_FOCUS, 0, 0) };
     }
 }
 
@@ -139,7 +180,7 @@ pub fn attach(hwnd: *mut c_void) {
 
 /// The game window's messages in hosted mode, before anything else sees them: Some(result)
 /// when handled here.
-pub unsafe fn on_message(hwnd: *mut c_void, msg: u32, wp: usize, _lp: isize) -> Option<isize> {
+pub unsafe fn on_message(hwnd: *mut c_void, msg: u32, wp: usize, lp: isize) -> Option<isize> {
     let parent = host_hwnd()?;
     match msg {
         WM_TIMER if wp == FOLLOW_TIMER => {
@@ -150,6 +191,18 @@ pub unsafe fn on_message(hwnd: *mut c_void, msg: u32, wp: usize, _lp: isize) -> 
             // a child window is not given the keyboard focus by a click
             SetFocus(hwnd);
             None
+        }
+        WM_TAKE_FOCUS => {
+            SetFocus(hwnd);
+            Some(0)
+        }
+        WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP => {
+            let key = launcher_key(wp)?;
+            // (bit 30: the key was down already, a repeat)
+            if matches!(msg, WM_KEYDOWN | WM_SYSKEYDOWN) && lp & (1 << 30) == 0 {
+                crate::control::key(key);
+            }
+            Some(0)
         }
         WM_DESTROY => {
             stop_soon("the launcher's window closed");
@@ -180,6 +233,7 @@ pub fn stop_title(why: &str) {
         return;
     }
     crate::xlog_info!("{why} – ending the title");
+    crate::control::exit(0, "stopped", "");
     crate::hle::d3d12x::present::flush_frame_dumps();
     crate::report::write_final(None);
     crate::log::flush();
@@ -204,17 +258,20 @@ mod tests {
     #[test]
     fn run_without_launcher_options_is_unchanged() {
         let run = parse_run_args(&args(&["D:\\Game", "a", "b"])).unwrap();
-        assert_eq!(run, RunArgs { host_hwnd: None, target: "D:\\Game".into(), game_args: args(&["a", "b"]) });
+        assert_eq!(run, RunArgs { host_hwnd: None, control_pipe: None, target: "D:\\Game".into(), game_args: args(&["a", "b"]) });
         let run = parse_run_args(&args(&["D:\\Game", "x", "--", "a"])).unwrap();
         assert_eq!(run.game_args, args(&["a"]));
     }
 
     #[test]
     fn launcher_options_come_before_the_game() {
-        let run = parse_run_args(&args(&["--host-hwnd", "0x1A2B3C", "D:\\Game", "--", "--hello"])).unwrap();
+        let run = parse_run_args(&args(&["--host-hwnd", "0x1A2B3C", "--control-pipe", "xsemu-42-1", "D:\\Game", "--", "--hello"])).unwrap();
         assert_eq!(run.host_hwnd, Some(0x1A2B3C));
+        assert_eq!(run.control_pipe.as_deref(), Some("xsemu-42-1"));
         assert_eq!(run.target, "D:\\Game");
         assert_eq!(run.game_args, args(&["--hello"]));
+        let run = parse_run_args(&args(&["--control-pipe", "p", "--host-hwnd", "10", "D:\\Game"])).unwrap();
+        assert_eq!((run.host_hwnd, run.control_pipe.as_deref(), run.target.as_str()), (Some(0x10), Some("p"), "D:\\Game"));
         // after the game an option is the game's
         let run = parse_run_args(&args(&["D:\\Game", "--host-hwnd", "10"])).unwrap();
         assert_eq!(run.host_hwnd, None);
@@ -227,6 +284,8 @@ mod tests {
         assert!(parse_run_args(&args(&["--host-hwnd", "zz", "D:\\Game"])).is_err());
         assert!(parse_run_args(&args(&["--host-hwnd", "0", "D:\\Game"])).is_err());
         assert!(parse_run_args(&args(&["--host-hwnd", "1a2b"])).is_err());
+        assert!(parse_run_args(&args(&["--control-pipe"])).is_err());
+        assert!(parse_run_args(&args(&["--control-pipe", "", "D:\\Game"])).is_err());
     }
 
     #[test]
@@ -237,6 +296,13 @@ mod tests {
         assert_eq!(parse_hwnd(""), None);
         assert_eq!(parse_hwnd("0x"), None);
         assert_eq!(parse_hwnd("12g"), None);
+    }
+
+    #[test]
+    fn launcher_shortcuts_are_f1_f3_f11_and_escape() {
+        assert_eq!([0x70, 0x72, 0x7A, 0x1B].map(launcher_key), [Some("F1"), Some("F3"), Some("F11"), Some("Escape")]);
+        assert_eq!(launcher_key(0x71), None);
+        assert_eq!(launcher_key(0x0D), None);
     }
 
     #[test]

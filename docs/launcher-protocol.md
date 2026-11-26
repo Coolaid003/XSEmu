@@ -43,9 +43,9 @@ Launcher → emulator:
 | Message | Meaning |
 |---|---|
 | `{"cmd":"pause"}` | Stop the title making progress: block its frame presentation and stop delivering keyboard, mouse and gamepad input. Answer with `state` `paused`. |
-| `{"cmd":"resume"}` | Undo pause. Answer with `state` `running`. |
+| `{"cmd":"resume"}` | Undo pause. Answer with the `state` it returns to: `running` (`booting` if no frame was shown yet). |
 | `{"cmd":"stop"}` | End the title cleanly and exit with reason `stopped`. The launcher kills the process tree if it has not exited 5 s later. |
-| `{"cmd":"overlay","on":true}` | Show or hide the in-frame performance overlay (drawn by the emulator into its own frame). |
+| `{"cmd":"overlay","on":true}` | Show or hide the in-frame performance overlay (drawn by the emulator into its own frame: a graph of the last 120 frame times in the top-left corner, green to 60 fps, amber to 30, red slower, with a 16.7 ms line; no text). Without `on` it toggles. |
 | `{"cmd":"focus"}` | Take keyboard focus (`SetFocus` on the child window). Sent when the launcher shows the game view or the user clicks it. |
 
 Emulator → launcher:
@@ -59,6 +59,20 @@ Emulator → launcher:
 | `{"ev":"exit","code":0,"reason":"stopped","message":""}` | Last line before a deliberate exit. `reason`: `stopped` (launcher asked), `title_exit` (the title ended), `crash` (written by the crash handler if it can; `message` has the exception and module), `device_removed` (D3D12 device removed; `message` has the removal reason), `error` (boot failed; `message` says why, e.g. game files missing). |
 
 If the process ends without an `exit` line, the launcher treats it as a crash with the process exit code.
+
+Details of the emulator side:
+
+- `stats` covers the second since the last one: `fps` frames shown, `frame_ms` and `worst_ms` the mean and longest
+  time between two shown frames, `stalls` the frames shown 100 ms or more after the one before, `ram_free_mb`
+  available physical memory, `vram_used_mb` / `vram_budget_mb` the adapter's local segment
+  (`QueryVideoMemoryInfo`), `pipelines` the pipelines built so far, `compiling` the ones being built. No `stats`
+  while paused.
+- `key` is sent only with `--host-hwnd` (the keys go to the child window); Escape then no longer reaches the
+  title as B.
+- `exit` `code` is the process exit code (an NTSTATUS for `crash` and `device_removed`). A boot failure in
+  `XSEmu run` itself (game files missing, bad `xcl.toml`, CPU check) is sent by the outer process: its `hello`
+  has that process's `pid` and no `title`.
+- When the launcher closes the pipe (or ends), the emulator ends the title.
 
 ## Warm-up (`warm-up --progress-json`)
 

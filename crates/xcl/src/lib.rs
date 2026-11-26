@@ -11,6 +11,7 @@ pub mod alias;
 pub mod manifest;
 pub mod memmap;
 pub mod config;
+pub mod control;
 pub mod disasm;
 pub mod eh;
 pub mod gpu;

@@ -54,6 +54,7 @@ pub unsafe extern "system" fn present_x(queue: *mut c_void, plane_count: u32, pl
         return 0;
     }
     let token = (planes as *const u64).read_unaligned();
+    crate::control::wait_while_paused();
     let _present = PRESENTX_LOCK.lock().unwrap();
     present_x_frame(queue, plane_count, planes);
     // The title can use flip statistics to decide when to reuse its buffer.
@@ -513,6 +514,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
     match msg {
         WM_CLOSE => {
             crate::xlog_info!("XCL window closed – ending the game process");
+            crate::control::exit(0, "stopped", "");
             flush_frame_dumps();
             crate::report::write_final(None);
             crate::log::flush();
@@ -1169,6 +1171,7 @@ unsafe fn ensure_swapchain(p: &mut Presenter, hwnd: HWND, w: u32, h: u32, fmt: D
 }
 
 unsafe fn present_now(min_interval: Duration, frame: Option<(usize, &[usize])>) {
+    crate::control::wait_while_paused();
     if IN_PRESENT.with(|c| c.replace(true)) {
         return;
     }
@@ -1312,10 +1315,13 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, &[usize])>) 
             dumps.push(FrameDump { source: Some(res), buffer, footprint, format, tag });
         }
     }
-    // the bar comes after the frame dumps: they hold the title's frame as it is
-    match crate::progress::current() {
-        Some(s) => progress_bar(p, &bb, s.fraction()),
-        None => p.list.ResourceBarrier(&[transition(&bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT)]),
+    // the bar and the overlay come after the frame dumps: they hold the title's frame as it is
+    let mut rects = crate::progress::current().map_or(Vec::new(), |s| crate::progress::bar(p.w, p.h, s.fraction()).to_vec());
+    rects.extend(crate::control::overlay_rects(p.w, p.h));
+    if rects.is_empty() {
+        p.list.ResourceBarrier(&[transition(&bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PRESENT)]);
+    } else {
+        fill_rects(p, &bb, &rects);
     }
     if p.list.Close().is_err() {
         return;
@@ -1361,6 +1367,7 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, &[usize])>) 
     }
     p.last = Instant::now();
     let n = PRESENTS.fetch_add(1, Ordering::Relaxed);
+    crate::control::note_present();
     if let Some(slot) = timed_capture {
         NEXT_PLANE_CAPTURE.store(slot + 1, Ordering::Relaxed);
     }
@@ -1381,9 +1388,11 @@ unsafe fn present_now(min_interval: Duration, frame: Option<(usize, &[usize])>) 
     }
 }
 
-/// The progress bar (`progress::bar`) along the bottom edge of the back buffer, which comes in
-/// COPY_SOURCE and leaves in PRESENT; the rest of the frame stays as it is.
-unsafe fn progress_bar(p: &mut Presenter, bb: &ID3D12Resource, fraction: f32) {
+/// The progress bar (`progress::bar`) along the bottom edge of the back buffer and the
+/// performance overlay (`control::overlay_rects`): `rects` filled with their colours on the
+/// back buffer, which comes in COPY_SOURCE and leaves in PRESENT; the rest of the frame stays as
+/// it is.
+unsafe fn fill_rects(p: &mut Presenter, bb: &ID3D12Resource, rects: &[(crate::progress::Rect, [f32; 4])]) {
     if p.bar_rtv.is_none() {
         p.bar_rtv = p.dev.CreateDescriptorHeap(&D3D12_DESCRIPTOR_HEAP_DESC { Type: D3D12_DESCRIPTOR_HEAP_TYPE_RTV, NumDescriptors: 1, ..Default::default() }).ok();
     }
@@ -1396,7 +1405,7 @@ unsafe fn progress_bar(p: &mut Presenter, bb: &ID3D12Resource, fraction: f32) {
     // (the RTV hook keeps a reference to what a handle names: none on the swap chain's buffer)
     note_rtv(rtv.ptr, std::ptr::null_mut());
     p.list.ResourceBarrier(&[transition(bb, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET)]);
-    for ([left, top, right, bottom], colour) in crate::progress::bar(p.w, p.h, fraction) {
+    for &([left, top, right, bottom], colour) in rects {
         if left < right && top < bottom {
             p.list.ClearRenderTargetView(rtv, &colour, Some(&[RECT { left, top, right, bottom }]));
         }

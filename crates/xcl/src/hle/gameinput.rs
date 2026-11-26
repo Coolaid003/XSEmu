@@ -276,8 +276,9 @@ extern "system" {
 
 unsafe fn keyboard() -> u32 {
     // hosted in a launcher's window the foreground window is the launcher's: the XCL window's
-    // focus decides (`kbm::hosted_focus`)
-    match super::kbm::hosted_focus() {
+    // focus decides (`kbm::hosted_focus`), and Escape is the launcher's (`hosting::launcher_key`)
+    let hosted = super::kbm::hosted_focus();
+    match hosted {
         Some(false) => return 0,
         Some(true) => {}
         None => {
@@ -293,7 +294,7 @@ unsafe fn keyboard() -> u32 {
         }
     }
     const KEYS: [(i32, u32); 10] = [(0x0D, A), (0x20, A), (0x1B, B), (0x08, B), (0x26, DPAD_UP), (0x28, DPAD_DOWN), (0x25, DPAD_LEFT), (0x27, DPAD_RIGHT), (0x09, VIEW), (0x50, MENU)];
-    KEYS.iter().filter(|(k, _)| GetAsyncKeyState(*k) as u16 & 0x8000 != 0).fold(0, |b, (_, g)| b | g)
+    KEYS.iter().filter(|(k, _)| !(hosted.is_some() && *k == 0x1B) && GetAsyncKeyState(*k) as u16 & 0x8000 != 0).fold(0, |b, (_, g)| b | g)
 }
 
 /// Merge host keyboard/mouse input (only when `keyboard_mouse` is enabled) and scripted
@@ -414,6 +415,10 @@ mod live {
 
 /// the gamepad now
 pub fn poll() -> GamepadState {
+    // paused by the launcher (`control::pause`): the title gets a gamepad at rest
+    if crate::control::paused() {
+        return GamepadState::default();
+    }
     let mut s = xinput_pad().unwrap_or_default();
     if let Some(l) = live::now() {
         s.buttons |= l.buttons;

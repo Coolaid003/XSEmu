@@ -21,10 +21,11 @@ const HELP: &str = "\
 XSEmu – Xbox Series X|S emulator (based on XCL, a Windows compatibility layer)
 
 Usage:
-  XSEmu run [--host-hwnd <hex>] <game folder | file.exe> [-- game arguments]
+  XSEmu run [--host-hwnd <hex>] [--control-pipe <name>] <game folder | file.exe> [-- game arguments]
       Runs the game. The game folder is only read; writes, game saves and logs go to
       %LOCALAPPDATA%\\XCL\\<title>\\ (or %XCL_DATA_ROOT%\\<title>\\).
       --host-hwnd: the game window is a child of that window (a launcher's), 16:9 inside it.
+      --control-pipe: JSON lines with the launcher on \\\\.\\pipe\\<name> (docs/launcher-protocol.md).
   XSEmu inspect <file.exe|file.dll> [--json]
       Analysis without running: imports and what XCL has for them (HLE / Windows / stub).
   XSEmu disasm <file> [--offset N] [--length N] [--all] [--hex] [--fssm FILE]

@@ -284,9 +284,11 @@ pub fn attach(hwnd: *mut c_void) {
 }
 
 /// The XCL window has the focus: the foreground window, or hosted, holding the keyboard focus
-/// in the foreground launcher window.
+/// in the foreground launcher window; never while the launcher paused the title.
 unsafe fn has_focus(hwnd: *mut c_void) -> bool {
-    if HOSTED.load(Ordering::Acquire) {
+    if crate::control::paused() {
+        false
+    } else if HOSTED.load(Ordering::Acquire) {
         KEYBOARD_FOCUS.load(Ordering::Acquire) && GetAncestor(hwnd, GA_ROOT) == GetForegroundWindow()
     } else {
         GetForegroundWindow() == hwnd

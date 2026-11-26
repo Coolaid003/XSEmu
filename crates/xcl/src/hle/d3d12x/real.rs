@@ -482,7 +482,7 @@ pub fn video_memory() -> Option<(u64, u64)> {
     Some((local.CurrentUsage, non_local.CurrentUsage))
 }
 
-pub(super) fn video_memory_info() -> Option<[windows::Win32::Graphics::Dxgi::DXGI_QUERY_VIDEO_MEMORY_INFO; 2]> {
+pub(crate) fn video_memory_info() -> Option<[windows::Win32::Graphics::Dxgi::DXGI_QUERY_VIDEO_MEMORY_INFO; 2]> {
     use windows::Win32::Graphics::Dxgi::*;
     let raw = device_raw();
     let dev = unsafe { ID3D12Device::from_raw_borrowed(&raw) }?;
@@ -9032,6 +9032,7 @@ pub fn stop_if_device_removed() {
         log_device_removed();
         let msg = format!("the D3D12 device was removed ({:#x}: {}) – the title is stopped", e.code().0 as u32, e.message());
         crate::xlog_error!("{msg}");
+        crate::control::exit(e.code().0 as u32, "device_removed", &msg);
         crate::report::write_final(Some(msg));
         crate::log::flush();
         unsafe {

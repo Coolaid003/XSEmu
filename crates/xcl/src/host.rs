@@ -40,6 +40,7 @@ pub fn host_main(boot_path: &Path) -> i32 {
         Ok(b) => b,
         Err(e) => {
             eprintln!("xcl host: cannot read {}: {e}", boot_path.display());
+            crate::control::exit(0x7C1_0001, "error", &format!("cannot read {}: {e}", boot_path.display()));
             return 0x7C1_0001;
         }
     };
@@ -57,6 +58,7 @@ pub fn host_main(boot_path: &Path) -> i32 {
     }
     crate::state::set_boot(boot.clone());
     crate::hosting::start();
+    crate::control::start();
     fine_timer();
     // `XCL_ACTIVITY=1`: every 2 s what the title did since (a timeline of where it stops)
     if std::env::var_os("XCL_ACTIVITY").is_some() {
@@ -195,6 +197,7 @@ pub fn host_main(boot_path: &Path) -> i32 {
         Err(e) => {
             crate::xlog_error!("loading the game failed: {e}");
             crate::report::write_final(Some(format!("loader: {e}")));
+            crate::control::exit(0x7C1_0002, "error", &format!("loading the game failed: {e}"));
             return 0x7C1_0002;
         }
     };
@@ -202,6 +205,7 @@ pub fn host_main(boot_path: &Path) -> i32 {
     crate::report::write_final(None);
     let code = crate::loader::run_main(&main);
     crate::xlog_info!("game entry point returned code {code}");
+    crate::control::exit(code as u32, "title_exit", "");
     crate::hle::d3d12x::present::flush_frame_dumps();
     crate::report::write_final(None);
     crate::log::flush();
