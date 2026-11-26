@@ -5,7 +5,7 @@
 #include "Paths.h"
 #include "ProcessGate.h"
 #include "ProcessTree.h"
-#include "TitleConfig.h"
+#include "LaunchConfig.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -116,25 +116,6 @@ QStringList EmulatorController::runArguments(const QString& gameFolder, quintptr
     return args;
 }
 
-QProcessEnvironment EmulatorController::runEnvironment(const QProcessEnvironment& base, bool offline)
-{
-    QProcessEnvironment env = base;
-    if (offline)
-        env.insert(QStringLiteral("XCL_NETWORK"), QStringLiteral("0"));
-    else
-        env.remove(QStringLiteral("XCL_NETWORK"));
-    // the store answers with its network error: nothing grants a licence (hle/xgameruntime/store.rs)
-    env.insert(QStringLiteral("XCL_STORE"), QStringLiteral("offline-error"));
-    return env;
-}
-
-void EmulatorController::prepareTitleConfig(const Game& game)
-{
-    TitleConfig cfg(Paths::xclToml(game.titleId()));
-    if (!cfg.contains(QStringLiteral("device_type")))
-        cfg.set(QStringLiteral("device_type"), m_settings.defaultDeviceType());
-}
-
 bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* error)
 {
     const LaunchCheck check = checkLaunch(game);
@@ -149,7 +130,7 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
         return false;
     }
 
-    prepareTitleConfig(game);
+    LaunchConfig::prepareTitle(m_settings, game.titleId());
 
     m_game = game;
     m_stats = {};
@@ -177,7 +158,7 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
 
     auto* p = new ProcessTree(this);
     m_process = p;
-    p->setProcessEnvironment(runEnvironment(QProcessEnvironment::systemEnvironment(), m_settings.offline()));
+    p->setProcessEnvironment(LaunchConfig::runEnvironment(QProcessEnvironment::systemEnvironment(), m_settings, game.titleId()));
     p->setWorkingDirectory(QFileInfo(m_settings.emulatorPath()).absolutePath());
     p->setProcessChannelMode(QProcess::MergedChannels);
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {

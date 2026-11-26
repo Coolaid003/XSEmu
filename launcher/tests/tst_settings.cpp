@@ -1,6 +1,8 @@
 #include "AppSettings.h"
 #include "EmulatorController.h"
 #include "Format.h"
+#include "LaunchConfig.h"
+#include "TitleConfig.h"
 #include "Paths.h"
 #include "ProcessGate.h"
 #include "WarmupController.h"
@@ -18,6 +20,7 @@ private slots:
     void paths();
     void gate();
     void runCommandLine();
+    void titleConfigAtLaunch();
     void warmupClassification();
     void formats();
 };
@@ -30,7 +33,6 @@ void TestSettings::defaultsFollowTheHouseRules()
     QVERIFY(s.offline());
     QVERIFY(!s.firstLaunchDone());
     QCOMPARE(s.theme(), AppSettings::ThemeMode::System);
-    QCOMPARE(s.giantCompileCap(), 3);
     QCOMPARE(s.launchNeedMb(), 6 * 1024);
     QVERIFY(s.artLookups());
     QVERIFY(s.steamGridDbKey().isEmpty());
@@ -123,15 +125,70 @@ void TestSettings::runCommandLine()
              (QStringList{QStringLiteral("run"), QStringLiteral("--host-hwnd"), QStringLiteral("1a2b3c"), QStringLiteral("--control-pipe"),
                           QStringLiteral("xsemu-1-1"), QDir::toNativeSeparators(QStringLiteral("/games/A"))}));
     QCOMPARE(EmulatorController::runArguments(QStringLiteral("/g"), 0, QString()), (QStringList{QStringLiteral("run"), QDir::toNativeSeparators(QStringLiteral("/g"))}));
+    QTemporaryDir dir;
+    qputenv("XCL_DATA_ROOT", dir.filePath(QStringLiteral("xcl")).toUtf8());
+    AppSettings s(dir.filePath(QStringLiteral("s.ini")));
     QProcessEnvironment base;
     base.insert(QStringLiteral("XCL_NETWORK"), QStringLiteral("1"));
-    const QProcessEnvironment off = EmulatorController::runEnvironment(base, true);
+    const QProcessEnvironment off = LaunchConfig::runEnvironment(base, s, QStringLiteral("T"));
     QCOMPARE(off.value(QStringLiteral("XCL_NETWORK")), QStringLiteral("0"));
     QCOMPARE(off.value(QStringLiteral("XCL_STORE")), QStringLiteral("offline-error"));
-    const QProcessEnvironment on = EmulatorController::runEnvironment(base, false);
+    QCOMPARE(off.value(QStringLiteral("XCL_FULL_DUMP")), QDir::toNativeSeparators(LaunchConfig::crashDumpDir(QStringLiteral("T"))));
+    QVERIFY(LaunchConfig::crashDumpDir(QStringLiteral("T")).endsWith(QStringLiteral("T/logs/dumps")));
+    s.setOffline(false);
+    s.setStoreOfflineError(false);
+    s.setCrashDumps(false);
+    base.insert(QStringLiteral("XCL_STORE"), QStringLiteral("offline-error"));
+    const QProcessEnvironment on = LaunchConfig::runEnvironment(base, s, QStringLiteral("T"));
     QVERIFY(!on.contains(QStringLiteral("XCL_NETWORK")));
-    QCOMPARE(on.value(QStringLiteral("XCL_STORE")), QStringLiteral("offline-error"));
+    QVERIFY(!on.contains(QStringLiteral("XCL_STORE")));
+    QVERIFY(!on.contains(QStringLiteral("XCL_FULL_DUMP")));
     QCOMPARE(WarmupController::warmupArguments(true), (QStringList{QStringLiteral("warm-up"), QStringLiteral("--full"), QStringLiteral("--progress-json")}));
+}
+
+void TestSettings::titleConfigAtLaunch()
+{
+    QTemporaryDir dir;
+    qputenv("XCL_DATA_ROOT", dir.filePath(QStringLiteral("xcl")).toUtf8());
+    AppSettings s(dir.filePath(QStringLiteral("s.ini")));
+    const QString id = QStringLiteral("Northwind.Title");
+
+    // a fresh title gets the Series S default and nothing the user never chose
+    QVariantMap v = LaunchConfig::titleValues(s, id);
+    QCOMPARE(v, (QVariantMap{{QStringLiteral("device_type"), QStringLiteral("lockhart")}}));
+
+    // launcher defaults come back with their TOML types after a round trip through the ini
+    s.setXclDefault(QStringLiteral("keyboard_mouse"), false);
+    s.setXclDefault(QStringLiteral("mouse_sensitivity"), 1.5);
+    s.setXclDefault(QStringLiteral("log_level"), QStringLiteral("debug"));
+    AppSettings reread(dir.filePath(QStringLiteral("s.ini")));
+    v = LaunchConfig::titleValues(reread, id);
+    QCOMPARE(v.value(QStringLiteral("keyboard_mouse")).typeId(), int(QMetaType::Bool));
+    QCOMPARE(v.value(QStringLiteral("keyboard_mouse")).toBool(), false);
+    QCOMPARE(v.value(QStringLiteral("mouse_sensitivity")).typeId(), int(QMetaType::Double));
+    QCOMPARE(v.value(QStringLiteral("mouse_sensitivity")).toDouble(), 1.5);
+
+    // a per-game override wins over the default
+    s.setDefaultDeviceType(QStringLiteral("lockhart"));
+    s.setGameOverride(id, QStringLiteral("device_type"), QStringLiteral("anaconda"));
+    QCOMPARE(LaunchConfig::titleValues(s, id).value(QStringLiteral("device_type")).toString(), QStringLiteral("anaconda"));
+    s.clearGameOverride(id, QStringLiteral("device_type"));
+
+    // the file keeps the user's other keys and gets the launcher's values
+    TitleConfig cfg(Paths::xclToml(id));
+    QDir().mkpath(QFileInfo(cfg.path()).absolutePath());
+    QFile f(cfg.path());
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write("# mine\ndevice_type = \"anaconda\"\ngamertag = \"Me\"\nmouse_sensitivity = 1.0\n");
+    f.close();
+    QVERIFY(LaunchConfig::prepareTitle(s, id));
+    const QVariantMap after = cfg.values();
+    QCOMPARE(after.value(QStringLiteral("device_type")).toString(), QStringLiteral("lockhart"));
+    QCOMPARE(after.value(QStringLiteral("gamertag")).toString(), QStringLiteral("Me"));
+    QCOMPARE(after.value(QStringLiteral("keyboard_mouse")).toBool(), false);
+    QCOMPARE(after.value(QStringLiteral("mouse_sensitivity")).toDouble(), 1.5);
+    QCOMPARE(after.value(QStringLiteral("log_level")).toString(), QStringLiteral("debug"));
+    QVERIFY(QFileInfo(LaunchConfig::crashDumpDir(id)).isDir());
 }
 
 void TestSettings::warmupClassification()

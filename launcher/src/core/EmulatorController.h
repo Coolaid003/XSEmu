@@ -98,7 +98,6 @@ public:
 
     // The command line and environment start() uses (tested).
     static QStringList runArguments(const QString& gameFolder, quintptr hostWindow, const QString& pipeName);
-    static QProcessEnvironment runEnvironment(const QProcessEnvironment& base, bool offline);
     static QString hwndToHex(quintptr hwnd);
 
     // Screenshot fixtures only: put the controller into a state without a process.
@@ -119,7 +118,6 @@ private:
     void handle(const Protocol::Event& ev);
     void onFinished(int exitCode, int exitStatus);
     void send(const QByteArray& line);
-    void prepareTitleConfig(const Game& game);
     void pollMemory();
 
     AppSettings& m_settings;

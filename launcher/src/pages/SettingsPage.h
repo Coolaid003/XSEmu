@@ -2,38 +2,27 @@
 
 #include <QWidget>
 
-class NavItem;
+class QAbstractButton;
+class PageHeader;
 class QStackedWidget;
-class QVBoxLayout;
 class Services;
 
-// Settings (Settings pages): a sub-navigation of nine sections. Console, Network, Shaders,
-// Overlay, Game folders, Graphics (theme) and About are wired to AppSettings; Input and Logs show
-// what exists today.
+// Settings (Settings pages): a 208 px sub-navigation of nine sections beside the section's page.
+// The sections live in pages/settings/, one file each.
 class SettingsPage : public QWidget {
     Q_OBJECT
 public:
     enum class Section { Console, Network, Shaders, Overlay, GameFolders, Input, Graphics, Logs, About };
     explicit SettingsPage(Services& services, QWidget* parent = nullptr);
     void showSection(Section section);
+    QWidget* sectionPage(Section section) const;
 
 signals:
     void addGamesRequested();
 
 private:
-    QWidget* buildConsole();
-    QWidget* buildNetwork();
-    QWidget* buildShaders();
-    QWidget* buildOverlay();
-    QWidget* buildGameFolders();
-    QWidget* buildInput();
-    QWidget* buildGraphics();
-    QWidget* buildLogs();
-    QWidget* buildAbout();
-    void refreshFolders();
-
-    Services& m_s;
-    QList<NavItem*> m_nav;
+    QList<QAbstractButton*> m_nav;
+    QStringList m_names;
+    PageHeader* m_header;
     QStackedWidget* m_stack;
-    QVBoxLayout* m_folders = nullptr;
 };
