@@ -30,6 +30,11 @@ QString launcherDataDir();
 QString settingsFile(); // <launcher data>\settings.ini
 QString coverCacheDir(); // <launcher data>\covers
 
+// Third-party runners: %XSEMU_RUNNERS_DIR%, else %LOCALAPPDATA%\\XSEmu\\runners (Linux: ~/.local/share/XSEmu/runners).
+QString runnersDir();
+QString localAppDataDir(); // %LOCALAPPDATA% (Linux: ~/.local/share), where runners keep their caches
+QString runnerDir(const QString& runnerId); // <runners>\\<id>
+
 // The emulator executable's default location: XSEmu.exe next to the launcher (Linux: fake-xsemu).
 QString defaultEmulatorPath();
 

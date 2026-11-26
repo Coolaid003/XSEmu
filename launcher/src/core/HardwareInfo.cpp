@@ -73,6 +73,7 @@ HardwareInfo HardwareInfo::read()
             if (desc.DedicatedVideoMemory > hw.dedicatedVramBytes || hw.gpuName.isEmpty()) {
                 hw.gpuName = QString::fromWCharArray(desc.Description).trimmed();
                 hw.dedicatedVramBytes = desc.DedicatedVideoMemory;
+                hw.gpuVendorId = desc.VendorId;
             }
         }
         factory->Release();
@@ -94,6 +95,7 @@ HardwareInfo HardwareInfo::read()
         else
             hw.gpuName = QStringLiteral("GPU %1:%2").arg(vendor.mid(2), device.mid(2));
         hw.dedicatedVramBytes = vram.toULongLong();
+        hw.gpuVendorId = vendor.toUInt(nullptr, 16);
         break;
     }
 #endif

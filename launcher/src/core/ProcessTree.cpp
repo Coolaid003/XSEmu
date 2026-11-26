@@ -24,7 +24,8 @@ ProcessTree::ProcessTree(QObject* parent)
         SetInformationJobObject(m_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits));
     }
     setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
-        args->flags |= CREATE_SUSPENDED;
+        // no console window for console programs (third-party runners, cargo, git): output is piped
+        args->flags |= CREATE_SUSPENDED | CREATE_NO_WINDOW;
     });
 #else
     setChildProcessModifier([] { ::setpgid(0, 0); });

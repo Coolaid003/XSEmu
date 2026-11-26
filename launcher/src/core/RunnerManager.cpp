@@ -1,0 +1,170 @@
+#include "RunnerManager.h"
+
+#include "Paths.h"
+#include "RunnerInstall.h"
+
+#include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+namespace {
+
+QJsonObject installRecord(const QString& id)
+{
+    QFile f(QDir(Paths::runnerDir(id)).filePath(QStringLiteral("runner.json")));
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    return QJsonDocument::fromJson(f.readAll()).object();
+}
+
+}
+
+RunnerManager::RunnerManager(QObject* parent)
+    : QObject(parent)
+{
+}
+
+RunnerManager::~RunnerManager()
+{
+    if (m_task)
+        m_task->cancel();
+}
+
+RunnerManager::Status RunnerManager::status(const QString& id) const
+{
+    Status s;
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec) {
+        s.state = State::Unavailable;
+        return s;
+    }
+    s.pinnedVersion = spec->pinnedVersion();
+    if (spec->isBuiltIn()) {
+        s.state = State::BuiltIn;
+        return s;
+    }
+    const QJsonObject rec = installRecord(id);
+    if (!rec.isEmpty()) {
+        s.installedVersion = rec.value(QLatin1String("version")).toString();
+        s.executable = QDir(spec->installDir()).filePath(rec.value(QLatin1String("executable")).toString());
+    }
+    if (m_taskId == id && m_task) {
+        s.state = State::Installing;
+        s.progress = m_task->progress();
+    } else if (!rec.isEmpty()) {
+        s.state = spec->isPinned() && s.installedVersion != s.pinnedVersion ? State::UpdateAvailable : State::Installed;
+    } else if (m_errors.contains(id)) {
+        s.state = State::Failed;
+        s.error = m_errors.value(id);
+    } else {
+        s.state = spec->isPinned() ? State::NotInstalled : State::Unavailable;
+    }
+    return s;
+}
+
+bool RunnerManager::isRunnable(const QString& id) const
+{
+    const Status s = status(id);
+    return s.state == State::BuiltIn || ((s.state == State::Installed || s.state == State::UpdateAvailable) && QFileInfo::exists(s.executable));
+}
+
+bool RunnerManager::isInstallable(const QString& id) const
+{
+    if (isRunnable(id))
+        return true;
+    const RunnerSpec* spec = Runners::find(id);
+    return spec && spec->isPinned();
+}
+
+QString RunnerManager::busyId() const
+{
+    return m_task ? m_taskId : QString();
+}
+
+bool RunnerManager::install(const QString& id, QString* error)
+{
+    auto refuse = [error](const QString& why) {
+        if (error)
+            *error = why;
+        return false;
+    };
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec || spec->isBuiltIn())
+        return refuse(QStringLiteral("XSEmu comes with the launcher and has nothing to install."));
+    if (!spec->isPinned())
+        return refuse(QStringLiteral("%1 is not available yet: no release is pinned for this launcher version.").arg(spec->name));
+    if (m_task) {
+        const RunnerSpec* busy = Runners::find(m_taskId);
+        return refuse(QStringLiteral("%1 is installing; wait for it or cancel it first.").arg(busy ? busy->name : m_taskId));
+    }
+    m_errors.remove(id);
+    m_taskId = id;
+    m_task = new RunnerInstall(*spec, this);
+    connect(m_task, &RunnerInstall::progressChanged, this, [this, id] { emit changed(id); });
+    connect(m_task, &RunnerInstall::finished, this, [this, id](bool ok, const QString& why) {
+        if (!ok)
+            m_errors.insert(id, why);
+        m_task->deleteLater();
+        m_task.clear();
+        m_taskId.clear();
+        emit changed(id);
+        emit installFinished(id, ok, why);
+    });
+    m_task->start();
+    emit changed(id);
+    return true;
+}
+
+void RunnerManager::cancel()
+{
+    if (m_task)
+        m_task->cancel();
+}
+
+bool RunnerManager::uninstall(const QString& id, QString* error)
+{
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec || spec->isBuiltIn()) {
+        if (error)
+            *error = QStringLiteral("XSEmu comes with the launcher and cannot be uninstalled here.");
+        return false;
+    }
+    if (m_taskId == id && m_task) {
+        if (error)
+            *error = QStringLiteral("%1 is installing; cancel it first.").arg(spec->name);
+        return false;
+    }
+    m_errors.remove(id);
+    const bool ok = QDir(Paths::runnerDir(id)).removeRecursively();
+    if (!ok && error)
+        *error = QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(spec->name);
+    emit changed(id);
+    return ok;
+}
+
+QString RunnerManager::cachePath(const QString& id) const
+{
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec)
+        return {};
+    if (spec->isBuiltIn())
+        return Paths::dxilCacheDir();
+    return spec->resolvedCacheDir();
+}
+
+qint64 RunnerManager::cacheBytes(const QString& id) const
+{
+    const QString path = cachePath(id);
+    if (path.isEmpty())
+        return -1;
+    qint64 total = 0;
+    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}

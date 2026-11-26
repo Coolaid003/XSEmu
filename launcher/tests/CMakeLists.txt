@@ -17,6 +17,7 @@ xsemu_test(tst_library)
 xsemu_test(tst_coverart)
 xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
+xsemu_test(tst_runners)
 
 if(XSEMU_FAKE_EMULATOR)
     xsemu_test(tst_controllers)

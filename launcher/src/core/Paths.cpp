@@ -78,6 +78,18 @@ QString launcherDataDir()
     return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
 }
 
+QString runnersDir()
+{
+    const QString v = env("XSEMU_RUNNERS_DIR");
+    if (!v.isEmpty())
+        return QDir::cleanPath(QDir::fromNativeSeparators(v));
+    return join(localAppData(), QStringLiteral("XSEmu/runners"));
+}
+
+QString localAppDataDir() { return localAppData(); }
+
+QString runnerDir(const QString& runnerId) { return join(runnersDir(), runnerId); }
+
 QString settingsFile() { return join(launcherDataDir(), QStringLiteral("settings.ini")); }
 QString coverCacheDir() { return join(launcherDataDir(), QStringLiteral("covers")); }
 

@@ -9,6 +9,7 @@ struct HardwareInfo {
     quint64 availableRamBytes = 0;
     QString gpuName;            // empty: unknown
     quint64 dedicatedVramBytes = 0;
+    quint32 gpuVendorId = 0;    // PCI vendor of that GPU (DXGI VendorId, /sys .../vendor); 0: unknown
 
     static HardwareInfo read();
     static quint64 availableRam(); // cheap, for polling

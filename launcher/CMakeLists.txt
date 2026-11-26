@@ -46,6 +46,10 @@ add_library(xsemu_core STATIC
     src/core/Paths.cpp src/core/Paths.h
     src/core/ProcessGate.cpp src/core/ProcessGate.h
     src/core/ProcessTree.cpp src/core/ProcessTree.h
+    src/core/ProgressParsers.cpp src/core/ProgressParsers.h
+    src/core/Runner.cpp src/core/Runner.h
+    src/core/RunnerInstall.cpp src/core/RunnerInstall.h
+    src/core/RunnerManager.cpp src/core/RunnerManager.h
     src/core/Protocol.cpp src/core/Protocol.h
     src/core/ShaderCacheInfo.cpp src/core/ShaderCacheInfo.h
     src/core/TitleConfig.cpp src/core/TitleConfig.h
