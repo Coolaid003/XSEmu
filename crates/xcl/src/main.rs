@@ -40,13 +40,15 @@ Usage:
       Lists or extracts readable inline records. Archives larger than 1 GB use a
       bounded-memory header probe; --probe requests it explicitly and --full overrides it.
       Use --probe only for header summaries, without --find, --extract, --out or --full.
-  XSEmu warm-up [--full]
+  XSEmu warm-up [--full] [--progress-json]
       Builds the pipelines earlier runs made, so a game needs fewer driver compiles while it
       loads: first those an earlier run bound, then every compute pipeline and the driver's
       blob of every translated compute program (giants over 1 MB of DXIL left out), then the
       rest largest first for 20 minutes (XCL_WARMUP_BUDGET_S), leaving out those no run of the
       last 3 made. --full: everything, giants and stale ones too, with no time limit, going on
       where an earlier --full pass stopped.
+      --progress-json: progress as JSON lines on stdout, {\"cmd\":\"cancel\"} or EOF on stdin
+      cancels and keeps what is built (docs/launcher-protocol.md).
   XSEmu warm-up --mesh-only [--recent-used N]
       Builds only missing driver blobs for the mesh pipelines kept in the manifest.
   XSEmu warm-up --giants-only --floor-mb N
@@ -86,7 +88,7 @@ fn other_xcl_processes() -> Vec<String> {
 fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         return 3;
     }
     match xcl::hle::d3d12x::real::warm_up_mesh(recent_used) {
@@ -98,7 +100,7 @@ fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
             (w.failed + w.too_big != 0) as i32
         }
         Err(e) => {
-            eprintln!("xcl warm-up --mesh-only: {e}");
+            eprintln!("XSEmu warm-up --mesh-only: {e}");
             2
         }
     }
@@ -108,7 +110,7 @@ fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
 fn warm_up_giants(floor_mb: u64) -> i32 {
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         return 3;
     }
     let started = std::time::Instant::now();
@@ -126,7 +128,7 @@ fn warm_up_giants(floor_mb: u64) -> i32 {
             giants.iter().any(|g| !g.outcome.starts_with("built") && !g.outcome.starts_with("fits")) as i32
         }
         Err(e) => {
-            eprintln!("xcl warm-up: no D3D12 device: {e}");
+            eprintln!("XSEmu warm-up: no D3D12 device: {e}");
             2
         }
     }
@@ -167,7 +169,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
     let out = args.progress_json.then(JsonOut::take_stdout);
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         if let Some(out) = &out {
             out.emit(&Event::Error { message: format!("another XSEmu process is running ({})", others.join(", ")) });
         }
@@ -176,7 +178,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
     if out.is_some() {
         let _ = std::thread::Builder::new().name("xcl-warm-up-stdin".into()).spawn(|| {
             let why = xcl::warm_up_json::wait_for_cancel(std::io::stdin().lock());
-            eprintln!("xcl warm-up: cancel ({why:?}): no more builds start, those running finish");
+            eprintln!("XSEmu warm-up: cancel ({why:?}): no more builds start, those running finish");
             xcl::hle::d3d12x::real::cancel_warm_up();
         });
     }
@@ -290,7 +292,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
             code
         }
         Err(e) => {
-            eprintln!("xcl warm-up: no D3D12 device: {e}");
+            eprintln!("XSEmu warm-up: no D3D12 device: {e}");
             if let Some(out) = &out {
                 out.emit(&Event::Error { message: format!("no D3D12 device: {e}") });
             }
@@ -335,7 +337,7 @@ fn main() {
                     warm_up_mesh(n.parse().ok())
                 }
                 _ => {
-                    eprintln!("xcl warm-up --mesh-only accepts only an optional --recent-used N (N >= 1)");
+                    eprintln!("XSEmu warm-up --mesh-only accepts only an optional --recent-used N (N >= 1)");
                     2
                 }
             }
@@ -345,7 +347,7 @@ fn main() {
             match floor {
                 Some(mb) if mb >= 1024 => warm_up_giants(mb),
                 _ => {
-                    eprintln!("xcl warm-up --giants-only needs --floor-mb N with N at least 1024");
+                    eprintln!("XSEmu warm-up --giants-only needs --floor-mb N with N at least 1024");
                     2
                 }
             }
