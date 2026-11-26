@@ -54,8 +54,11 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         run: |
           Get-ChildItem tests -Filter 'tst_*.exe' | ForEach-Object {
-            & $_.FullName -o '-,txt' -v2 2>&1 | Select-Object -Last 40
-            '{0}: exit 0x{1:X8}' -f $_.Name, $LASTEXITCODE
+            $log = "$($_.BaseName).log"
+            & $_.FullName -o "$log,txt" -v2 | Out-Null
+            $code = $LASTEXITCODE
+            '{0}: exit 0x{1:X8}' -f $_.Name, $code
+            if ($code -ne 0 -and (Test-Path $log)) { Get-Content $log -Tail 60 }
           }
       - name: Install and deploy Qt
         run: cmake --install build --prefix dist
