@@ -15,6 +15,7 @@ class SettingsPage;
 class Sidebar;
 class TitleBar;
 class WarmupPage;
+class RunnersPage;
 
 // The frameless main window. Three modes share it: setup (first launch, no sidebar), the shell
 // (title bar, sidebar and the page router) and in-game (the game bar and the host the game window
@@ -58,6 +59,7 @@ private:
     QStackedWidget* m_pages;
     LibraryPage* m_library;
     WarmupPage* m_warmup;
+    RunnersPage* m_runners;
     SettingsPage* m_settings;
     GameDetailsPage* m_details;
     FirstLaunchPage* m_firstLaunch;

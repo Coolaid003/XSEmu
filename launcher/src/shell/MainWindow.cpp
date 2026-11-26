@@ -9,6 +9,7 @@
 #include "pages/GameDetailsPage.h"
 #include "pages/LibraryPage.h"
 #include "pages/SettingsPage.h"
+#include "pages/RunnersPage.h"
 #include "pages/WarmupPage.h"
 #include "theme/Theme.h"
 #include "widgets/Icon.h"
@@ -42,6 +43,7 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     , m_pages(new QStackedWidget)
     , m_library(new LibraryPage(services))
     , m_warmup(new WarmupPage(services))
+    , m_runners(new RunnersPage(services))
     , m_settings(new SettingsPage(services))
     , m_details(new GameDetailsPage(services))
     , m_firstLaunch(new FirstLaunchPage(services))
@@ -64,6 +66,7 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     h->addWidget(m_pages, 1);
     m_pages->addWidget(m_library);
     m_pages->addWidget(m_warmup);
+    m_pages->addWidget(m_runners);
     m_pages->addWidget(m_settings);
     m_pages->addWidget(m_details);
 
@@ -137,6 +140,7 @@ void MainWindow::showPage(Page page)
     switch (page) {
     case Page::Library: m_pages->setCurrentWidget(m_library); break;
     case Page::Warmup: m_pages->setCurrentWidget(m_warmup); break;
+    case Page::Runners: m_pages->setCurrentWidget(m_runners); break;
     case Page::Settings: m_pages->setCurrentWidget(m_settings); break;
     case Page::GameDetails: m_pages->setCurrentWidget(m_details); break;
     }

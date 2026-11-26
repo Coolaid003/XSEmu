@@ -108,7 +108,9 @@ QList<RunnerSpec> build()
     RunnerSpec x;
     x.id = QLatin1String(XSEmu);
     x.name = QStringLiteral("XSEmu");
-    x.summary = QStringLiteral("The emulator that ships with this launcher.");
+    x.summary = QStringLiteral("Built in. Embeds the game in this window.");
+    x.repo = QStringLiteral("zortos293/xsemu");
+    x.licence = QStringLiteral("GPL-2.0");
     x.install = RunnerSpec::Install::BuiltIn;
     x.stop = RunnerSpec::Stop::ControlPipe;
     x.embed = RunnerSpec::Embed::HostHandle;
@@ -129,7 +131,8 @@ QList<RunnerSpec> build()
     v1.recommendFor = RunnerSpec::Vendor::Amd;
     v1.recommendWhy = QStringLiteral("VIctory 7900 XTX has code paths written for Radeon GPUs");
     v1.recommendMinRamBytes = 64ULL * 1024 * 1024 * 1024;
-    v1.summary = QStringLiteral("A native port with Radeon-specific code paths.");
+    v1.summary = QStringLiteral("VIctory fork with code paths for Radeon GPUs.");
+    v1.licence = QStringLiteral("GPL-3.0");
     v1.windowsOnly = true;
     v1.install = RunnerSpec::Install::BuildFromSource;
     v1.commit = QStringLiteral("c9c932cbcc38defd8f1683d62dd298187f565031");
@@ -159,7 +162,7 @@ QList<RunnerSpec> build()
     v2.badge = QStringLiteral("AMD (tested on RX 7900 XTX)");
     v2.recommendWhy = QStringLiteral("VIctory (DexNom) is tested on a Radeon RX 7900 XTX");
     v2.recommendMinRamBytes = 0;
-    v2.summary = QStringLiteral("A native port tested on Radeon RX 7900 XTX.");
+    v2.summary = QStringLiteral("VIctory fork tested on a Radeon RX 7900 XTX.");
     v2.commit = QStringLiteral("64bd58f5fb794216894bc0e33e03a3a64d19c347");
     // the BCPack format tables the build embeds, fetched from where its own setup script fetches them
     v2.fetches = {{QStringLiteral("https://raw.githubusercontent.com/Marvisak/VIctory/2849477415a46f5a079c85cf3e64a3dff32f713c/crates/victory-formats/src/bcpack-tables.bin"),
@@ -184,7 +187,8 @@ QList<RunnerSpec> build()
     k.badge = QStringLiteral("Vendor-neutral \u00B7 tuned on RTX 5080");
     k.recommendFor = RunnerSpec::Vendor::Nvidia;
     k.recommendWhy = QStringLiteral("Kelvaroq is vendor-neutral and was tuned on an RTX 5080");
-    k.summary = QStringLiteral("A native port, vendor-neutral, measured on GeForce RTX 5080.");
+    k.summary = QStringLiteral("Vendor-neutral; its authors measured it on a GeForce RTX 5080.");
+    k.licence = QStringLiteral("GPL-3.0");
     k.note = QStringLiteral("Kelvaroq reports the game's licence as active and always runs offline; XSEmu's offline store error does not apply to it.");
     k.windowsOnly = true;
     k.install = RunnerSpec::Install::ReleaseAsset;

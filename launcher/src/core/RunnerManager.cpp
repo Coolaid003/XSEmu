@@ -35,6 +35,8 @@ RunnerManager::~RunnerManager()
 
 RunnerManager::Status RunnerManager::status(const QString& id) const
 {
+    if (m_simulated.contains(id))
+        return m_simulated.value(id);
     Status s;
     const RunnerSpec* spec = Runners::find(id);
     if (!spec) {
@@ -143,6 +145,31 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
         *error = QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(spec->name);
     emit changed(id);
     return ok;
+}
+
+void RunnerManager::simulateForScreenshot(const QString& id, const Status& status)
+{
+    m_simulated.insert(id, status);
+    emit changed(id);
+}
+
+qint64 RunnerManager::installedBytes(const QString& id) const
+{
+    const RunnerSpec* spec = Runners::find(id);
+    if (!spec || spec->isBuiltIn())
+        return 0;
+    qint64 total = 0;
+    QDirIterator it(spec->installDir(), QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        it.next();
+        total += it.fileInfo().size();
+    }
+    return total;
+}
+
+QDateTime RunnerManager::installedAt(const QString& id) const
+{
+    return QDateTime::fromString(installRecord(id).value(QLatin1String("installedAt")).toString(), Qt::ISODate).toLocalTime();
 }
 
 QString RunnerManager::cachePath(const QString& id) const

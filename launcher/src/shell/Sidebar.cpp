@@ -85,6 +85,7 @@ Sidebar::Sidebar(Services& services, QWidget* parent)
     , m_s(services)
     , m_library(new NavItem(QStringLiteral("Library"), QStringLiteral("library")))
     , m_warmup(new NavItem(QStringLiteral("Warm-up"), QStringLiteral("bolt")))
+    , m_runners(new NavItem(QStringLiteral("Runners"), QStringLiteral("runner")))
     , m_settings(new NavItem(QStringLiteral("Settings"), QStringLiteral("gear")))
     , m_nowLabel(new Label(QStringLiteral("Now playing"), Label::Style::CapsMedium, Theme::Role::Text3))
     , m_now(new NowPlayingCard(this))
@@ -109,13 +110,15 @@ Sidebar::Sidebar(Services& services, QWidget* parent)
 
     auto* group = new QButtonGroup(this);
     group->setExclusive(true);
-    for (NavItem* item : {m_library, m_warmup, m_settings}) {
+    for (NavItem* item : {m_library, m_warmup, m_runners, m_settings}) {
         group->addButton(item);
         v->addWidget(item);
     }
     connect(m_library, &NavItem::clicked, this, [this] { emit navigate(Page::Library); });
     connect(m_warmup, &NavItem::clicked, this, [this] { emit navigate(Page::Warmup); });
+    connect(m_runners, &NavItem::clicked, this, [this] { emit navigate(Page::Runners); });
     connect(m_settings, &NavItem::clicked, this, [this] { emit navigate(Page::Settings); });
+    connect(&m_s.runners, &RunnerManager::changed, this, &Sidebar::refresh);
 
     v->addSpacing(22);
     auto* nowRow = new QHBoxLayout;
@@ -154,6 +157,9 @@ void Sidebar::setCurrent(Page page)
     case Page::GameDetails:
         m_library->setChecked(true);
         break;
+    case Page::Runners:
+        m_runners->setChecked(true);
+        break;
     case Page::Warmup:
         m_warmup->setChecked(true);
         break;
@@ -178,6 +184,18 @@ void Sidebar::refresh()
         m_warmup->setTrailingIcon(QStringLiteral("lock"));
     } else {
         m_warmup->setTrailingText({});
+    }
+
+    // Runners: the install in progress, else how many curated pins are newer than what is installed
+    if (const QString busy = m_s.runners.busyId(); !busy.isEmpty()) {
+        const RunnerManager::Progress p = m_s.runners.status(busy).progress;
+        m_runners->setTrailingText(p.total > 0 && p.done >= 0 ? QStringLiteral("%1%").arg(qRound(100.0 * double(p.done) / double(p.total))) : QStringLiteral("Installing"),
+                                   Theme::Role::AccentText);
+    } else {
+        int updates = 0;
+        for (const RunnerSpec& r : Runners::curated())
+            updates += m_s.runners.status(r.id).state == RunnerManager::State::UpdateAvailable ? 1 : 0;
+        m_runners->setTrailingText(updates == 0 ? QString() : updates == 1 ? QStringLiteral("1 update") : QStringLiteral("%1 updates").arg(updates), Theme::Role::AccentText);
     }
 
     const EmulatorController::State st = m_s.emulator.state();

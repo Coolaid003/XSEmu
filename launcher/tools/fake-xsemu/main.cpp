@@ -4,6 +4,7 @@
 // FAKE_XSEMU_SCENARIO = ok | crash | device_removed | files_missing | slow_boot | warmup_fail |
 //                       warmup_ram_floor | warmup_refuse
 #include "FakeRun.h"
+#include "FakeRunner.h"
 #include "FakeWarmup.h"
 
 #include <QCoreApplication>
@@ -26,6 +27,8 @@ int main(int argc, char** argv)
     for (int i = 1; i < argc; ++i)
         args << QString::fromLocal8Bit(argv[i]);
     const QString scenario = qEnvironmentVariable("FAKE_XSEMU_SCENARIO", QStringLiteral("ok"));
+    if (const QString runner = FakeRunner::kind(QString::fromLocal8Bit(argv[0]), args); !runner.isEmpty())
+        return FakeRunner::run(runner, args, argc, argv);
     if (args.isEmpty())
         return usage();
     if (args.first() == QLatin1String("--version")) {

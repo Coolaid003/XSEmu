@@ -138,8 +138,14 @@ void RunnerInstall::next()
         emit finished(true, {});
         return;
     }
+    const QDateTime started = m_progress.startedAt.isValid() ? m_progress.startedAt : QDateTime::currentDateTime();
     m_progress = {};
+    m_progress.startedAt = started;
     m_progress.step = m_steps[m_index].name;
+    const QString& n = m_progress.step;
+    m_progress.phase = n == QLatin1String("Finishing") ? 2
+                       : (n == QLatin1String("Unpacking") || n == QLatin1String("Building")) ? 1
+                                                                                              : 0;
     m_progress.stepIndex = m_index + 1;
     m_progress.stepCount = int(m_steps.size());
     emit progressChanged();
@@ -235,6 +241,8 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
             m_lastLine = line;
             if (!parser.isEmpty()) {
                 if (const auto u = ProgressParsers::parse(parser, line)) {
+                    if (u->phase == QLatin1String("Compiling") && u->total < 0)
+                        m_progress.done = qMax<qint64>(0, m_progress.done) + 1; // crates compiled so far
                     if (u->total > 0) {
                         m_progress.done = u->done;
                         m_progress.total = u->total;

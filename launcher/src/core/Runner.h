@@ -32,6 +32,7 @@ struct RunnerSpec {
     Vendor recommendFor = Vendor::Any; // the GPU vendor the recommendation picks it for
     QString recommendWhy;    // why, as a clause: "it was tuned on an RTX 5080"
     QString summary;         // one line for the picker
+    QString licence;         // SPDX id of the runner's licence
     QString note;            // behaviour the user must know about (licence handling); empty: none
     bool windowsOnly = false; // ships for Windows only
 

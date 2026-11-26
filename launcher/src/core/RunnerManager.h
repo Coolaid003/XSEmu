@@ -2,6 +2,7 @@
 
 #include "Runner.h"
 
+#include <QDateTime>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
@@ -27,6 +28,8 @@ public:
         qint64 total = -1;
         bool bytes = false; // done/total are bytes
         QString detail;    // the last line or item the step reported
+        int phase = 0;     // 0 download (and toolchains), 1 unpack or build, 2 install
+        QDateTime startedAt;
     };
 
     struct Status {
@@ -55,6 +58,12 @@ public:
     // Bytes in the runner's cache directory; -1 when the runner has no known cache dir.
     qint64 cacheBytes(const QString& id) const;
     QString cachePath(const QString& id) const;
+    // Bytes the installed copy takes on disk (its install dir); 0 when not installed.
+    qint64 installedBytes(const QString& id) const;
+    QDateTime installedAt(const QString& id) const;
+
+    // Screenshot fixtures only: report this status for the runner instead of the real one.
+    void simulateForScreenshot(const QString& id, const Status& status);
 
 signals:
     void changed(const QString& id);
@@ -64,4 +73,5 @@ private:
     QPointer<RunnerInstall> m_task;
     QString m_taskId;
     QHash<QString, QString> m_errors;
+    QHash<QString, Status> m_simulated;
 };

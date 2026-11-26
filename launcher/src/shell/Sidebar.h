@@ -31,6 +31,7 @@ private:
     Services& m_s;
     NavItem* m_library;
     NavItem* m_warmup;
+    NavItem* m_runners;
     NavItem* m_settings;
     Label* m_nowLabel;
     NowPlayingCard* m_now;
