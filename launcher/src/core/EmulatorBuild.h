@@ -2,6 +2,8 @@
 
 #include <QString>
 
+#include <functional>
+
 // What the emulator executable is: its --version line and whether it speaks the launcher protocol.
 // The launcher starts a game or a warm-up with XSEmu only on a capable build: an older xcl.exe would
 // read --host-hwnd and the pipe name as the game folder and start the game in its own window.
@@ -20,8 +22,9 @@ struct EmulatorBuild {
 
     // Ask the executable --version and --help (hidden, 3 s each). The answer is kept per path, size and
     // modification time, so each build is asked once; safe from any thread. Never call it while another
-    // emulator runs.
-    static EmulatorBuild probe(const QString& path);
+    // emulator runs. When abandon() turns true before or while it asks (checked every 50 ms), the child
+    // is killed and the result is not found and not kept.
+    static EmulatorBuild probe(const QString& path, const std::function<bool()>& abandon = {});
     // The kept answer for the file as it is now, without starting anything; found is false when none.
     static EmulatorBuild cached(const QString& path);
     static bool speaksProtocol(const QString& versionLine, const QString& help);

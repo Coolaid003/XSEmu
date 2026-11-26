@@ -3,6 +3,7 @@
 //   fake-xsemu warm-up [--full] [--progress-json]
 // FAKE_XSEMU_SCENARIO = ok | crash | device_removed | files_missing | slow_boot | warmup_fail |
 //                       warmup_ram_floor | warmup_refuse
+// FAKE_XSEMU_VERSION_DELAY_MS = how long --version takes to answer (default 0)
 #include "FakeRun.h"
 #include "FakeRunner.h"
 #include "FakeWarmup.h"
@@ -11,8 +12,10 @@
 #include <QGuiApplication>
 #include <QStringList>
 
+#include <chrono>
 #include <cstdio>
 #include <memory>
+#include <thread>
 
 static int usage(FILE* to = stderr)
 {
@@ -32,6 +35,7 @@ int main(int argc, char** argv)
     if (args.isEmpty())
         return usage();
     if (args.first() == QLatin1String("--version")) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(qEnvironmentVariableIntValue("FAKE_XSEMU_VERSION_DELAY_MS")));
         std::printf("XSEmu 0.0.0-fake\n");
         return 0;
     }

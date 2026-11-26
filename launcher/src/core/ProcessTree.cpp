@@ -3,6 +3,8 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QMutex>
+#include <QSet>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -152,9 +154,46 @@ qint64 ProcessTree::heldBytes() const
     return total;
 }
 
+namespace {
+
+QMutex helpersLock;
+
+QSet<qint64>& helpers()
+{
+    static QSet<qint64> pids;
+    return pids;
+}
+
+QSet<qint64> helperPids()
+{
+    const QMutexLocker lock(&helpersLock);
+    return helpers();
+}
+
+}
+
+qint64 startHelper(QProcess& p, const QString& program, const QStringList& arguments)
+{
+    const QMutexLocker lock(&helpersLock);
+    p.start(program, arguments);
+    const qint64 pid = p.processId();
+    if (pid > 0)
+        helpers().insert(pid);
+    return pid;
+}
+
+void forgetHelper(qint64 pid)
+{
+    const QMutexLocker lock(&helpersLock);
+    helpers().remove(pid);
+}
+
 QStringList runningEmulatorProcesses(qint64 excludePid)
 {
-    QStringList out;
+    // A helper seen alive during the scan was recorded before the scan began or, since startHelper
+    // records under the lock it starts under, by the time the scan ends.
+    const QSet<qint64> ownBefore = helperPids();
+    QList<QPair<QString, qint64>> found;
 #ifdef Q_OS_WIN
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE)
@@ -168,7 +207,7 @@ QStringList runningEmulatorProcesses(qint64 excludePid)
         if (name.compare(QLatin1String("XSEmu.exe"), Qt::CaseInsensitive) == 0
             || name.compare(QLatin1String("xcl.exe"), Qt::CaseInsensitive) == 0
             || name.compare(QLatin1String("game_scarlett_master.exe"), Qt::CaseInsensitive) == 0)
-            out << QStringLiteral("%1 %2").arg(name).arg(pe.th32ProcessID);
+            found.append({name, static_cast<qint64>(pe.th32ProcessID)});
     }
     CloseHandle(snap);
 #else
@@ -184,8 +223,13 @@ QStringList runningEmulatorProcesses(qint64 excludePid)
         const QString name = QFileInfo(QString::fromLocal8Bit(cmdline.readAll().split('\0').value(0))).fileName();
         for (const char* known : {"XSEmu.exe", "xcl.exe", "game_scarlett_master.exe"})
             if (name.compare(QLatin1String(known), Qt::CaseInsensitive) == 0)
-                out << QStringLiteral("%1 %2").arg(name).arg(pid);
+                found.append({name, pid});
     }
 #endif
+    const QSet<qint64> own = ownBefore | helperPids();
+    QStringList out;
+    for (const auto& [name, pid] : std::as_const(found))
+        if (!own.contains(pid))
+            out << QStringLiteral("%1 %2").arg(name).arg(pid);
     return out;
 }

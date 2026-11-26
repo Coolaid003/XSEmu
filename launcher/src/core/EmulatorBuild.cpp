@@ -1,11 +1,17 @@
 #include "EmulatorBuild.h"
 
+#include "ProcessTree.h"
+
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QHash>
 #include <QMutex>
 #include <QProcess>
+#include <QScopeGuard>
+
+#include <optional>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -26,21 +32,30 @@ QHash<QString, EmulatorBuild>& answers()
     return kept;
 }
 
-QString ask(const QString& path, const QString& option)
+// The answer, or nullopt when abandon() turned true before or while it ran.
+std::optional<QString> ask(const QString& path, const QString& option, const std::function<bool()>& abandon)
 {
+    if (abandon && abandon())
+        return std::nullopt;
     QProcess p;
 #ifdef Q_OS_WIN
     p.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) { args->flags |= CREATE_NO_WINDOW; });
 #endif
     p.setProcessChannelMode(QProcess::MergedChannels);
     p.setStandardInputFile(QProcess::nullDevice());
-    p.start(path, {option});
+    const qint64 pid = startHelper(p, path, {option});
+    const auto forget = qScopeGuard([pid] { forgetHelper(pid); });
     if (!p.waitForStarted(3000))
-        return {};
-    if (!p.waitForFinished(3000)) {
+        return QString();
+    QElapsedTimer clock;
+    clock.start();
+    while (!p.waitForFinished(50)) {
+        const bool abandoned = abandon && abandon();
+        if (!abandoned && clock.elapsed() < 3000)
+            continue;
         p.kill();
         p.waitForFinished(1000);
-        return {};
+        return abandoned ? std::nullopt : std::optional<QString>(QString());
     }
     return QString::fromLocal8Bit(p.readAll());
 }
@@ -76,7 +91,7 @@ EmulatorBuild EmulatorBuild::cached(const QString& path)
     return answers().value(keyFor(fi), b);
 }
 
-EmulatorBuild EmulatorBuild::probe(const QString& path)
+EmulatorBuild EmulatorBuild::probe(const QString& path, const std::function<bool()>& abandon)
 {
     const QFileInfo fi(path);
     EmulatorBuild b;
@@ -89,9 +104,17 @@ EmulatorBuild EmulatorBuild::probe(const QString& path)
         if (const auto it = answers().constFind(key); it != answers().constEnd())
             return *it;
     }
+    const std::optional<QString> version = ask(path, QStringLiteral("--version"), abandon);
+    if (!version)
+        return b;
+    b.version = version->trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
+    if (b.version.startsWith(QLatin1String("XSEmu "))) {
+        const std::optional<QString> help = ask(path, QStringLiteral("--help"), abandon);
+        if (!help)
+            return b;
+        b.capable = speaksProtocol(b.version, *help);
+    }
     b.found = true;
-    b.version = ask(path, QStringLiteral("--version")).trimmed().section(QLatin1Char('\n'), 0, 0).trimmed();
-    b.capable = b.version.startsWith(QLatin1String("XSEmu ")) && speaksProtocol(b.version, ask(path, QStringLiteral("--help")));
     const QMutexLocker lock(&answersLock);
     answers().insert(key, b);
     return b;

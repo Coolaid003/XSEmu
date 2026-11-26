@@ -11,14 +11,21 @@
 #include "TitleConfig.h"
 #include "WarmupController.h"
 
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
+
+#include <atomic>
+#include <chrono>
+#include <future>
 
 class TestControllers : public QObject {
     Q_OBJECT
@@ -39,6 +46,7 @@ private slots:
     void emulatorTooOldIsNeverStarted();
     void busyMarkerBlocksPlayAndWarmup();
     void runningEmulatorProcessBlocks();
+    void probeChildIsNotAnotherEmulator();
 
 private:
     Game fixtureGame(const QString& title) const;
@@ -419,4 +427,53 @@ void TestControllers::runningEmulatorProcessBlocks()
 }
 
 QTEST_GUILESS_MAIN(TestControllers)
+void TestControllers::probeChildIsNotAnotherEmulator()
+{
+    // The launcher's own XSEmu.exe --version child matches the names of another emulator; while it
+    // answers, the gate stays free. The copies sit beside the fake so they find the same libraries.
+    const QDir fakeDir = QFileInfo(QStringLiteral(XSEMU_FAKE_EMULATOR_PATH)).dir();
+    const QString exe = fakeDir.filePath(QStringLiteral("XSEmu.exe"));
+    const QString abandoned = fakeDir.filePath(QStringLiteral("XSEmu-abandoned.exe"));
+    for (const QString& copy : {exe, abandoned}) {
+        QFile::remove(copy);
+        QVERIFY(QFile::copy(QStringLiteral(XSEMU_FAKE_EMULATOR_PATH), copy));
+    }
+    const auto removeCopies = qScopeGuard([exe, abandoned] {
+        QFile::remove(exe);
+        QFile::remove(abandoned);
+    });
+    qputenv("FAKE_XSEMU_VERSION_DELAY_MS", "1500");
+    const auto unset = qScopeGuard([] { qunsetenv("FAKE_XSEMU_VERSION_DELAY_MS"); });
+
+    QElapsedTimer clock;
+    clock.start();
+    std::future<EmulatorBuild> probe = std::async(std::launch::async, [exe] { return EmulatorBuild::probe(exe); });
+    const auto answering = [&probe] { return probe.wait_for(std::chrono::seconds(0)) != std::future_status::ready; };
+    QSignalSpy changed(m_gate.get(), &ProcessGate::changed);
+    QTest::qWait(500);
+    QVERIFY2(answering(), "the --version child should still be answering");
+    QStringList seen;
+    while (answering()) {
+        seen << m_gate->external().processes;
+        QTest::qWait(100);
+    }
+    const EmulatorBuild answer = probe.get();
+    QVERIFY2(seen.isEmpty(), qPrintable(seen.join(QLatin1Char(','))));
+    QVERIFY(clock.elapsed() >= 1500);
+    QVERIFY2(answer.capable, qPrintable(answer.version));
+    QCOMPARE(changed.count(), 0);
+    QVERIFY(m_gate->isFree());
+
+    // a launch starting while it asks abandons the question; nothing is kept, so it is asked again later
+    std::atomic<bool> launched = false;
+    clock.restart();
+    probe = std::async(std::launch::async, [abandoned, &launched] { return EmulatorBuild::probe(abandoned, [&launched] { return launched.load(); }); });
+    QTest::qWait(300);
+    launched = true;
+    const EmulatorBuild cut = probe.get();
+    QVERIFY2(clock.elapsed() < 1200, qPrintable(QString::number(clock.elapsed())));
+    QVERIFY(!cut.found);
+    QVERIFY(!EmulatorBuild::cached(abandoned).found);
+}
+
 #include "tst_controllers.moc"

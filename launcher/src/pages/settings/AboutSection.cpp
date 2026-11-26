@@ -21,6 +21,8 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <atomic>
+
 // The launcher's version (XSEMU_VERSION), the emulator's path, its answer to --version and whether the
 // launcher may start it (or why not: too old, busy), and the credits and
 // licences: XCL by the xcl-dev contributors (GPL-2.0), the launcher (GPL-2.0), Qt (LGPL-3.0, linked
@@ -54,11 +56,14 @@ QWidget* SettingsSections::about(Services& s)
     emu->addControl(copy);
     emu->helpLabel()->setTextInteractionFlags(Qt::TextSelectableByMouse);
     // the path, its --version answer and whether the launcher may start it. The emulator is asked on a
-    // worker thread, and never while another emulator (or the busy marker) holds the PC.
+    // worker thread, never while another emulator (or the busy marker) holds the PC, and the question
+    // is abandoned as soon as this launcher starts a game or a warm-up.
+    auto held = std::make_shared<std::atomic<bool>>(!s.gate.isFree());
+    QObject::connect(&s.gate, &ProcessGate::changed, emu, [&s, held] { *held = !s.gate.isFree(); });
     auto refreshFn = std::make_shared<std::function<void()>>();
     const std::weak_ptr<std::function<void()>> again = refreshFn;
     auto asking = std::make_shared<bool>(false);
-    *refreshFn = [&s, emu, copy, again, asking] {
+    *refreshFn = [&s, emu, copy, again, asking, held] {
         const QString exe = s.settings.emulatorPath();
         const ProcessGate::External& other = s.gate.lastExternal();
         const EmulatorBuild answer = EmulatorBuild::cached(exe);
@@ -66,9 +71,9 @@ QWidget* SettingsSections::about(Services& s)
         if (executable && !answer.found && !other.busy() && s.gate.isFree() && !*asking) {
             *asking = true;
             const QPointer<QWidget> row = emu;
-            QThreadPool::globalInstance()->start([exe, marker = s.gate.busyMarker(), row, again, asking] {
-                if (!ProcessGate::externalFor(marker).busy())
-                    EmulatorBuild::probe(exe);
+            QThreadPool::globalInstance()->start([exe, marker = s.gate.busyMarker(), row, again, asking, held] {
+                if (!*held && !ProcessGate::externalFor(marker).busy())
+                    EmulatorBuild::probe(exe, [held] { return held->load(); });
                 QMetaObject::invokeMethod(qApp, [row, again, asking] {
                     *asking = false;
                     if (const auto f = again.lock(); f && row)

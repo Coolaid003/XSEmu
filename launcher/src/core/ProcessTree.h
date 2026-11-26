@@ -33,5 +33,11 @@ private:
 };
 
 // Other XSEmu trees on this machine (XSEmu.exe, xcl.exe, game_scarlett_master.exe; Windows ToolHelp,
-// elsewhere argv[0] in /proc), as "name pid" strings.
+// elsewhere argv[0] in /proc), as "name pid" strings. The launcher's own helpers never count.
 QStringList runningEmulatorProcesses(qint64 excludePid = 0);
+
+// A short-lived helper the launcher starts itself, such as the emulator asked --version. startHelper
+// starts it and records its pid in one step, so runningEmulatorProcesses() on another thread never
+// mistakes it for another emulator; forgetHelper drops the pid once the helper has exited. Any thread.
+qint64 startHelper(QProcess& p, const QString& program, const QStringList& arguments);
+void forgetHelper(qint64 pid);

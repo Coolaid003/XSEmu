@@ -35,7 +35,8 @@ public:
     void setPaused(bool paused);
 
     // Something outside this launcher holds the PC's one emulator slot: an XSEmu.exe, xcl.exe or
-    // game_scarlett_master.exe running (not counting the launcher itself), or the busy marker file
+    // game_scarlett_master.exe running (not counting the launcher and its own helpers, such as the
+    // emulator asked --version), or the busy marker file
     // existing. external() looks now, for the check right before starting something. A worker thread
     // looks every 2 s; lastExternal() is what it saw, for display, and changed() follows a difference.
     struct External {
