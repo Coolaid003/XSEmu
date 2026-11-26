@@ -164,10 +164,10 @@ void TestRunners::recommendation()
     auto none = [](const QString& id) { return id == QLatin1String(Runners::XSEmu); };
     QCOMPARE(Runners::recommend(Runners::kVendorAmd, QStringLiteral("Radeon RX 7900 XTX"), 64 * kGb, all).runnerId, QStringLiteral("victory-7900xtx"));
     QCOMPARE(Runners::recommend(Runners::kVendorAmd, QStringLiteral("Radeon RX 7800 XT"), 32 * kGb, all).runnerId, QStringLiteral("victory-dexnom"));
-    const auto nv = Runners::recommend(Runners::kVendorNvidia, QStringLiteral("GeForce RTX 4070"), 32 * kGb, all);
+    const auto nv = Runners::recommend(Runners::kVendorNvidia, QStringLiteral("NVIDIA GPU (sample)"), 32 * kGb, all);
     QCOMPARE(nv.runnerId, QStringLiteral("kelvaroq"));
     QVERIFY(nv.reason.contains(QStringLiteral("RTX 5080")));
-    QVERIFY(nv.reason.contains(QStringLiteral("GeForce RTX 4070")));
+    QVERIFY(nv.reason.contains(QStringLiteral("NVIDIA GPU (sample)")));
     QCOMPARE(Runners::recommend(Runners::kVendorIntel, QStringLiteral("Arc A770"), 32 * kGb, all).runnerId, QStringLiteral("xsemu"));
     QCOMPARE(Runners::recommend(0, {}, 32 * kGb, all).runnerId, QStringLiteral("xsemu"));
     const auto blocked = Runners::recommend(Runners::kVendorAmd, QStringLiteral("Radeon"), 64 * kGb, none);

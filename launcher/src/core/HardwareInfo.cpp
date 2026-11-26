@@ -99,7 +99,7 @@ HardwareInfo HardwareInfo::read()
         break;
     }
 #endif
-    // XSEMU_GPU="10de:NVIDIA GeForce RTX 4070" stands in for this PC's GPU (screenshot fixtures, tests).
+    // XSEMU_GPU="10de:NVIDIA GPU (sample)" stands in for this PC's GPU (screenshot fixtures, tests).
     const QString stand = qEnvironmentVariable("XSEMU_GPU");
     if (!stand.isEmpty()) {
         hw.gpuVendorId = stand.section(QLatin1Char(':'), 0, 0).toUInt(nullptr, 16);

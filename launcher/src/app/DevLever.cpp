@@ -469,7 +469,7 @@ bool DevLever::prepare(QString* error)
     qputenv("XCL_DXIL_CACHE", root(QStringLiteral("dxil")).toUtf8());
     qputenv("XSEMU_RUNNERS_DIR", root(QStringLiteral("runners")).toUtf8());
     if (qEnvironmentVariableIsEmpty("XSEMU_GPU"))
-        qputenv("XSEMU_GPU", "10de:NVIDIA GeForce RTX 4070");
+        qputenv("XSEMU_GPU", "10de:NVIDIA GPU (sample)");
     QFile feed(root(QStringLiteral("runner-feed.json")));
     if (feed.open(QIODevice::WriteOnly))
         feed.write(R"({"victory-7900xtx": {"keep": true}, "victory-dexnom": {"keep": true}, "kelvaroq": {"keep": true}})");
