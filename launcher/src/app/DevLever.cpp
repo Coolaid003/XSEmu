@@ -337,6 +337,10 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
                                       : QStringList{games});
         s.library.rescanNow();
     }
+    if (o.state == QLatin1String("first-launch-folders-found")) {
+        seedArt(s, findGame(s, QStringLiteral("Coastline Drive")), QStringLiteral("coast"), true);
+        seedArt(s, findGame(s, QStringLiteral("The Long Quiet Between Lighthouses")), QStringLiteral("quiet"), false);
+    }
     s.settings.setFirstLaunchDone(!firstLaunch);
     if (!firstLaunch && !isLibraryState(o.state))
         seedWarmups(s);
@@ -388,7 +392,7 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
             w.settingsPage()->showSection(SettingsPage::Section::Graphics);
     } else if (st == QLatin1String("first-launch-network"))
         w.firstLaunchPage()->setStep(1);
-    else if (st == QLatin1String("first-launch-folders"))
+    else if (st == QLatin1String("first-launch-folders") || st == QLatin1String("first-launch-folders-found"))
         w.firstLaunchPage()->setStep(2);
     else if (st == QLatin1String("in-game-booting") || st == QLatin1String("in-game-paused")) {
         s.emulator.simulateForScreenshot(st == QLatin1String("in-game-booting") ? EmulatorController::State::Booting : EmulatorController::State::Paused,
