@@ -84,6 +84,10 @@ void TestCoverArt::noNetworkWithoutKeyOrWhenOff()
     g.folder = dir.path();
     g.identityName = QStringLiteral("T.Game");
     QVERIFY(!covers.canLookUp());
+    QVERIFY(covers.lookupsUnavailableReason().contains(QStringLiteral("off")));
+    covers.request(g);
+    QVERIFY(!covers.isPending(g.titleId()));
+    settings.setArtLookups(true);
     QVERIFY(covers.lookupsUnavailableReason().contains(QStringLiteral("API key")));
     covers.request(g);
     QVERIFY(!covers.isPending(g.titleId()));

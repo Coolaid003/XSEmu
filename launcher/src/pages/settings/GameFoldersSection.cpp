@@ -212,7 +212,7 @@ QWidget* SettingsSections::gameFolders(Services& s, std::function<void()> addFol
     auto* lookups = new Toggle;
     lookups->setChecked(s.settings.artLookups());
     QObject::connect(lookups, &Toggle::toggled, &s.settings, &AppSettings::setArtLookups);
-    sec.row(QStringLiteral("Art lookups"), QStringLiteral("Off: XSEmu never contacts SteamGridDB and shows the No cover art tile."), lookups);
+    sec.row(QStringLiteral("Art lookups"), QStringLiteral("Off by default. On, with your key: XSEmu asks SteamGridDB for cover and banner art. Off: it never contacts SteamGridDB and shows the No cover art tile."), lookups);
     sec.finish();
     return sec.page;
 }

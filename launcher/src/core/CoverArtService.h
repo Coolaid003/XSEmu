@@ -52,8 +52,9 @@ private:
     QHash<QString, Entry> m_entries;
 };
 
-// Optional cover art from SteamGridDB (API v2) with the user's own key. Never touches the network
-// without a key or with art lookups switched off; the offline setting is for the title, not for the
+// Optional cover art from SteamGridDB (API v2) with the user's own key: grids and heroes only, never
+// logos. Lookups are off until the user switches them on (AppSettings::artLookups()), and never touch
+// the network without a key; the offline setting is for the title, not for the
 // launcher, so it does not block lookups (the UI shows a note instead).
 //
 //   covers.request(game);                       // no-op when cached or lookups are off
