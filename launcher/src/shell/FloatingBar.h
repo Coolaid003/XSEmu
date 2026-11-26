@@ -1,12 +1,12 @@
 #pragma once
 
-#include <QElapsedTimer>
 #include <QPoint>
 #include <QTimer>
 #include <QWidget>
 
 class Badge;
 class Button;
+class CoverThumb;
 class Label;
 class Services;
 
@@ -39,13 +39,14 @@ private:
 
     Services& m_s;
     QWidget* m_pill;
+    CoverThumb* m_cover;
     Label* m_title;
     Label* m_runner;
     Label* m_time;
     Button* m_show;
     Button* m_stop;
     QTimer m_poll;
-    QElapsedTimer m_running;
+    QString m_coverTitle;
     QPoint m_dragFrom;
     bool m_dragging = false;
     bool m_moved = false;

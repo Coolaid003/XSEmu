@@ -2,6 +2,7 @@
 
 #include "core/RunnerManager.h"
 
+#include <QList>
 #include <QString>
 
 class Badge;
@@ -21,6 +22,9 @@ void updateStatusBadge(Badge* badge, const RunnerManager::Status& status);
 QString statusDetail(Services& s, const RunnerSpec& spec, const RunnerManager::Status& status);
 // The recommendation for this PC, computed from the real GPU, RAM and install states.
 Runners::Recommendation recommendation(Services& s);
+// The curated runners in display order: `first` (an install in progress), XSEmu, the recommended one,
+// installed ones, then the rest.
+QList<const RunnerSpec*> displayOrder(Services& s, const QString& first = {});
 
 // "Install Kelvaroq?": what will be downloaded or built, its pin, licence and size, a warning when
 // it is tuned for another GPU vendor than this PC's, then Install.

@@ -11,6 +11,7 @@
 #include "widgets/Text.h"
 
 #include <QDir>
+#include <algorithm>
 #include <QGridLayout>
 #include <QLocale>
 #include <QVBoxLayout>
@@ -106,6 +107,25 @@ Runners::Recommendation recommendation(Services& s)
 {
     const HardwareInfo hw = HardwareInfo::read();
     return Runners::recommend(hw.gpuVendorId, hw.gpuName, hw.totalRamBytes, [&s](const QString& id) { return s.runners.isInstallable(id); });
+}
+
+QList<const RunnerSpec*> displayOrder(Services& s, const QString& first)
+{
+    const QString recommended = recommendation(s).runnerId;
+    QList<const RunnerSpec*> order;
+    for (const RunnerSpec& r : Runners::curated())
+        order << &r;
+    auto rank = [&](const RunnerSpec* r) {
+        if (!first.isEmpty() && r->id == first)
+            return 0;
+        if (r->isBuiltIn())
+            return 1;
+        if (r->id == recommended)
+            return 2;
+        return s.runners.isRunnable(r->id) ? 3 : 4;
+    };
+    std::stable_sort(order.begin(), order.end(), [&](const RunnerSpec* a, const RunnerSpec* b) { return rank(a) < rank(b); });
+    return order;
 }
 
 void confirmInstall(QWidget* window, Services& s, const QString& runnerId)

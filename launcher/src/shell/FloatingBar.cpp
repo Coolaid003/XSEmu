@@ -3,6 +3,7 @@
 #include "app/Services.h"
 #include "core/NativeWindow.h"
 #include "widgets/Button.h"
+#include "widgets/CoverThumb.h"
 #include "widgets/Icon.h"
 #include "widgets/Text.h"
 
@@ -29,7 +30,7 @@ public:
     Rule() { setFixedSize(1, 16); }
 
 protected:
-    void paintEvent(QPaintEvent*) override { QPainter(this).fillRect(rect(), Theme::color(Theme::Role::Border)); }
+    void paintEvent(QPaintEvent*) override { QPainter(this).fillRect(rect(), Theme::withAlpha(Theme::color(Theme::Role::HudText2), 0.3)); }
 };
 
 QString runningFor(qint64 s)
@@ -48,10 +49,11 @@ FloatingBar::FloatingBar(Services& services)
     : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus)
     , m_s(services)
     , m_pill(new QWidget)
-    , m_title(new Label({}, Label::Style::SmallStrong))
-    , m_runner(new Label({}, Label::Style::Small, Theme::Role::Text2))
-    , m_time(new Label({}, Label::Style::Small, Theme::Role::Text2))
-    , m_show(new Button(QStringLiteral("Show XSEmu"), Button::Variant::Secondary, Button::Size::Tiny, QStringLiteral("back")))
+    , m_cover(new CoverThumb(QSize(14, 20)))
+    , m_title(new Label({}, Label::Style::SmallStrong, Theme::Role::HudText))
+    , m_runner(new Label({}, Label::Style::Small, Theme::Role::HudText))
+    , m_time(new Label({}, Label::Style::Small, Theme::Role::HudText2))
+    , m_show(new Button(QStringLiteral("Show XSEmu"), Button::Variant::OnArt, Button::Size::Tiny, QStringLiteral("back")))
     , m_stop(new Button(QStringLiteral("Stop"), Button::Variant::DangerGhost, Button::Size::Tiny, QStringLiteral("stop")))
 {
     setObjectName(QStringLiteral("floatingBar"));
@@ -68,10 +70,14 @@ FloatingBar::FloatingBar(Services& services)
     h->setContentsMargins(12, 8, 8, 8);
     h->setSpacing(10);
     h->addWidget(new BrandMark(18));
+    h->addWidget(m_cover);
+    h->addSpacing(-4);
     h->addWidget(m_title);
     h->addWidget(new Rule);
-    h->addWidget(new IconView(QStringLiteral("runner"), Theme::Role::Text3, 12));
+    h->addWidget(new IconView(QStringLiteral("runner"), Theme::Role::HudText2, 12));
     h->addWidget(m_runner);
+    h->addSpacing(-6);
+    h->addWidget(new Label(QStringLiteral("\u00B7 own window"), Label::Style::Small, Theme::Role::HudText2));
     h->addWidget(new Rule);
     h->addWidget(m_time);
     h->addWidget(m_show);
@@ -89,15 +95,15 @@ FloatingBar::FloatingBar(Services& services)
     connect(m_show, &Button::clicked, this, &FloatingBar::showLauncher);
     connect(m_stop, &Button::clicked, &m_s.emulator, &EmulatorController::stop);
     connect(&m_s.emulator, &EmulatorController::stateChanged, this, [this](EmulatorController::State st) {
-        if (st == EmulatorController::State::Running && !m_running.isValid())
-            m_running.start();
-        if (st == EmulatorController::State::Idle) {
-            m_running.invalidate();
+        if (st == EmulatorController::State::Idle)
             m_moved = false;
-        }
         sync();
     });
     connect(&m_s.emulator, &EmulatorController::gameWindowChanged, this, &FloatingBar::sync);
+    connect(&m_s.covers, &CoverArtService::artChanged, this, [this] {
+        m_coverTitle.clear();
+        sync();
+    });
     connect(&Theme::instance(), &Theme::changed, this, qOverload<>(&QWidget::update));
     m_poll.setInterval(250);
     connect(&m_poll, &QTimer::timeout, this, &FloatingBar::sync);
@@ -126,11 +132,16 @@ void FloatingBar::sync()
         hide();
         return;
     }
-    m_title->setText(m_s.emulator.game().title());
-    m_runner->setText(QStringLiteral("%1 · own window").arg(m_s.emulator.runner().name));
+    const Game& g = m_s.emulator.game();
+    if (g.titleId() != m_coverTitle) {
+        m_coverTitle = g.titleId();
+        m_cover->setCover(QPixmap(m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid)), g.title());
+    }
+    m_title->setText(g.title());
+    m_runner->setText(m_s.emulator.runner().name);
     m_time->setText(st == S::Booting    ? QStringLiteral("Starting")
                     : st == S::Stopping ? QStringLiteral("Stopping")
-                                        : runningFor(m_running.isValid() ? m_running.elapsed() / 1000 : 0));
+                                        : runningFor(m_s.emulator.sessionSeconds()));
     m_stop->setEnabled(st != S::Stopping);
     const bool wanted = m_screenshot || (game && !m_userHidden && NativeWindow::isForeground(game, isVisible() ? winId() : 0));
     if (!wanted) {
@@ -171,9 +182,9 @@ void FloatingBar::paintEvent(QPaintEvent*)
     const QRectF pill = QRectF(m_pill->geometry()).adjusted(0.5, 0.5, -0.5, -0.5);
     QPainterPath path;
     path.addRoundedRect(pill, 10, 10);
-    p.fillPath(path.translated(0, 2), QColor(0, 0, 0, 40));
-    p.fillPath(path, Theme::color(Theme::Role::Surface));
-    p.setPen(QPen(Theme::color(Theme::Role::Border), 1));
+    p.fillPath(path.translated(0, 2), QColor(0, 0, 0, 60));
+    p.fillPath(path, Theme::color(Theme::Role::Hud));
+    p.setPen(QPen(QColor(255, 255, 255, 22), 1));
     p.drawPath(path);
 }
 

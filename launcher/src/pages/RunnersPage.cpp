@@ -379,21 +379,6 @@ void RunnersPage::reorder()
     m_busy = installingId();
     for (RunnerCard* c : std::as_const(m_cards))
         m_list->removeWidget(c);
-    // the install in progress, XSEmu, the runner recommended for this PC, installed ones, then the rest
-    const QString recommended = RunnerUi::recommendation(m_s).runnerId;
-    QList<const RunnerSpec*> order;
-    for (const RunnerSpec& r : Runners::curated())
-        order << &r;
-    auto rank = [&](const RunnerSpec* r) {
-        if (r->id == m_busy)
-            return 0;
-        if (r->isBuiltIn())
-            return 1;
-        if (r->id == recommended)
-            return 2;
-        return m_s.runners.isRunnable(r->id) ? 3 : 4;
-    };
-    std::stable_sort(order.begin(), order.end(), [&](const RunnerSpec* a, const RunnerSpec* b) { return rank(a) < rank(b); });
-    for (const RunnerSpec* r : order)
+    for (const RunnerSpec* r : RunnerUi::displayOrder(m_s, m_busy))
         m_list->addWidget(m_cards.value(r->id));
 }

@@ -317,7 +317,8 @@ void RunsWithSelector::openPicker()
     const QString def = m_s.settings.defaultRunner();
     const QString recommended = RunnerUi::recommendation(m_s).runnerId;
     const QString titleId = m_game.titleId();
-    for (const RunnerSpec& spec : Runners::curated()) {
+    for (const RunnerSpec* runner : RunnerUi::displayOrder(m_s)) {
+        const RunnerSpec& spec = *runner;
         const QString id = spec.id;
         auto pick = [this, pop, id, titleId, def] {
             if (id == def)
