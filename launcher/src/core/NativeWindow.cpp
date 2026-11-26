@@ -102,7 +102,10 @@ bool reparent(quintptr window, quintptr host, const QRect& rect)
     style &= ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME | WS_SYSMENU | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
     style |= WS_CHILD | WS_CLIPSIBLINGS;
     SetWindowLongPtrW(w, GWL_STYLE, style);
-    if (!SetParent(w, hwnd(host)))
+    // SetParent returns the previous parent, which may be null for a top-level window: only a null
+    // result with an error set is a failure
+    SetLastError(0);
+    if (!SetParent(w, hwnd(host)) && GetLastError() != 0)
         return false;
     SetWindowPos(w, HWND_TOP, rect.x(), rect.y(), rect.width(), rect.height(), SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOACTIVATE);
     return GetParent(w) == hwnd(host);
