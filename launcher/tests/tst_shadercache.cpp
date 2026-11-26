@@ -12,6 +12,7 @@ private slots:
     void missingIsUnknown();
     void readsManifestRunsAndBlobs();
     void titleState();
+    void clearKeepsWhatIsNotTheCaches();
 };
 
 static void writeFile(const QString& path, const QByteArray& data)
@@ -88,6 +89,34 @@ void TestShaderCache::titleState()
     QCOMPARE(titleShaderState(QStringLiteral("A"), {bad, ok}, cache), TitleShaderState::LastRunFailed);
     QCOMPARE(titleShaderState(QStringLiteral("A"), {ok, bad}, cache), TitleShaderState::Ready);
     QCOMPARE(titleShaderState(QStringLiteral("B"), {ok}, cache), TitleShaderState::Unknown);
+}
+
+void TestShaderCache::clearKeepsWhatIsNotTheCaches()
+{
+    QTemporaryDir dir;
+    const QDir root(dir.path());
+    writeFile(root.filePath(QStringLiteral("driver/10de-2786-1/a.pso")), "blob");
+    writeFile(root.filePath(QStringLiteral("pipelines/pipelines.bin")), "x");
+    writeFile(root.filePath(QStringLiteral("translated/v2/000000000000002a/b.bin")), "x");
+    writeFile(root.filePath(QStringLiteral("00112233aabbccdd.dxil")), "dxil");
+    writeFile(root.filePath(QStringLiteral("00112233aabbccdd.tmp4242")), "partial");
+    writeFile(root.filePath(QStringLiteral("used-pipelines.txt")), "x");
+    writeFile(root.filePath(QStringLiteral("skipped-pipelines.txt")), "x");
+    writeFile(root.filePath(QStringLiteral("notes.txt")), "mine");
+    writeFile(root.filePath(QStringLiteral("photos/holiday.jpg")), "mine");
+    writeFile(root.filePath(QStringLiteral("cafe.dxil")), "mine");
+
+    const ShaderCacheInfo::Cleared r = ShaderCacheInfo::clear(dir.path());
+    QVERIFY2(r.ok, qPrintable(r.error));
+    QCOMPARE(r.kept, (QStringList{QStringLiteral("cafe.dxil"), QStringLiteral("notes.txt"), QStringLiteral("photos")}));
+    QVERIFY(QFile::exists(root.filePath(QStringLiteral("notes.txt"))));
+    QVERIFY(QFile::exists(root.filePath(QStringLiteral("photos/holiday.jpg"))));
+    QVERIFY(QFile::exists(root.filePath(QStringLiteral("cafe.dxil"))));
+    for (const char* gone : {"driver", "pipelines", "translated", "00112233aabbccdd.dxil", "00112233aabbccdd.tmp4242", "used-pipelines.txt", "skipped-pipelines.txt"})
+        QVERIFY2(!QFileInfo::exists(root.filePath(QLatin1String(gone))), gone);
+    QVERIFY(root.exists());
+
+    QVERIFY(!ShaderCacheInfo::clear(QDir::homePath()).ok);
 }
 
 QTEST_GUILESS_MAIN(TestShaderCache)

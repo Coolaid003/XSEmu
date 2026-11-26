@@ -6,6 +6,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSet>
 
 quint64 ShaderCacheInfo::fnv64(const char* data, qsizetype len)
@@ -95,4 +96,38 @@ TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>
     if (!cache.exists || cache.blobs == 0 || cache.blobs == -1)
         return TitleShaderState::NeverWarmed;
     return TitleShaderState::Unknown;
+}
+
+bool ShaderCacheInfo::isCacheEntry(const QFileInfo& entry)
+{
+    const QString name = entry.fileName();
+    if (entry.isSymLink())
+        return false;
+    if (entry.isDir())
+        return name == QLatin1String("pipelines") || name == QLatin1String("driver") || name == QLatin1String("translated");
+    static const QRegularExpression dxil(QStringLiteral("^[0-9a-fA-F]{16}[.](dxil|tmp[0-9]+)$"));
+    return name == QLatin1String("used-pipelines.txt") || name == QLatin1String("skipped-pipelines.txt") || dxil.match(name).hasMatch();
+}
+
+ShaderCacheInfo::Cleared ShaderCacheInfo::clear(const QString& dxilDir)
+{
+    Cleared r;
+    const QDir dir(dxilDir);
+    if (!dir.exists())
+        return r;
+    if (dir.isRoot() || QDir::cleanPath(dir.absolutePath()) == QDir::cleanPath(QDir::homePath())) {
+        r.ok = false;
+        r.error = QStringLiteral("%1 is not a shader cache folder, so nothing was deleted.").arg(QDir::toNativeSeparators(dxilDir));
+        return r;
+    }
+    for (const QFileInfo& fi : dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::Name)) {
+        if (!isCacheEntry(fi)) {
+            r.kept << fi.fileName();
+            continue;
+        }
+        r.ok = (fi.isDir() ? QDir(fi.absoluteFilePath()).removeRecursively() : QFile::remove(fi.absoluteFilePath())) && r.ok;
+    }
+    if (!r.ok)
+        r.error = QStringLiteral("Some cache files could not be deleted. Close XSEmu and try again.");
+    return r;
 }

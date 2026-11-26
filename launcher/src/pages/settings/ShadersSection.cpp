@@ -25,8 +25,7 @@
 
 namespace {
 
-// The folders XSEmu writes into its shader cache (crates/xcl/src/hle/d3d12x/pso_manifest.rs,
-// real.rs, gpu/recomp/pso.rs). The launcher only empties a folder that holds them, or nothing.
+// A folder the cache may move to: empty, or one that already holds the emulator's cache folders.
 bool isShaderCacheFolder(const QDir& dir)
 {
     if (!dir.exists())
@@ -53,32 +52,13 @@ qint64 folderBytes(const QString& path)
     return total;
 }
 
-// Deletes everything inside the shader cache folder and keeps the folder. Never the GPU driver's cache.
-bool clearShaderCache(const QString& path, QString* error)
-{
-    QDir dir(path);
-    if (!isShaderCacheFolder(dir)) {
-        *error = QStringLiteral("%1 doesn't look like an XSEmu shader cache, so nothing was deleted.").arg(QDir::toNativeSeparators(path));
-        return false;
-    }
-    bool ok = true;
-    for (const QFileInfo& fi : dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System)) {
-        if (fi.isDir() && !fi.isSymLink())
-            ok = QDir(fi.absoluteFilePath()).removeRecursively() && ok;
-        else
-            ok = QFile::remove(fi.absoluteFilePath()) && ok;
-    }
-    if (!ok)
-        *error = QStringLiteral("Some files could not be deleted. Close XSEmu and try again.");
-    return ok;
-}
 
 }
 
 // Warm-up when the translator changes: XSEmu reports no translator id to the launcher (it is a
 // build-time constant, XCL_TRANSLATOR_SOURCE_ID), so it is shown unavailable. Giant compiles: no knob
 // (the admission rule is shown instead). Cache folder: XCL_DXIL_CACHE (LaunchConfig). Clear: deletes
-// the cache folder's contents after the confirm dialog.
+// the emulator's own entries in it after the confirm dialog (ShaderCacheInfo::clear) and names the rest.
 QWidget* SettingsSections::shaders(Services& s)
 {
     const SettingsKit::Section sec = SettingsKit::makeSection(
@@ -185,19 +165,29 @@ QWidget* SettingsSections::shaders(Services& s)
         d->addButton(cancel);
         d->addButton(confirm);
         QObject::connect(cancel, &Button::clicked, d, &Dialog::dismiss);
-        QObject::connect(confirm, &Button::clicked, d, [&s, d, driver, info, refresh] {
+        QObject::connect(confirm, &Button::clicked, d, [&s, d, driver, info, refresh, confirm, cancel] {
             QString error;
             if (!s.gate.isFree())
                 error = s.gate.blockedReason(ProcessGate::Action::StartWarmup);
-            else
-                clearShaderCache(info->dxilDir, &error);
+            else if (const ProcessGate::External other = s.gate.external(); other.busy())
+                error = other.reason();
+            const ShaderCacheInfo::Cleared cleared = error.isEmpty() ? ShaderCacheInfo::clear(info->dxilDir) : ShaderCacheInfo::Cleared{};
+            if (error.isEmpty())
+                error = cleared.error;
+            refresh();
             if (!error.isEmpty()) {
                 driver->setText(error);
                 driver->setRole(Theme::Role::Danger);
                 return;
             }
+            if (!cleared.kept.isEmpty()) {
+                driver->setText(QStringLiteral("Cleared. These aren't XSEmu's, so they were kept: %1.").arg(cleared.kept.join(QStringLiteral(", "))));
+                driver->setRole(Theme::Role::Text2);
+                confirm->hide();
+                cancel->setText(QStringLiteral("Close"));
+                return;
+            }
             d->dismiss();
-            refresh();
         });
         d->open();
     });

@@ -3,7 +3,9 @@
 #include "AppSettings.h"
 
 #include <QDateTime>
+#include <QFileInfo>
 #include <QString>
+#include <QStringList>
 
 // What the launcher can truthfully say about the shader cache, read from the files the emulator
 // writes (crates/xcl/src/hle/d3d12x/pso_manifest.rs and real.rs). The cache is machine-wide, not
@@ -28,6 +30,21 @@ struct ShaderCacheInfo {
 
     // FNV-1a 64 as the emulator computes it (gpu::shader::fnv64).
     static quint64 fnv64(const char* data, qsizetype len);
+
+    // An entry at the top of the cache folder that the emulator writes (crates/xcl): the pipelines,
+    // driver and translated folders (pso_manifest.rs, real.rs, gpu/recomp/pso.rs), <16 hex>.dxil
+    // and its <16 hex>.tmp<pid> partial (gpu/recomp/dxc.rs), used-pipelines.txt and
+    // skipped-pipelines.txt (pso_async.rs). Clear deletes these and nothing else.
+    static bool isCacheEntry(const QFileInfo& entry);
+
+    struct Cleared {
+        bool ok = true;      // every cache entry was deleted
+        QStringList kept;    // other entries in the folder, left alone
+        QString error;       // why it refused or what could not be deleted
+    };
+    // Delete the emulator's entries in the cache folder and keep the folder and everything else.
+    // Refuses a drive root and the home folder.
+    static Cleared clear(const QString& dxilDir);
 };
 
 // A game's warm-up state as far as the launcher can tell: from its own warm-up records (the
