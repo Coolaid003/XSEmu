@@ -843,7 +843,7 @@ void InGameView::focusGameSoon()
 
 void InGameView::updateAutoHide()
 {
-    const bool active = !m_fullScreen && !m_exit && m_s.settings.gameBarAutoHide() && m_s.emulator.state() == EmulatorController::State::Running && isVisible();
+    const bool active = !m_fullScreen && !m_exit && m_s.settings.windowGameBarAutoHide() && m_s.emulator.state() == EmulatorController::State::Running && isVisible();
     if (!active) {
         m_autoHide.stop();
         if (m_barHidden) {
@@ -977,10 +977,10 @@ void InGameView::refresh()
     } else if (!m_barHidden) {
         m_bar->show();
     }
-    if (!m_fullScreen && !exit && m_s.settings.gameBarAutoHide() && st == S::Running && !m_autoHide.isActive()) {
+    if (!m_fullScreen && !exit && m_s.settings.windowGameBarAutoHide() && st == S::Running && !m_autoHide.isActive()) {
         m_away.restart();
         m_autoHide.start();
-    } else if (!(m_s.settings.gameBarAutoHide() && st == S::Running)) {
+    } else if (!(m_s.settings.windowGameBarAutoHide() && st == S::Running)) {
         updateAutoHide();
     }
 }

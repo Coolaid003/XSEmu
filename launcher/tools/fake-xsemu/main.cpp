@@ -28,6 +28,10 @@ int main(int argc, char** argv)
     const QString scenario = qEnvironmentVariable("FAKE_XSEMU_SCENARIO", QStringLiteral("ok"));
     if (args.isEmpty())
         return usage();
+    if (args.first() == QLatin1String("--version")) {
+        std::printf("XSEmu 0.0.0-fake\n");
+        return 0;
+    }
 
     if (args.first() == QLatin1String("warm-up")) {
         QCoreApplication app(argc, argv);

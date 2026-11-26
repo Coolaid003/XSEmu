@@ -147,11 +147,38 @@ void AppSettings::setSteamGridDbKey(const QString& key) { write(Key::SteamGridDb
 bool AppSettings::artLookups() const { return read(Key::ArtLookups, true).toBool(); }
 void AppSettings::setArtLookups(bool on) { write(Key::ArtLookups, on); }
 
-int AppSettings::giantCompileCap() const { return read(Key::GiantCompileCap, kDefaultGiantCompileCap).toInt(); }
-void AppSettings::setGiantCompileCap(int cap) { write(Key::GiantCompileCap, cap); }
+bool AppSettings::windowGameBarAutoHide() const { return read(Key::WindowGameBarAutoHide, false).toBool(); }
+void AppSettings::setWindowGameBarAutoHide(bool on) { write(Key::WindowGameBarAutoHide, on); }
 
-bool AppSettings::gameBarAutoHide() const { return read(Key::GameBarAutoHide, false).toBool(); }
-void AppSettings::setGameBarAutoHide(bool on) { write(Key::GameBarAutoHide, on); }
+bool AppSettings::storeOfflineError() const { return read(Key::StoreOfflineError, true).toBool(); }
+void AppSettings::setStoreOfflineError(bool on) { write(Key::StoreOfflineError, on); }
+
+bool AppSettings::crashDumps() const { return read(Key::CrashDumps, true).toBool(); }
+void AppSettings::setCrashDumps(bool on) { write(Key::CrashDumps, on); }
+
+QString AppSettings::shaderCacheDirOverride() const { return read(Key::ShaderCacheDir).toString().trimmed(); }
+void AppSettings::setShaderCacheDirOverride(const QString& dir) { write(Key::ShaderCacheDir, dir.trimmed()); }
+
+QVariant AppSettings::xclDefault(const QString& tomlKey) const
+{
+    return m_settings->value(QLatin1String(Key::XclDefaultsPrefix) + tomlKey);
+}
+
+void AppSettings::setXclDefault(const QString& tomlKey, const QVariant& value)
+{
+    const QString key = QLatin1String(Key::XclDefaultsPrefix) + tomlKey;
+    m_settings->setValue(key, value);
+    m_settings->sync();
+    emit changed(key);
+}
+
+void AppSettings::clearXclDefault(const QString& tomlKey)
+{
+    const QString key = QLatin1String(Key::XclDefaultsPrefix) + tomlKey;
+    m_settings->remove(key);
+    m_settings->sync();
+    emit changed(key);
+}
 
 QString AppSettings::emulatorPathOverride() const { return read(Key::EmulatorPath).toString(); }
 void AppSettings::setEmulatorPathOverride(const QString& path) { write(Key::EmulatorPath, path); }

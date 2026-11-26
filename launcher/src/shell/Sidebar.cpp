@@ -167,9 +167,13 @@ void Sidebar::refresh()
 {
     m_library->setTrailingText(QString::number(m_s.library.games().size()));
 
-    if (m_s.warmup.isActive()) {
+    if (m_s.warmup.state() == WarmupController::State::PausedForRam) {
+        m_warmup->setTrailingText(QStringLiteral("Paused"), Theme::Role::Warning);
+    } else if (m_s.warmup.isActive()) {
         const WarmupController::Progress pr = m_s.warmup.progress();
         m_warmup->setTrailingText(QStringLiteral("%1%").arg(qRound(pr.phaseFraction() * 100)), Theme::Role::AccentText);
+    } else if (m_s.warmup.state() == WarmupController::State::Failed) {
+        m_warmup->setTrailingText(QStringLiteral("Failed"), Theme::Role::Danger);
     } else if (m_s.gate.owner() == ProcessGate::Owner::Game) {
         m_warmup->setTrailingIcon(QStringLiteral("lock"));
     } else {

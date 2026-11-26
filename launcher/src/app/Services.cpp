@@ -1,5 +1,6 @@
 #include "Services.h"
 
+#include "core/LaunchConfig.h"
 #include "theme/Theme.h"
 
 Services::Services(QObject* parent)
@@ -9,6 +10,7 @@ Services::Services(QObject* parent)
     , covers(settings)
 {
     Theme::instance().setMode(Theme::Mode(int(settings.theme())));
+    LaunchConfig::followShaderCacheDir(settings);
     library.setFolders(settings.gameFolders());
     connect(&settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::Theme))

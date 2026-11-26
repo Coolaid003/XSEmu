@@ -41,6 +41,7 @@ add_library(xsemu_core STATIC
     src/core/Game.cpp src/core/Game.h
     src/core/GameManifest.cpp src/core/GameManifest.h
     src/core/HardwareInfo.cpp src/core/HardwareInfo.h
+    src/core/LaunchConfig.cpp src/core/LaunchConfig.h
     src/core/Library.cpp src/core/Library.h
     src/core/Paths.cpp src/core/Paths.h
     src/core/ProcessGate.cpp src/core/ProcessGate.h

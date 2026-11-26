@@ -14,6 +14,7 @@
 #include "widgets/SearchBox.h"
 #include "pages/LibraryPage.h"
 
+#include <QAbstractButton>
 #include <QApplication>
 #include <QGuiApplication>
 #include <QScreen>
@@ -81,10 +82,41 @@ WarmupController::Progress runningProgress()
     p.etaS = 60;
     p.ramFreeMb = 12 * 1024;
     p.giantsCompiling = 2;
-    p.giantsMax = 3;
     p.inFlight = 14;
     p.elapsedS = 124;
     return p;
+}
+
+// A small shader cache and one crash dump in the temporary fixture folders, so Settings has numbers.
+void seedShaderCache()
+{
+    QDir dxil(root(QStringLiteral("dxil")));
+    dxil.mkpath(QStringLiteral("pipelines"));
+    dxil.mkpath(QStringLiteral("driver/10de-2786-fixture"));
+    QFile manifest(dxil.filePath(QStringLiteral("pipelines/pipelines.bin")));
+    if (manifest.open(QIODevice::WriteOnly)) {
+        for (int i = 0; i < 3120; ++i) {
+            const QByteArray entry = QByteArray("fixture pipeline ") + QByteArray::number(i) + QByteArray(64, 'x');
+            const quint32 n = quint32(entry.size());
+            const char len[4] = {char(n & 0xff), char((n >> 8) & 0xff), char((n >> 16) & 0xff), char((n >> 24) & 0xff)};
+            manifest.write(len, 4);
+            manifest.write(entry);
+        }
+    }
+    for (int i = 0; i < 40; ++i) {
+        QFile blob(dxil.filePath(QStringLiteral("driver/10de-2786-fixture/%1.pso").arg(i)));
+        if (blob.open(QIODevice::WriteOnly))
+            blob.write(QByteArray(256 * 1024, '\0'));
+    }
+}
+
+void seedCrashDump(const Game& game)
+{
+    const QString dir = QDir(root(QStringLiteral("xcl"))).filePath(game.titleId() + QStringLiteral("/logs/dumps"));
+    QDir().mkpath(dir);
+    QFile dump(QDir(dir).filePath(QStringLiteral("xcl-small-4242.dmp")));
+    if (dump.open(QIODevice::WriteOnly))
+        dump.write(QByteArray(3 * 1024 * 1024 + 123456, '\0'));
 }
 
 EmulatorController::Stats pausedStats()
@@ -324,8 +356,11 @@ QStringList DevLever::states()
         QStringLiteral("cold-cache"), QStringLiteral("details"), QStringLiteral("details-no-art"),
         QStringLiteral("warmup-idle"), QStringLiteral("warmup-running"), QStringLiteral("warmup-paused-ram"),
         QStringLiteral("warmup-failed"), QStringLiteral("warmup-finished"), QStringLiteral("warmup-blocked"),
-        QStringLiteral("settings"), QStringLiteral("settings-shaders"), QStringLiteral("settings-folders"),
-        QStringLiteral("settings-graphics"),
+        QStringLiteral("warmup-cancelled"), QStringLiteral("warmup-stopped"),
+        QStringLiteral("settings"), QStringLiteral("settings-network"), QStringLiteral("settings-shaders"),
+        QStringLiteral("settings-shaders-clear"), QStringLiteral("settings-overlay"), QStringLiteral("settings-folders"),
+        QStringLiteral("settings-input"), QStringLiteral("settings-graphics"), QStringLiteral("settings-logs"),
+        QStringLiteral("settings-about"),
         QStringLiteral("first-launch"), QStringLiteral("first-launch-network"), QStringLiteral("first-launch-folders"),
         QStringLiteral("first-launch-folders-found"),
         QStringLiteral("error-files-missing"), QStringLiteral("error-not-enough-ram"), QStringLiteral("error-crash"),
@@ -456,23 +491,69 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         } else if (st == QLatin1String("warmup-failed")) {
             WarmupController::Progress p = runningProgress();
             p.done = 31044;
+            WarmupRun run;
+            run.titleId = signal.titleId();
+            run.titleName = signal.title();
+            run.done = 31044;
+            run.total = 41906;
+            run.tookS = 160;
+            run.result = WarmupRun::Result::Failed;
+            run.exitCode = 3;
+            run.finishedAt = QDateTime::currentDateTime();
+            QDir().mkpath(QFileInfo(WarmupController::logPath()).absolutePath());
+            QFile log(WarmupController::logPath());
+            if (log.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                log.write("warm-up: the driver compile of DXIL 3f2a91c07d1e4b55 crashed (0xC0000005)\n");
             s.warmup.simulateForScreenshot(WarmupController::State::Failed, signal, p,
-                                           QStringLiteral("the driver compile of a giant pipeline failed (exit code 3)"));
+                                           QStringLiteral("warm-up: the driver compile of DXIL 3f2a91c07d1e4b55 crashed (0xC0000005)"), run);
         } else if (st == QLatin1String("warmup-finished")) {
             WarmupController::Progress p = runningProgress();
             p.phase = QStringLiteral("rest");
             p.done = p.total;
-            s.warmup.simulateForScreenshot(WarmupController::State::Finished, signal, p);
+            p.ramFreeMb = 11674;
+            WarmupRun run;
+            run.titleId = signal.titleId();
+            run.titleName = signal.title();
+            run.done = 41906;
+            run.total = 41906;
+            run.tookS = 192;
+            run.finishedAt = QDateTime::currentDateTime();
+            s.warmup.simulateForScreenshot(WarmupController::State::Finished, signal, p, {}, run);
+        } else if (st == QLatin1String("warmup-cancelled") || st == QLatin1String("warmup-stopped")) {
+            const bool stopped = st == QLatin1String("warmup-stopped");
+            WarmupController::Progress p = runningProgress();
+            WarmupRun run;
+            run.titleId = signal.titleId();
+            run.titleName = signal.title();
+            run.done = 27292;
+            run.total = 41906;
+            run.tookS = 124;
+            run.result = stopped ? WarmupRun::Result::StoppedPartWay : WarmupRun::Result::Cancelled;
+            run.exitCode = stopped ? 0 : 4;
+            run.finishedAt = QDateTime::currentDateTime();
+            s.warmup.simulateForScreenshot(stopped ? WarmupController::State::StoppedPartWay : WarmupController::State::Cancelled, signal, p, {}, run);
         } else if (st == QLatin1String("warmup-blocked"))
             s.emulator.simulateForScreenshot(EmulatorController::State::Paused, signal, pausedStats());
     } else if (st.startsWith(QLatin1String("settings"))) {
         w.showPage(Page::Settings);
-        if (st == QLatin1String("settings-shaders"))
+        if (st.startsWith(QLatin1String("settings-shaders"))) {
+            seedShaderCache();
             w.settingsPage()->showSection(SettingsPage::Section::Shaders);
+        } else if (st == QLatin1String("settings-network"))
+            w.settingsPage()->showSection(SettingsPage::Section::Network);
+        else if (st == QLatin1String("settings-overlay"))
+            w.settingsPage()->showSection(SettingsPage::Section::Overlay);
         else if (st == QLatin1String("settings-folders"))
             w.settingsPage()->showSection(SettingsPage::Section::GameFolders);
+        else if (st == QLatin1String("settings-input"))
+            w.settingsPage()->showSection(SettingsPage::Section::Input);
         else if (st == QLatin1String("settings-graphics"))
             w.settingsPage()->showSection(SettingsPage::Section::Graphics);
+        else if (st == QLatin1String("settings-logs")) {
+            seedCrashDump(signal);
+            w.settingsPage()->showSection(SettingsPage::Section::Logs);
+        } else if (st == QLatin1String("settings-about"))
+            w.settingsPage()->showSection(SettingsPage::Section::About);
     } else if (st == QLatin1String("first-launch-network"))
         w.firstLaunchPage()->setStep(1);
     else if (st == QLatin1String("first-launch-folders") || st == QLatin1String("first-launch-folders-found"))
@@ -485,6 +566,10 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         return;
     }
 
+    if (st == QLatin1String("settings-shaders-clear")) {
+        if (auto* clear = w.settingsPage()->sectionPage(SettingsPage::Section::Shaders)->findChild<QAbstractButton*>(QStringLiteral("clearShaderCache")))
+            QTimer::singleShot(300, clear, &QAbstractButton::click);
+    }
     if (st == QLatin1String("library-stop-first"))
         w.play(quiet); // the real launch check: Busy while Coastline Drive is paused
     else if (st == QLatin1String("cold-cache"))

@@ -55,8 +55,11 @@ public:
         static constexpr const char* OverlayDefault = "overlay/default";
         static constexpr const char* SteamGridDbKey = "covers/steamGridDbKey";
         static constexpr const char* ArtLookups = "covers/lookups";
-        static constexpr const char* GiantCompileCap = "warmup/giantCompileCap";
-        static constexpr const char* GameBarAutoHide = "ingame/gameBarAutoHide";
+        static constexpr const char* WindowGameBarAutoHide = "ingame/windowBarAutoHide";
+        static constexpr const char* StoreOfflineError = "network/storeOfflineError";
+        static constexpr const char* CrashDumps = "logs/crashDumps";
+        static constexpr const char* ShaderCacheDir = "shaders/cacheDir";
+        static constexpr const char* XclDefaultsPrefix = "xcl/"; // + an xcl.toml key
         static constexpr const char* EmulatorPath = "emulator/path";
         static constexpr const char* LaunchNeedMb = "memory/launchNeedMb";
         static constexpr const char* GameOverrides = "games/overrides";
@@ -66,7 +69,6 @@ public:
     };
 
     static constexpr int kRecentWarmupLimit = 20;
-    static constexpr int kDefaultGiantCompileCap = 3;
     // No fixed run floor: a launch only needs the 1 GB floor free (EmulatorController::kRamFloorMb)
     // plus whatever the user configures here.
     static constexpr int kDefaultLaunchNeedMb = 0;
@@ -106,11 +108,30 @@ public:
     bool artLookups() const; // the user's switch for cover lookups (on; nothing happens without a key)
     void setArtLookups(bool on);
 
-    int giantCompileCap() const;
-    void setGiantCompileCap(int cap);
+    // The in-game bar while the game plays in a window: always shown (false, the default) or
+    // auto-hidden until the mouse reaches the top edge (true). Launcher-side only.
+    bool windowGameBarAutoHide() const;
+    void setWindowGameBarAutoHide(bool on);
 
-    bool gameBarAutoHide() const;
-    void setGameBarAutoHide(bool on);
+    // On by default: games start with XCL_STORE=offline-error (store context opens, every store
+    // query fails with the store network error). Off: the store API is refused as unavailable.
+    bool storeOfflineError() const;
+    void setStoreOfflineError(bool on);
+
+    // On by default: games start with XCL_FULL_DUMP=<title>\logs\dumps (LaunchConfig::crashDumpDir).
+    bool crashDumps() const;
+    void setCrashDumps(bool on);
+
+    // The user's shader cache folder (empty: XSEmu's default); LaunchConfig applies it as XCL_DXIL_CACHE.
+    QString shaderCacheDirOverride() const;
+    void setShaderCacheDirOverride(const QString& dir);
+
+    // Launcher-wide defaults for xcl.toml keys, written into each title's xcl.toml at launch
+    // (LaunchConfig::titleValues). Invalid when the user never set one: the title keeps its own value.
+    // changed() carries Key::XclDefaultsPrefix + the key.
+    QVariant xclDefault(const QString& tomlKey) const;
+    void setXclDefault(const QString& tomlKey, const QVariant& value);
+    void clearXclDefault(const QString& tomlKey);
 
     // The user's override of the emulator executable (empty: none).
     QString emulatorPathOverride() const;

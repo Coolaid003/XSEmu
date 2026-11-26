@@ -1,10 +1,12 @@
 #include "WarmupController.h"
 
+#include "Paths.h"
 #include "ProcessGate.h"
 #include "ProcessTree.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 
 namespace {
@@ -62,6 +64,11 @@ QStringList WarmupController::warmupArguments(bool full)
     return args;
 }
 
+QString WarmupController::logPath()
+{
+    return QDir(Paths::launcherDataDir()).filePath(QStringLiteral("logs/warm-up.log"));
+}
+
 QString WarmupController::checkStart() const
 {
     if (!m_gate.isFree())
@@ -91,6 +98,8 @@ bool WarmupController::start(bool full, const Game& forGame, QString* error)
     m_stderr.clear();
     m_cancelRequested = false;
     m_clock.start();
+    QDir().mkpath(QFileInfo(logPath()).absolutePath());
+    QFile(logPath()).open(QIODevice::WriteOnly | QIODevice::Truncate);
 
     auto* p = new ProcessTree(this);
     m_process = p;
@@ -136,7 +145,11 @@ void WarmupController::onStderr()
 {
     if (!m_process)
         return;
-    const QString text = QString::fromUtf8(m_process->readAllStandardError());
+    const QByteArray bytes = m_process->readAllStandardError();
+    QFile log(logPath());
+    if (log.open(QIODevice::WriteOnly | QIODevice::Append))
+        log.write(bytes);
+    const QString text = QString::fromUtf8(bytes);
     for (const QString& line : text.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
         m_stderr << line.trimmed();
         if (m_stderr.size() > kStderrTail)
@@ -247,11 +260,13 @@ void WarmupController::setState(State s)
     emit stateChanged(s);
 }
 
-void WarmupController::simulateForScreenshot(State state, const Game& game, const Progress& progress, const QString& error)
+void WarmupController::simulateForScreenshot(State state, const Game& game, const Progress& progress, const QString& error,
+                                             const std::optional<WarmupRun>& run)
 {
     m_game = game;
     m_progress = progress;
     m_error = error;
+    m_lastRun = run;
     const bool active = state == State::Running || state == State::PausedForRam;
     if (active && m_gate.isFree())
         m_gate.acquire(ProcessGate::Owner::Warmup, game.title(), [this] { simulateForScreenshot(State::Cancelled, m_game, m_progress); });

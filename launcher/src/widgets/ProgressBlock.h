@@ -31,6 +31,8 @@ public:
     void setPercentText(const QString& text); // overrides the computed percent
     void setColumns(const QList<Column>& columns, const QList<double>& stretch = {1.4, 1.1, 1.1, 1.0, 1.2});
     void setActionText(const QString& text); // empty hides the action
+    void setNote(const QString& text);       // a line under the bar and columns; empty hides it
+    void setColumnTone(int index, Theme::Role role); // after setColumns: the value's colour
     Button* actionButton() const { return m_action; }
     void addHeaderWidget(QWidget* w); // e.g. a primary button next to the percent
     State state() const { return m_state; }
@@ -53,4 +55,5 @@ private:
     QHBoxLayout* m_header;
     QWidget* m_bar;
     QHBoxLayout* m_columns;
+    Label* m_note;
 };

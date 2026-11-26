@@ -16,6 +16,7 @@ private:
     void emitLine(const QJsonObject& o);
     void finish(bool cancelled);
     void onStdinLine(const QByteArray& line);
+    void saveBuilt() const;
 
     struct Phase {
         const char* id;
@@ -29,6 +30,9 @@ private:
     qint64 m_done = 0;
     qint64 m_built = 0;
     qint64 m_failed = 0;
+    qint64 m_boundBefore = 0; // bound pipelines earlier runs built (kept like the real cache)
+    qint64 m_boundBuilt = 0;
+    QString m_stateFile;      // <XCL_DXIL_CACHE>/fake-warmup-built, only when XCL_DXIL_CACHE is set
     bool m_cancel = false;
     bool m_holdForRam = false;
     int m_ramTicks = 0;
