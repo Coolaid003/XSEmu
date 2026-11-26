@@ -10,7 +10,7 @@ name = "xcl"
 path = "src/lib.rs"
 
 [[bin]]
-name = "xcl"
+name = "XSEmu"
 path = "src/main.rs"
 
 [dependencies]

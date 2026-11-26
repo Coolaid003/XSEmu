@@ -408,7 +408,7 @@ pub fn run_main(m: &Arc<MappedModule>) -> u32 {
     }
 }
 
-/// Called from xcl.exe's own TLS callback for every thread event in the process.
+/// Called from XSEmu.exe's own TLS callback for every thread event in the process.
 pub fn on_tls_event(reason: u32) {
     match reason {
         2 => unsafe {

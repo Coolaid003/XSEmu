@@ -115,7 +115,7 @@ History is merged with merge commits, so every commit on a PR ends up in `main`.
   D3D12.X: draws with untranslated pipelines get the title's root signature
   ```
   The prefix is the subsystem: `Recompiler`, `D3D12.X`, `DirectStorage`, `XGameRuntime`,
-  `kernelx`, `XAudio2`, `VFS`, `Memory`, `TLS`, `PE loader`, `Shaders`, `Frame clock`, `xcl run`,
+  `kernelx`, `XAudio2`, `VFS`, `Memory`, `TLS`, `PE loader`, `Shaders`, `Frame clock`, `XSEmu run`,
   `Tests`, `e2e`, `Scripts`, `README`, `Docs`, `Issue templates`. Use one that exists already when it fits.
   No `fix:` / `feat(...)` style prefixes; this repo does not use Conventional Commits.
 - Subject line of about 72 characters or less, saying what the change does, not "update file.rs" or

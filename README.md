@@ -38,14 +38,14 @@ are XCL's results, not XSEmu's.
 
 ## How it works
 
-`xcl run` maps the title's executable and DLLs into its own process and runs
+`XSEmu run` maps the title's executable and DLLs into its own process and runs
 them on the host CPU. Each import goes to an XCL replacement, the title's own
 DLL, the Windows DLL of the same name, or a logged stub. Graphics calls go
 through a D3D12.X layer that creates real PC D3D12 objects.
 
 ```mermaid
 flowchart TB
-    run["xcl run"] --> loader["PE loader<br/>loader.rs, pe.rs, tls.rs"]
+    run["XSEmu run"] --> loader["PE loader<br/>loader.rs, pe.rs, tls.rs"]
     loader -->|maps and starts| title["Title EXE and DLLs<br/>native x64 code"]
     title -->|imports| resolver{"Resolver"}
     resolver -->|console library| hle["HLE replacements<br/>kernelx, XGameRuntime,<br/>GameInput, XAudio2"]
@@ -86,7 +86,7 @@ Console shaders ship as RDNA2 machine code with no usable DXIL. The recompiler
 translates each program (vertex, pixel, compute, geometry and mesh/NGG stages)
 to HLSL, and a compiler turns that HLSL into DXIL. Three disk caches keep the
 work between runs, and a manifest records every pipeline the title made so that
-`xcl warm-up` can rebuild them before the next run.
+`XSEmu warm-up` can rebuild them before the next run.
 
 ```mermaid
 flowchart TB
@@ -108,7 +108,7 @@ flowchart TB
     driver --> pso
     driver -.->|"kept if it took 250 ms or more"| blobcache
     pso --> manifest[("Pipeline manifest")]
-    manifest -.->|"replayed by xcl warm-up"| shader
+    manifest -.->|"replayed by XSEmu warm-up"| shader
 ```
 
 - The **translated cache** holds the DXIL of each console program, keyed by the
@@ -173,9 +173,9 @@ state wrong.
 - A D3D12 GPU with Shader Model 6.6 and mesh shaders. Without mesh shaders, the
   title's geometry and NGG programs are not drawn. On Windows 10, the inbox
   `D3D12Core.dll` stops at SM 6.5: put the D3D12 Agility SDK in `D3D12\` next
-  to `xcl.exe`, in `%LOCALAPPDATA%\XCL\D3D12\`, or in `%XCL_D3D12_DIR%`.
+  to `XSEmu.exe`, in `%LOCALAPPDATA%\XCL\D3D12\`, or in `%XCL_D3D12_DIR%`.
 - DXC (`dxcompiler.dll` and `dxil.dll`) from the Windows SDK. XCL looks in
-  `Windows Kits\10\bin\<version>\x64`, next to `xcl.exe`, and in
+  `Windows Kits\10\bin\<version>\x64`, next to `XSEmu.exe`, and in
   `%XCL_DXC_DIR%`. Version 1.8 or newer is recommended.
 - Gaming Services, which provides `System32\xgameruntime.dll`. Without it,
   dialogs, text entry, invites and game streaming are missing.
@@ -186,7 +186,7 @@ state wrong.
 ## Build and test
 
 ```powershell
-cargo build --release --locked --workspace      # target\release\xcl.exe
+cargo build --release --locked --workspace      # target\release\XSEmu.exe
 .\scripts\test.ps1                               # cargo build + cargo test --workspace
 ```
 
@@ -206,21 +206,21 @@ cargo test --manifest-path crates/xcl-dxil/Cargo.toml
 
 ## Usage
 
-The executable is still named `xcl.exe`. Run `xcl --help` for the full help
-text. If you open `xcl.exe` from Explorer, a small menu asks for the game's
+The executable is `XSEmu.exe` (it was `xcl.exe` before). Run `XSEmu --help` for the full help
+text. If you open `XSEmu.exe` from Explorer, a small menu asks for the game's
 exe or `MicrosoftGame.config`.
 
 ```powershell
-xcl run <game folder | game.exe> [-- game arguments]   # run a title
-xcl inspect <file.exe | file.dll> [--json]              # imports and how XCL resolves each
-xcl disasm <file> [--hex] [--fssm FILE]                 # disassemble RDNA2 and console shader containers
-xcl shaders <file | folder | package.rpf> [--top N] [--recomp] [--compile N]
-xcl shaders <file | folder | package.rpf> --precompile [--pipelines]
-xcl rpf <package.rpf> [--find NAME] [--extract NAME --out DIR]
-xcl warm-up [--full]
-xcl warm-up --mesh-only [--recent-used N]
-xcl warm-up --giants-only --floor-mb N
-xcl --version
+XSEmu run <game folder | game.exe> [-- game arguments]   # run a title
+XSEmu inspect <file.exe | file.dll> [--json]              # imports and how XCL resolves each
+XSEmu disasm <file> [--hex] [--fssm FILE]                 # disassemble RDNA2 and console shader containers
+XSEmu shaders <file | folder | package.rpf> [--top N] [--recomp] [--compile N]
+XSEmu shaders <file | folder | package.rpf> --precompile [--pipelines]
+XSEmu rpf <package.rpf> [--find NAME] [--extract NAME --out DIR]
+XSEmu warm-up [--full]
+XSEmu warm-up --mesh-only [--recent-used N]
+XSEmu warm-up --giants-only --floor-mb N
+XSEmu --version
 ```
 
 | Command | What it does |
@@ -231,7 +231,7 @@ xcl --version
 | `warm-up --mesh-only` | Builds only the missing driver blobs for mesh pipelines. |
 | `warm-up --giants-only --floor-mb N` | Builds the large compute programs one at a time and keeps N MB of RAM free (N must be 1024 or more). |
 
-`warm-up` refuses to start while another `xcl.exe` is running. Run one XCL
+`warm-up` refuses to start while another `XSEmu.exe` (or an older `xcl.exe`) is running. Run one XCL
 process tree at a time.
 
 ### Title data and configuration
@@ -260,7 +260,7 @@ default, `"anaconda"`, is a Series X.
 | `XCL_PSO_DISK_CACHE=0` | Turns off the driver blob cache. |
 | `XCL_PSO_MANIFEST=0` | Stops recording pipelines in the manifest. |
 | `XCL_ASYNC_PSO=0` | Builds every pipeline inside the create call, with no stand-in. |
-| `XCL_WARMUP_BUDGET_S` | Time limit in seconds for `xcl warm-up` without `--full`. |
+| `XCL_WARMUP_BUDGET_S` | Time limit in seconds for `XSEmu warm-up` without `--full`. |
 | `XCL_NETWORK=0` | Runs the title with no network, as on a console that is offline. Loopback still works. |
 | `XCL_STORE=offline-error` | Every store query fails with the GDK store network error. No licence is granted. |
 | `XCL_BCPACK_TABLES` | Path to the BCPack table file. The file is not part of this repository; without it, BCPack requests fail. |
@@ -276,7 +276,7 @@ source for those.
 
 | Path | Contents |
 |---|---|
-| `crates/xcl` | The translation layer and `xcl.exe`: PE loader, VFS, launcher and CLI. |
+| `crates/xcl` | The translation layer and `XSEmu.exe`: PE loader, VFS, launcher and CLI. |
 | `crates/xcl/src/hle` | Console library replacements: `kernelx`, `xgameruntime`, `d3d12x` (D3D12.X), `dstorage`, `xaudio2`, `xma2`, `gameinput`, `bink` and others. |
 | `crates/xcl/src/gpu` | RDNA2 decoder, console shader containers, texture tiling and adapter selection. |
 | `crates/xcl/src/gpu/recomp` | RDNA2 to HLSL recompiler, DXC driver and pipeline building. |

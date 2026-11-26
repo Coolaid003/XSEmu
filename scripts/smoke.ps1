@@ -2,13 +2,13 @@
 # prints an `xcl-smoke` block to paste into the PR's "Regression run" section – once built
 # from main, once from the PR's head commit (CONTRIBUTING.md, "What a PR needs to be merged").
 #
-#   .\scripts\smoke.ps1 -Game 'D:\Games\SomeTitle' [-Seconds 60] [-Xcl .\target\release\xcl.exe]
+#   .\scripts\smoke.ps1 -Game 'D:\Games\SomeTitle' [-Seconds 60] [-Xcl .\target\release\XSEmu.exe]
 #
 # Networking is off (XCL_NETWORK=0). Build first: cargo build --release -p xcl
 param(
     [Parameter(Mandatory = $true)][string]$Game,
     [int]$Seconds = 60,
-    [string]$Xcl = (Join-Path $PSScriptRoot '..\target\release\xcl.exe')
+    [string]$Xcl = (Join-Path $PSScriptRoot '..\target\release\XSEmu.exe')
 )
 $ErrorActionPreference = 'Stop'
 
