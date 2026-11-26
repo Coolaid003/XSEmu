@@ -20,6 +20,10 @@ xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
 xsemu_test(tst_runners)
 
+# a DexNom-shaped source build read back through every runner surface, then after a restart
+xsemu_test(tst_runnerstate)
+target_link_libraries(tst_runnerstate PRIVATE xsemu_ui)
+
 # page-switch timings on a generated PC-shaped shader cache and library
 xsemu_test(tst_perf)
 target_link_libraries(tst_perf PRIVATE xsemu_ui)

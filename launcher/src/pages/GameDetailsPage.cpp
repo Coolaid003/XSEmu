@@ -396,6 +396,10 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
             m_s.covers.refresh(m_game);
     });
     connect(&m_s.gate, &ProcessGate::changed, this, &GameDetailsPage::refresh);
+    connect(&m_s.runners, &RunnerManager::stateChanged, this, [this](const QString& id) {
+        if (m_game.isValid() && id == m_s.emulator.runnerFor(m_game).id)
+            refresh();
+    });
     connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &GameDetailsPage::refresh);
     connect(&m_s.emulator, &EmulatorController::stateChanged, this, &GameDetailsPage::refresh);
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &GameDetailsPage::onStats);
@@ -566,7 +570,14 @@ void GameDetailsPage::refresh()
                 break;
             }
         }
-        if (!m_s.runners.isRunnable(runner.id)) {
+        const RunnerManager::State installState = m_s.runners.status(runner.id).state;
+        if (installState == RunnerManager::State::Installing) {
+            stateText = QStringLiteral("Installing %1").arg(runner.name);
+            tone = Theme::Tone::Accent;
+        } else if (installState == RunnerManager::State::Failed) {
+            stateText = QStringLiteral("%1 install failed").arg(runner.name);
+            tone = Theme::Tone::Danger;
+        } else if (!m_s.runners.isRunnable(runner.id)) {
             stateText = QStringLiteral("%1 not installed").arg(runner.name);
             tone = Theme::Tone::Warning;
         } else if (pre && pre->result == WarmupRun::Result::Finished && pre->total > 0) {

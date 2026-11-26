@@ -18,7 +18,9 @@ class QNetworkReply;
 //   release asset: download (SHA-256 checked) -> unpack -> swap into place
 //   source:        toolchain bootstrap -> fetch the pinned commit -> build steps -> swap into place
 // The new copy is assembled in <runner>\staging and only replaces <runner>\app when every step
-// succeeded, so a cancelled or failed update leaves the installed version working.
+// succeeded, so a cancelled or failed update leaves the installed version working. Each run writes
+// <runner>\install.log; a failed run also leaves <runner>\install-failed.json with the reason, so the
+// failure survives a restart (RunnerManager::status), and a successful one removes it.
 class RunnerInstall : public QObject {
     Q_OBJECT
 public:
@@ -36,6 +38,9 @@ public:
     // a bare name up on the parent's PATH, which lacks the Rust the install bootstrapped. Unchanged when
     // it is already a path or is not found there.
     static QString resolveProgram(const QString& program, const QProcessEnvironment& env);
+    // <runner>\install.log (the last run) and <runner>\install-failed.json (the last run failed).
+    static QString logPath(const QString& id);
+    static QString failurePath(const QString& id);
 
 signals:
     void progressChanged();
@@ -55,6 +60,7 @@ private:
     void ensureMsvc();
     void ensureRust();
     void finishInstall(const QString& appDir);
+    void log(const QString& line);
 
     RunnerSpec m_spec;
     QString m_dir;
@@ -64,6 +70,7 @@ private:
     QNetworkAccessManager* m_net = nullptr;
     QPointer<QNetworkReply> m_reply;
     QFile m_file;
+    QFile m_log; // <runner>\install.log: every step, command and output line of this run
     QCryptographicHash m_hash{QCryptographicHash::Sha256};
     QPointer<ProcessTree> m_process;
     QProcessEnvironment m_env;

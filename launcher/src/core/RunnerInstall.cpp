@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QSaveFile>
 #include <QStandardPaths>
 
 namespace {
@@ -113,7 +114,23 @@ QStringList RunnerInstall::unpackCommand(const QString& archive, const QString& 
 void RunnerInstall::start()
 {
     QDir().mkpath(m_dir);
+    m_log.setFileName(logPath(m_spec.id));
+    if (m_log.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+        log(QStringLiteral("%1 %2, %3, into %4").arg(m_spec.name, m_spec.pinnedVersion(), QDateTime::currentDateTime().toString(Qt::ISODate), QDir::toNativeSeparators(m_dir)));
     next();
+}
+
+QString RunnerInstall::logPath(const QString& id) { return QDir(Paths::runnerDir(id)).filePath(QStringLiteral("install.log")); }
+QString RunnerInstall::failurePath(const QString& id) { return QDir(Paths::runnerDir(id)).filePath(QStringLiteral("install-failed.json")); }
+
+void RunnerInstall::log(const QString& line)
+{
+    if (!m_log.isOpen())
+        return;
+    m_log.write(line.toUtf8());
+    if (!line.endsWith(QLatin1Char('\n')))
+        m_log.write("\n");
+    m_log.flush();
 }
 
 void RunnerInstall::cancel()
@@ -135,6 +152,8 @@ void RunnerInstall::next()
     ++m_index;
     if (m_index >= m_steps.size()) {
         m_done = true;
+        log(QStringLiteral("Installed %1 at %2").arg(m_spec.pinnedVersion(), QDir::toNativeSeparators(m_spec.installDir())));
+        m_log.close();
         emit finished(true, {});
         return;
     }
@@ -149,6 +168,7 @@ void RunnerInstall::next()
     m_progress.stepIndex = m_index + 1;
     m_progress.stepCount = int(m_steps.size());
     emit progressChanged();
+    log(QStringLiteral("== %1 (%2 of %3)").arg(m_progress.step).arg(m_progress.stepIndex).arg(m_progress.stepCount));
     m_steps[m_index].run();
 }
 
@@ -161,6 +181,15 @@ void RunnerInstall::fail(const QString& error)
         m_process->killTree();
     m_file.close();
     QDir(QDir(m_dir).filePath(QStringLiteral("staging"))).removeRecursively();
+    log(QStringLiteral("Install failed: %1").arg(error));
+    m_log.close();
+    QSaveFile record(failurePath(m_spec.id));
+    if (record.open(QIODevice::WriteOnly)) {
+        record.write(QJsonDocument(QJsonObject{{QStringLiteral("error"), error},
+                                               {QStringLiteral("at"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}})
+                         .toJson());
+        record.commit();
+    }
     emit finished(false, error);
 }
 
@@ -179,6 +208,7 @@ void RunnerInstall::download(const QString& url, const QString& to, const QStrin
         return;
     }
     m_hash.reset();
+    log(QStringLiteral("GET %1").arg(url));
     m_progress.bytes = true;
     setStep(QUrl(url).fileName());
     QNetworkRequest req{QUrl(url)};
@@ -234,6 +264,7 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
     connect(m_process, &QProcess::readyReadStandardOutput, this, [this, parser] {
         // git and cargo redraw progress with \r; treat it as a line end
         const QString text = QString::fromUtf8(m_process->readAllStandardOutput()).replace(QLatin1Char('\r'), QLatin1Char('\n'));
+        log(text);
         for (const QString& raw : text.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
             const QString line = raw.trimmed();
             if (line.isEmpty())
@@ -266,6 +297,7 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
         m_process->deleteLater();
         if (m_cancelled || m_done)
             return;
+        log(QStringLiteral("exit code %1").arg(code));
         if (status != QProcess::NormalExit || code != 0) {
             fail(QStringLiteral("%1 stopped with exit code %2%3").arg(QFileInfo(command.value(0)).fileName()).arg(code)
                      .arg(m_lastLine.isEmpty() ? QStringLiteral(".") : QStringLiteral(": ") + m_lastLine.left(200)));
@@ -273,6 +305,7 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
         }
         next();
     });
+    log(QStringLiteral("$ %1  (in %2)").arg(command.join(QLatin1Char(' ')), QDir::toNativeSeparators(workDir)));
     m_process->startTree(resolveProgram(command.value(0), m_env), command.mid(1));
 }
 
@@ -432,14 +465,21 @@ void RunnerInstall::finishInstall(const QString& stagingDir)
     }
     QDir(old).removeRecursively();
     QFile::setPermissions(QDir(app).filePath(executable), QFile::permissions(QDir(app).filePath(executable)) | QFile::ExeOwner);
-    QFile f(QDir(m_dir).filePath(QStringLiteral("runner.json")));
-    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        f.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), m_spec.id},
-                                          {QStringLiteral("version"), m_spec.pinnedVersion()},
-                                          {QStringLiteral("executable"), executable},
-                                          {QStringLiteral("installedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}})
-                    .toJson());
+    // the install record is what makes the runner Installed: a copy without one is not installed
+    QSaveFile f(QDir(m_dir).filePath(QStringLiteral("runner.json")));
+    const bool recorded = f.open(QIODevice::WriteOnly)
+                          && f.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), m_spec.id},
+                                                               {QStringLiteral("version"), m_spec.pinnedVersion()},
+                                                               {QStringLiteral("executable"), executable},
+                                                               {QStringLiteral("installedAt"), QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}})
+                                         .toJson())
+                                 > 0
+                          && f.commit();
+    if (!recorded) {
+        fail(QStringLiteral("%1 was built but its install record %2 could not be written: %3").arg(m_spec.name, QDir::toNativeSeparators(f.fileName()), f.errorString()));
+        return;
     }
+    QFile::remove(failurePath(m_spec.id));
     QDir(QDir(m_dir).filePath(QStringLiteral("download"))).removeRecursively();
     next();
 }

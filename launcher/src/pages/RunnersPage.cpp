@@ -13,8 +13,10 @@
 #include "widgets/Spinner.h"
 #include "widgets/Text.h"
 
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
+#include <QUrl>
 #include <algorithm>
 #include <QHBoxLayout>
 #include <QPainter>
@@ -230,10 +232,17 @@ public:
         m_error->setWordWrap(true);
         m_error->setTextInteractionFlags(Qt::TextSelectableByMouse);
         sv->addWidget(m_error);
+        m_log = new Button(QStringLiteral("Open install log"), Button::Variant::Link, Button::Size::Tiny, QStringLiteral("external"));
+        m_log->setObjectName(QStringLiteral("installLog-") + spec.id);
+        auto* logRow = new QHBoxLayout;
+        logRow->addWidget(m_log);
+        logRow->addStretch(1);
+        sv->addLayout(logRow);
         v->addWidget(m_steps);
 
         connect(m_install, &Button::clicked, this, [this] { RunnerUi::confirmInstall(window(), m_s, m_spec.id); });
         connect(m_cancel, &Button::clicked, this, [this] { m_s.runners.cancel(); });
+        connect(m_log, &Button::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(m_s.runners.installLogPath(m_spec.id))); });
         connect(m_uninstall, &Button::clicked, this, [this] { m_s.runners.uninstall(m_spec.id); });
         connect(m_makeDefault, &Button::clicked, this, [this] { m_s.settings.setDefaultRunner(m_spec.id); });
         refresh();
@@ -256,10 +265,11 @@ public:
         m_install->setText(st.state == S::UpdateAvailable ? QStringLiteral("Update") : st.state == S::Failed ? QStringLiteral("Try again") : QStringLiteral("Install"));
         m_install->setIconName(st.state == S::UpdateAvailable || st.state == S::Failed ? QStringLiteral("refresh") : QStringLiteral("download"));
 
-        const bool showSteps = st.state == S::Installing || st.state == S::Failed;
-        m_steps->setVisible(showSteps);
-        m_error->setVisible(st.state == S::Failed);
-        m_error->setText(st.error);
+        const bool failed = st.state != S::Installing && !st.error.isEmpty();
+        m_steps->setVisible(st.state == S::Installing || failed);
+        m_error->setVisible(failed);
+        m_error->setText(st.state == S::Failed ? st.error : QStringLiteral("The last update failed: %1").arg(st.error));
+        m_log->setVisible((st.state == S::Installing || failed) && QFileInfo::exists(m_s.runners.installLogPath(m_spec.id)));
         m_foot->setVisible(st.state == S::Installing);
         const int phase = st.state == S::Failed ? m_lastPhase : st.progress.phase;
         if (st.state == S::Installing)
@@ -312,6 +322,7 @@ private:
     QList<Bar*> m_bars;
     QWidget* m_foot;
     Label* m_error;
+    Button* m_log;
     int m_lastPhase = 0;
 };
 

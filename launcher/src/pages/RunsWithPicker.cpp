@@ -15,6 +15,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -350,5 +351,10 @@ void RunsWithSelector::openPicker()
     });
     foot->addWidget(manage);
     v->addLayout(foot);
+    // an install that starts or ends elsewhere while the picker is open: show the rows as they are now
+    connect(&m_s.runners, &RunnerManager::stateChanged, pop, [this, pop] {
+        pop->close();
+        QTimer::singleShot(0, this, &RunsWithSelector::openPicker);
+    });
     pop->open();
 }

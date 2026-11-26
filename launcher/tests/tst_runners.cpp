@@ -259,6 +259,12 @@ void TestRunners::rejectsWrongHash()
     QCOMPARE(s.state, RunnerManager::State::Failed);
     QVERIFY(s.executable.isEmpty());
     QVERIFY(!QFileInfo::exists(Runners::find(id)->installDir()));
+    QVERIFY(QFileInfo::exists(m.installLogPath(id)));
+
+    // a restart still says Failed, with the reason, never Not installed
+    RunnerManager restarted;
+    QCOMPARE(restarted.status(id).state, RunnerManager::State::Failed);
+    QVERIFY(restarted.status(id).error.contains(QStringLiteral("SHA-256")));
 }
 
 void TestRunners::buildsFromSource()

@@ -38,7 +38,7 @@ public:
         QString pinnedVersion;    // what the curated list pins
         QString executable;       // absolute path of the installed program; empty when not installed
         Progress progress;        // Installing
-        QString error;            // Failed: why the last install stopped
+        QString error;            // why the last install stopped (Failed, or a failed update of an installed copy)
     };
 
     explicit RunnerManager(QObject* parent = nullptr);
@@ -64,8 +64,14 @@ public:
     // Screenshot fixtures only: report this status for the runner instead of the real one.
     void simulateForScreenshot(const QString& id, const Status& status);
 
+    QString installLogPath(const QString& id) const; // <runner>\install.log of the last install run
+
 signals:
+    // Anything about the runner changed, install progress included.
     void changed(const QString& id);
+    // Its install state may have changed (an install started or finished, an uninstall): what pages
+    // that only show Installed or not follow, without a refresh per progress line.
+    void stateChanged(const QString& id);
     void installFinished(const QString& id, bool ok, const QString& error);
 
 private:

@@ -14,13 +14,15 @@
 
 namespace {
 
-QJsonObject installRecord(const QString& id)
+QJsonObject readJson(const QString& path)
 {
-    QFile f(QDir(Paths::runnerDir(id)).filePath(QStringLiteral("runner.json")));
+    QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
         return {};
     return QJsonDocument::fromJson(f.readAll()).object();
 }
+
+QJsonObject installRecord(const QString& id) { return readJson(QDir(Paths::runnerDir(id)).filePath(QStringLiteral("runner.json"))); }
 
 }
 
@@ -58,14 +60,17 @@ RunnerManager::Status RunnerManager::status(const QString& id) const
     if (m_taskId == id && m_task) {
         s.state = State::Installing;
         s.progress = m_task->progress();
-    } else if (!rec.isEmpty()) {
-        s.state = spec->isPinned() && s.installedVersion != s.pinnedVersion ? State::UpdateAvailable : State::Installed;
-    } else if (m_errors.contains(id)) {
-        s.state = State::Failed;
-        s.error = m_errors.value(id);
-    } else {
-        s.state = spec->isPinned() ? State::NotInstalled : State::Unavailable;
+        return s;
     }
+    s.error = m_errors.value(id);
+    if (s.error.isEmpty())
+        s.error = readJson(RunnerInstall::failurePath(id)).value(QLatin1String("error")).toString();
+    if (!rec.isEmpty())
+        s.state = spec->isPinned() && s.installedVersion != s.pinnedVersion ? State::UpdateAvailable : State::Installed;
+    else if (!s.error.isEmpty())
+        s.state = State::Failed;
+    else
+        s.state = spec->isPinned() ? State::NotInstalled : State::Unavailable;
     return s;
 }
 
@@ -116,10 +121,12 @@ bool RunnerManager::install(const QString& id, QString* error)
         m_taskId.clear();
         m_sizes.remove(id);
         emit changed(id);
+        emit stateChanged(id);
         emit installFinished(id, ok, why);
     });
     m_task->start();
     emit changed(id);
+    emit stateChanged(id);
     return true;
 }
 
@@ -148,6 +155,7 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
     if (!ok && error)
         *error = QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(spec->name);
     emit changed(id);
+    emit stateChanged(id);
     return ok;
 }
 
@@ -155,6 +163,7 @@ void RunnerManager::simulateForScreenshot(const QString& id, const Status& statu
 {
     m_simulated.insert(id, status);
     emit changed(id);
+    emit stateChanged(id);
 }
 
 qint64 RunnerManager::installedBytes(const QString& id)
@@ -188,6 +197,8 @@ QDateTime RunnerManager::installedAt(const QString& id) const
 {
     return QDateTime::fromString(installRecord(id).value(QLatin1String("installedAt")).toString(), Qt::ISODate).toLocalTime();
 }
+
+QString RunnerManager::installLogPath(const QString& id) const { return RunnerInstall::logPath(id); }
 
 QString RunnerManager::cachePath(const QString& id) const
 {

@@ -248,6 +248,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
         refreshRuns();
     });
     connect(&m_s.gate, &ProcessGate::changed, this, &WarmupPage::refresh);
+    connect(&m_s.runners, &RunnerManager::stateChanged, this, &WarmupPage::refresh);
     connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &WarmupPage::refresh);
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &WarmupPage::refresh);
     connect(&m_s.library, &Library::gamesChanged, this, [this] {
