@@ -37,3 +37,4 @@ pub mod util;
 pub mod vfs;
 pub mod vfs_hooks;
 pub mod wait_handles;
+pub mod warm_up_json;
