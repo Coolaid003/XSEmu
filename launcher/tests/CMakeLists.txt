@@ -53,4 +53,8 @@ if(XSEMU_FAKE_EMULATOR)
     add_dependencies(tst_perf fake-xsemu)
     target_compile_definitions(tst_perf PRIVATE XSEMU_FAKE_EMULATOR_PATH="$<TARGET_FILE:fake-xsemu>")
     set_tests_properties(tst_perf PROPERTIES TIMEOUT 600)
+
+    # The launcher allows one emulator per PC, and tst_controllers runs a stand-in named xcl.exe to
+    # prove it; tests that start an emulator therefore take turns under ctest -j.
+    set_tests_properties(tst_controllers tst_ingame tst_perf PROPERTIES RESOURCE_LOCK emulator_slot)
 endif()
