@@ -1,6 +1,8 @@
 #include "FakeWarmup.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRandomGenerator>
@@ -34,7 +36,15 @@ FakeWarmup::FakeWarmup(bool full, bool json, QString scenario, QObject* parent)
     , m_json(json)
     , m_scenario(std::move(scenario))
 {
-    const qint64 bound = full ? 4210 : 3120;
+    // what earlier runs built stays built, so running again goes on from there (docs/launcher-protocol.md)
+    const QString cache = qEnvironmentVariable("XCL_DXIL_CACHE");
+    if (!cache.isEmpty() && QDir(cache).exists()) {
+        m_stateFile = QDir(cache).filePath(QStringLiteral("fake-warmup-built"));
+        QFile f(m_stateFile);
+        if (f.open(QIODevice::ReadOnly))
+            m_boundBefore = f.readAll().trimmed().toLongLong();
+    }
+    const qint64 bound = qMax<qint64>(0, (full ? 4210 : 3120) - m_boundBefore);
     m_phases = {{"starting", 0}, {"giants", 6}, {"bound", bound}, {"compute", 412}, {"compute_blobs", 188}, {"rest", 96}};
     m_timer.setInterval(envInt("FAKE_XSEMU_TICK_MS", 50));
     connect(&m_timer, &QTimer::timeout, this, &FakeWarmup::tick);
@@ -97,11 +107,14 @@ void FakeWarmup::tick()
         const qint64 add = qMin(step, ph.total - m_done);
         m_done += add;
         m_built += add;
+        if (bound)
+            m_boundBuilt += add;
         if (bound && QRandomGenerator::global()->bounded(8) == 0)
             ++m_failed;
     }
     if (m_scenario == QLatin1String("warmup_fail") && bound && m_done >= ph.total * 7 / 10) {
         std::fprintf(stderr, "warm-up: the driver compile of DXIL 3f2a91c07d1e4b55 crashed (0xC0000005)\n");
+        saveBuilt();
         leave(3);
     }
 
@@ -133,9 +146,19 @@ void FakeWarmup::tick()
     }
 }
 
+void FakeWarmup::saveBuilt() const
+{
+    if (m_stateFile.isEmpty())
+        return;
+    QFile f(m_stateFile);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(QByteArray::number(m_boundBefore + m_boundBuilt));
+}
+
 void FakeWarmup::finish(bool cancelled)
 {
     m_timer.stop();
+    saveBuilt();
     const bool complete = !cancelled;
     emitLine({{QStringLiteral("ev"), QStringLiteral("warmup_done")},
               {QStringLiteral("built"), m_built - m_failed},

@@ -75,12 +75,15 @@ public:
     std::optional<WarmupRun> lastRun() const { return m_lastRun; }
 
     static QStringList warmupArguments(bool full);
+    // XSEmu's stderr of the newest warm-up, written as it runs: <launcher data>\logs\warm-up.log.
+    static QString logPath();
     // Record of a finished process (tested): how the exit code, done line and last progress add up.
     static WarmupRun classify(int exitCode, bool crashed, const std::optional<Protocol::WarmupDone>& done,
                               const Progress& last, const QString& error, bool cancelRequested);
 
     // Screenshot fixtures only.
-    void simulateForScreenshot(State state, const Game& game, const Progress& progress, const QString& error = {});
+    void simulateForScreenshot(State state, const Game& game, const Progress& progress, const QString& error = {},
+                               const std::optional<WarmupRun>& run = std::nullopt);
 
 signals:
     void stateChanged(WarmupController::State state);
