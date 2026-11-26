@@ -144,7 +144,6 @@ Event parse(const QByteArray& raw)
         p.etaS = optInt(o, "eta_s");
         p.ramFreeMb = optInt(o, "ram_free_mb");
         p.giantsCompiling = static_cast<int>(toInt(o, "giants_compiling"));
-        p.giantsMax = static_cast<int>(toInt(o, "giants_max"));
         p.inFlight = static_cast<int>(toInt(o, "in_flight"));
         p.failed = toInt(o, "failed");
         p.phase = str(o, "phase");

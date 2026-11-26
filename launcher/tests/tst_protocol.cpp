@@ -105,14 +105,13 @@ void TestProtocol::warmupLines()
     const WarmupStart s = std::get<WarmupStart>(parse(R"j({"ev":"warmup_start","total":41906,"full":false,"threads":16})j"));
     QCOMPARE(s.total, 41906);
     QCOMPARE(s.threads, 16);
-    const WarmupProgress p = std::get<WarmupProgress>(parse(R"j({"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"giants_max":3,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false})j"));
+    const WarmupProgress p = std::get<WarmupProgress>(parse(R"j({"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false})j"));
     QCOMPARE(p.done, 27292);
     QCOMPARE(p.total, 41906);
     QCOMPARE(p.keysPerS, 243.0);
     QCOMPARE(*p.etaS, 60);
     QCOMPARE(*p.ramFreeMb, 12288);
     QCOMPARE(p.giantsCompiling, 2);
-    QCOMPARE(p.giantsMax, 3);
     QCOMPARE(p.inFlight, 5);
     QCOMPARE(p.phase, QStringLiteral("bound"));
     QVERIFY(!p.pausedForRam);

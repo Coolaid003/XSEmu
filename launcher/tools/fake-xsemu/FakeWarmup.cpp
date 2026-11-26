@@ -130,7 +130,6 @@ void FakeWarmup::tick()
                   {QStringLiteral("keys_per_s"), qRound(rate * 10) / 10.0},
                   {QStringLiteral("ram_free_mb"), ramFree},
                   {QStringLiteral("giants_compiling"), qstrcmp(ph.id, "giants") == 0 ? qMin(2, giantsFit) : 0},
-                  {QStringLiteral("giants_max"), giantsFit},
                   {QStringLiteral("in_flight"), m_holdForRam ? 0 : 5},
                   {QStringLiteral("failed"), m_failed},
                   {QStringLiteral("phase"), QLatin1String(ph.id)},

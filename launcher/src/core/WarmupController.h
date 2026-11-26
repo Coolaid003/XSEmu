@@ -47,7 +47,6 @@ public:
         std::optional<qint64> etaS; // rest of the phase; absent while unknown
         std::optional<qint64> ramFreeMb;
         int giantsCompiling = 0;
-        int giantsMax = 0;
         int inFlight = 0;
         qint64 failed = 0;       // all phases so far
         bool pausedForRam = false;

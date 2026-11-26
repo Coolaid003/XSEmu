@@ -72,7 +72,6 @@ struct WarmupProgress {
     std::optional<qint64> etaS;
     std::optional<qint64> ramFreeMb;
     int giantsCompiling = 0;
-    int giantsMax = 0;
     int inFlight = 0;
     qint64 failed = 0;
     QString phase;

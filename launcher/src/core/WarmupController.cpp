@@ -214,7 +214,6 @@ void WarmupController::handle(const Protocol::Event& ev)
         m_progress.etaS = p->etaS;
         m_progress.ramFreeMb = p->ramFreeMb;
         m_progress.giantsCompiling = p->giantsCompiling;
-        m_progress.giantsMax = p->giantsMax;
         m_progress.inFlight = p->inFlight;
         m_progress.failed = p->failed;
         m_progress.pausedForRam = p->pausedForRam;

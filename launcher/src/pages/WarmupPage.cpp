@@ -84,11 +84,6 @@ QString sentence(QString s)
     return s;
 }
 
-QString giants(int compiling, int max)
-{
-    return max > 0 ? QStringLiteral("%1 of %2").arg(compiling).arg(max) : QString::number(compiling);
-}
-
 // "27,292 / 41,906", or just the count when the pass reported no comparable total.
 QString builtOf(qint64 done, qint64 total)
 {
@@ -369,7 +364,7 @@ void WarmupPage::refresh()
     else if (pr.etaS)
         progressColumns.append({QStringLiteral("Time left"), Format::duration(*pr.etaS)});
     progressColumns.append({QStringLiteral("Free RAM"), pr.ramFreeMb ? ramText(*pr.ramFreeMb) : QStringLiteral("Unknown")});
-    progressColumns.append({QStringLiteral("Giant compiles"), giants(pr.giantsCompiling, pr.giantsMax)});
+    progressColumns.append({QStringLiteral("Giant compiles"), QString::number(pr.giantsCompiling)});
 
     if (st == State::Running) {
         m_block->setState(ProgressBlock::State::Running);
@@ -421,7 +416,6 @@ void WarmupPage::refresh()
                 {QStringLiteral("Speed"), QStringLiteral("%1 keys/s avg").arg(Format::count(qRound64(avg)))},
                 {QStringLiteral("Time left"), QStringLiteral("Done")},
                 {QStringLiteral("Free RAM"), pr.ramFreeMb ? Format::gigabytesFromMb(*pr.ramFreeMb) : QStringLiteral("Unknown")},
-                {QStringLiteral("Giant compiles"), giants(0, pr.giantsMax)},
             });
             if (run.failed > 0)
                 m_block->setNote(QStringLiteral("%1 pipelines failed to build; the game compiles them when it needs them. The log names them.").arg(Format::count(run.failed)));
