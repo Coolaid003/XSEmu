@@ -39,7 +39,10 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE, LPSTR, int)
                                   nullptr, nullptr, instance, nullptr);
     if (!window)
         return 3;
+    // the first ShowWindow may take its command from the parent's STARTUPINFO; the second one is ours
     ShowWindow(window, SW_SHOWNOACTIVATE);
+    ShowWindow(window, SW_SHOWNOACTIVATE);
+    UpdateWindow(window);
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);

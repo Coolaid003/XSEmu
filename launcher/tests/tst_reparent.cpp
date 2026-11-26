@@ -4,6 +4,7 @@
 // host does) and checks the child fills it, then closes it and expects a clean exit.
 #include "NativeWindow.h"
 
+#include <QApplication>
 #include <QProcess>
 #include <QResizeEvent>
 #include <QTest>
@@ -80,5 +81,11 @@ void TestReparent::helperWindowFollowsTheHost()
     QCOMPARE(helper.exitCode(), 0);
 }
 
-QTEST_MAIN(TestReparent)
+int main(int argc, char** argv)
+{
+    qputenv("QT_QPA_PLATFORM", "windows"); // a real HWND for the host, whatever the environment asks for
+    QApplication app(argc, argv);
+    TestReparent test;
+    return QTest::qExec(&test, argc, argv);
+}
 #include "tst_reparent.moc"

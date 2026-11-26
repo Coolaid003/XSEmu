@@ -7,7 +7,8 @@ function(xsemu_test name)
         XSEMU_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
         XSEMU_PROTOCOL_DOC="${CMAKE_CURRENT_SOURCE_DIR}/../../docs/launcher-protocol.md")
     xsemu_warnings(${name})
-    add_test(NAME ${name} COMMAND ${name})
+    # -o -,txt: the plain-text log on stdout, so ctest --output-on-failure shows it on Windows too
+    add_test(NAME ${name} COMMAND ${name} -o -,txt)
     set_tests_properties(${name} PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endfunction()
 
@@ -20,14 +21,13 @@ xsemu_test(tst_settings)
 xsemu_test(tst_runners)
 
 if(WIN32)
-    # a window from another process reparented into a Qt host: needs the real windows platform
+    # a window from another process reparented into a Qt host (the test picks the real windows platform)
     add_executable(reparent-helper WIN32 reparent-helper.cpp)
     xsemu_warnings(reparent-helper)
     xsemu_test(tst_reparent)
     target_link_libraries(tst_reparent PRIVATE Qt6::Widgets user32)
     add_dependencies(tst_reparent reparent-helper)
     target_compile_definitions(tst_reparent PRIVATE XSEMU_REPARENT_HELPER="$<TARGET_FILE:reparent-helper>")
-    set_tests_properties(tst_reparent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
 endif()
 
 if(XSEMU_FAKE_EMULATOR)
