@@ -91,6 +91,7 @@ public:
     Game game() const { return m_game; }
     Stats stats() const { return m_stats; }
     std::optional<Protocol::Hello> hello() const { return m_hello; }
+    qint64 helloAfterMs() const { return m_helloAfterMs; } // from start() to the hello line, -1 before it
     bool overlayOn() const { return m_overlay; }
     bool pipeConnected() const { return m_socket != nullptr; }
     std::optional<ExitInfo> lastExit() const { return m_lastExit; }
@@ -141,6 +142,8 @@ private:
     QTimer m_killTimer;
     QTimer m_memoryTimer;
     QElapsedTimer m_playClock;
+    QElapsedTimer m_launchClock;
+    qint64 m_helloAfterMs = -1;
     qint64 m_playedMs = 0;
 };
 

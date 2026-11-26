@@ -65,18 +65,23 @@ file(GLOB_RECURSE XSEMU_UI_SOURCES CONFIGURE_DEPENDS
     src/shell/*.cpp src/shell/*.h
     src/pages/*.cpp src/pages/*.h
 )
-set(XSEMU_RESOURCES resources/launcher.qrc)
+# An object library so the in-game end-to-end test drives the same widgets the launcher ships.
+add_library(xsemu_ui OBJECT ${XSEMU_UI_SOURCES} resources/launcher.qrc)
+target_include_directories(xsemu_ui PUBLIC src)
+target_link_libraries(xsemu_ui PUBLIC xsemu_core Qt6::Gui Qt6::Widgets Qt6::Svg)
+target_compile_definitions(xsemu_ui PUBLIC XSEMU_VERSION="${PROJECT_VERSION}")
+if(XSEMU_DEV_TOOLS)
+    target_compile_definitions(xsemu_ui PUBLIC XSEMU_DEV_TOOLS XSEMU_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+endif()
+xsemu_warnings(xsemu_ui)
+
+set(XSEMU_RESOURCES)
 if(WIN32)
     list(APPEND XSEMU_RESOURCES resources/branding/app.rc)
 endif()
 
-add_executable(XSEmuLauncher WIN32 src/main.cpp ${XSEMU_UI_SOURCES} ${XSEMU_RESOURCES})
-target_include_directories(XSEmuLauncher PRIVATE src)
-target_link_libraries(XSEmuLauncher PRIVATE xsemu_core Qt6::Gui Qt6::Widgets Qt6::Svg)
-target_compile_definitions(XSEmuLauncher PRIVATE XSEMU_VERSION="${PROJECT_VERSION}")
-if(XSEMU_DEV_TOOLS)
-    target_compile_definitions(XSEmuLauncher PRIVATE XSEMU_DEV_TOOLS XSEMU_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
-endif()
+add_executable(XSEmuLauncher WIN32 src/main.cpp ${XSEMU_RESOURCES})
+target_link_libraries(XSEmuLauncher PRIVATE xsemu_ui)
 xsemu_warnings(XSEmuLauncher)
 
 # ---- fake-xsemu ----

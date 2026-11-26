@@ -154,6 +154,8 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
     m_game = game;
     m_stats = {};
     m_hello.reset();
+    m_helloAfterMs = -1;
+    m_launchClock.start();
     m_exitLine.reset();
     m_buffer.clear();
     m_stopRequested = false;
@@ -275,6 +277,7 @@ void EmulatorController::handle(const Protocol::Event& ev)
 {
     if (const auto* h = std::get_if<Protocol::Hello>(&ev)) {
         m_hello = *h;
+        m_helloAfterMs = m_launchClock.isValid() ? m_launchClock.elapsed() : 0;
         emit helloReceived();
     } else if (const auto* s = std::get_if<Protocol::State>(&ev)) {
         if (m_stopRequested)

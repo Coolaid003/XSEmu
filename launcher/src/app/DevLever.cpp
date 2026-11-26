@@ -13,6 +13,8 @@
 #include "pages/LibraryPage.h"
 
 #include <QApplication>
+#include <QGuiApplication>
+#include <QScreen>
 #include <QDir>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -85,6 +87,84 @@ EmulatorController::Stats pausedStats()
     return st;
 }
 
+
+// On X11 the window is grabbed from the screen, so the game's child window (another process) is in
+// the picture; QWidget::grab() only sees the launcher's own widgets.
+void grabAndQuit(MainWindow& w, const QString& path)
+{
+    QPixmap shot;
+    if (QGuiApplication::platformName() == QLatin1String("xcb") && w.screen()) {
+        const QRect g = w.frameGeometry();
+        shot = w.screen()->grabWindow(0, g.x(), g.y(), g.width(), g.height());
+    } else {
+        shot = w.grab();
+    }
+    const bool ok = shot.save(path);
+    QTextStream(ok ? stdout : stderr) << (ok ? "saved " : "cannot save ") << path << Qt::endl;
+    QApplication::exit(ok ? 0 : 1);
+}
+
+// The in-game states run the real thing: XSEmu (fake-xsemu on Linux) launched through
+// EmulatorController with --host-hwnd and --control-pipe, driven to the state, then grabbed.
+void playForReal(const DevLever::Options& o, Services& s, MainWindow& w, const Game& game)
+{
+    const QString& st = o.state;
+    const QString scenario = st == QLatin1String("in-game-booting")          ? QStringLiteral("slow_boot")
+                           : st == QLatin1String("in-game-crashed")          ? QStringLiteral("crash")
+                           : st == QLatin1String("in-game-device-removed")   ? QStringLiteral("device_removed")
+                           : st == QLatin1String("in-game-boot-error")       ? QStringLiteral("files_missing")
+                                                                             : QStringLiteral("ok");
+    qputenv("FAKE_XSEMU_SCENARIO", scenario.toUtf8());
+    const QString path = o.grab;
+    auto done = std::make_shared<bool>(false);
+    auto grabIn = [&w, path, done](int ms) {
+        if (*done)
+            return;
+        *done = true;
+        if (!path.isEmpty())
+            QTimer::singleShot(ms, &w, [&w, path] { grabAndQuit(w, path); });
+    };
+    auto* ctx = new QObject(&w);
+    if (st == QLatin1String("in-game-booting")) {
+        QObject::connect(&s.emulator, &EmulatorController::helloReceived, ctx, [grabIn] { grabIn(900); });
+    } else if (st == QLatin1String("in-game-crashed") || st == QLatin1String("in-game-device-removed") || st == QLatin1String("in-game-boot-error")) {
+        QObject::connect(&s.emulator, &EmulatorController::exited, ctx, [grabIn] { grabIn(600); });
+    } else {
+        auto once = std::make_shared<bool>(false);
+        QObject::connect(&s.emulator, &EmulatorController::stateChanged, ctx, [&s, &w, st, grabIn, once](EmulatorController::State state) {
+            if (state == EmulatorController::State::Paused && st == QLatin1String("in-game-paused"))
+                grabIn(600);
+            if (state == EmulatorController::State::Paused && st == QLatin1String("in-game-back-to-library"))
+                grabIn(600);
+            if (state != EmulatorController::State::Running || *once)
+                return;
+            *once = true;
+            if (st == QLatin1String("in-game-overlay"))
+                s.emulator.setOverlay(true);
+            if (st == QLatin1String("in-game-paused"))
+                QTimer::singleShot(1500, &w, [&s] { s.emulator.pause(); });
+            else if (st == QLatin1String("in-game-back-to-library"))
+                QTimer::singleShot(1500, &w, [&w] { w.leaveInGame(); });
+            else if (st == QLatin1String("in-game-fullscreen-hint")) {
+                QTimer::singleShot(1200, &w, [&w] { w.toggleFullScreen(); });
+                grabIn(2000);
+            } else if (st == QLatin1String("in-game-fullscreen")) {
+                QTimer::singleShot(800, &w, [&w] { w.toggleFullScreen(); });
+                grabIn(5200);
+            } else {
+                grabIn(2500);
+            }
+        });
+    }
+    if (!path.isEmpty()) {
+        QTimer::singleShot(30000, &w, [path] {
+            QTextStream(stderr) << "timed out waiting for the state; nothing saved to " << path << Qt::endl;
+            QApplication::exit(1);
+        });
+    }
+    w.play(game);
+}
+
 }
 
 QStringList DevLever::states()
@@ -100,7 +180,10 @@ QStringList DevLever::states()
         QStringLiteral("first-launch"), QStringLiteral("first-launch-network"), QStringLiteral("first-launch-folders"),
         QStringLiteral("error-files-missing"), QStringLiteral("error-not-enough-ram"), QStringLiteral("error-crash"),
         QStringLiteral("error-device-removed"),
-        QStringLiteral("in-game-booting"), QStringLiteral("in-game-paused"),
+        QStringLiteral("in-game-booting"), QStringLiteral("in-game-playing"), QStringLiteral("in-game-overlay"),
+        QStringLiteral("in-game-paused"), QStringLiteral("in-game-fitted"), QStringLiteral("in-game-fullscreen-hint"),
+        QStringLiteral("in-game-fullscreen"), QStringLiteral("in-game-crashed"), QStringLiteral("in-game-device-removed"),
+        QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
     };
 }
 
@@ -228,14 +311,13 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.firstLaunchPage()->setStep(1);
     else if (st == QLatin1String("first-launch-folders"))
         w.firstLaunchPage()->setStep(2);
-    else if (st == QLatin1String("in-game-booting") || st == QLatin1String("in-game-paused")) {
-        s.emulator.simulateForScreenshot(st == QLatin1String("in-game-booting") ? EmulatorController::State::Booting : EmulatorController::State::Paused,
-                                         signal, pausedStats());
-        w.enterInGame();
-    }
 
-    w.resize(o.size);
+    w.resize(st == QLatin1String("in-game-fitted") && o.size == QSize(1280, 800) ? QSize(1280, 760) : o.size);
     w.show();
+    if (st.startsWith(QLatin1String("in-game"))) {
+        playForReal(o, s, w, signal);
+        return;
+    }
 
     if (st.startsWith(QLatin1String("error"))) {
         if (st == QLatin1String("error-files-missing")) {
@@ -266,14 +348,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         }
     }
 
-    if (o.grab.isEmpty())
-        return;
-    const QString path = o.grab;
-    QTimer::singleShot(500, &w, [&w, path] {
-        const bool ok = w.grab().save(path);
-        QTextStream(ok ? stdout : stderr) << (ok ? "saved " : "cannot save ") << path << Qt::endl;
-        QApplication::exit(ok ? 0 : 1);
-    });
+    if (!o.grab.isEmpty())
+        QTimer::singleShot(500, &w, [&w, path = o.grab] { grabAndQuit(w, path); });
 }
 
 #endif

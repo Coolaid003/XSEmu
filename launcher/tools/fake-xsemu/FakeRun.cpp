@@ -13,6 +13,10 @@
 
 #include <cstdio>
 
+#ifdef FAKE_XSEMU_XCB
+#include <xcb/xcb.h>
+#endif
+
 namespace {
 
 qint64 freeRamMb()
@@ -25,6 +29,24 @@ qint64 freeRamMb()
             return line.mid(13).simplified().split(' ').value(0).toLongLong() / 1024;
     }
     return 9830;
+}
+
+QSize hostSize(quintptr host)
+{
+#ifdef FAKE_XSEMU_XCB
+    static xcb_connection_t* conn = xcb_connect(nullptr, nullptr);
+    if (!conn || xcb_connection_has_error(conn))
+        return {};
+    xcb_get_geometry_reply_t* g = xcb_get_geometry_reply(conn, xcb_get_geometry(conn, static_cast<xcb_drawable_t>(host)), nullptr);
+    if (!g)
+        return {};
+    const QSize s(g->width, g->height);
+    free(g);
+    return s;
+#else
+    Q_UNUSED(host);
+    return {};
+#endif
 }
 
 bool hasManifest(const QString& folder)
@@ -206,7 +228,9 @@ void FakeRun::followHost()
 {
     if (!m_host || !m_scene)
         return;
-    const QSize s = m_host->geometry().size();
+    // Qt does not track a foreign window's size, so ask the window system, the way the real emulator
+    // polls GetClientRect on the host.
+    const QSize s = hostSize(m_o.hostHwnd);
     if (s.isValid() && m_scene->geometry() != QRect(QPoint(0, 0), s))
         m_scene->setGeometry(QRect(QPoint(0, 0), s));
 }

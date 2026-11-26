@@ -150,7 +150,7 @@ void AppSettings::setArtLookups(bool on) { write(Key::ArtLookups, on); }
 int AppSettings::giantCompileCap() const { return read(Key::GiantCompileCap, kDefaultGiantCompileCap).toInt(); }
 void AppSettings::setGiantCompileCap(int cap) { write(Key::GiantCompileCap, cap); }
 
-bool AppSettings::gameBarAutoHide() const { return read(Key::GameBarAutoHide, true).toBool(); }
+bool AppSettings::gameBarAutoHide() const { return read(Key::GameBarAutoHide, false).toBool(); }
 void AppSettings::setGameBarAutoHide(bool on) { write(Key::GameBarAutoHide, on); }
 
 QString AppSettings::emulatorPathOverride() const { return read(Key::EmulatorPath).toString(); }

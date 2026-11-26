@@ -117,9 +117,18 @@ void Button::paintEvent(QPaintEvent*)
         shadow = QColor(0, 0, 0, 0x0D);
         break;
     case Variant::Ghost:
-        fg = c.text2;
+        fg = isChecked() ? c.text : c.text2;
         if (hover) fill = c.hover;
-        if (down) fill = c.sunken;
+        if (down || isChecked()) fill = c.sunken;
+        break;
+    case Variant::DangerGhost:
+        fg = c.danger;
+        if (hover) fill = c.dangerSoft;
+        if (down) fill = c.dangerSoft.darker(110);
+        break;
+    case Variant::Soft:
+        fill = hover ? c.accentSoft.darker(104) : c.accentSoft;
+        fg = c.accentText;
         break;
     case Variant::Link:
         fg = c.accentText;

@@ -83,17 +83,26 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     connect(m_firstLaunch, &FirstLaunchPage::addGamesRequested, this, &MainWindow::addGameFolder);
     connect(m_firstLaunch, &FirstLaunchPage::finished, this, [this] { showPage(Page::Library); });
     connect(m_inGame, &InGameView::backToLibrary, this, &MainWindow::leaveInGame);
+    connect(m_inGame, &InGameView::relaunchRequested, this, &MainWindow::play);
+    connect(m_inGame, &InGameView::fullScreenToggled, this, &MainWindow::toggleFullScreen);
 
     connect(&m_s.settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::FirstLaunchDone))
             syncMode();
     });
-    connect(&m_s.emulator, &EmulatorController::stateChanged, this, [this](EmulatorController::State st) {
-        if (st == EmulatorController::State::Idle)
-            m_wantInGame = false;
-        syncMode();
-    });
     connect(&m_s.emulator, &EmulatorController::exited, this, [this](const EmulatorController::ExitInfo& info) {
+        using K = EmulatorController::ExitInfo::Kind;
+        if (info.kind == K::Stopped || info.kind == K::TitleExit) {
+            if (m_inGameMode)
+                leaveInGame();
+            return;
+        }
+        if (m_inGameMode) {
+            if (isFullScreen())
+                toggleFullScreen();
+            m_inGame->showExit(info);
+            return;
+        }
         const Game game = info.game;
         LaunchErrors::showExit(this, info, [this, game] { play(game); });
     });
@@ -111,7 +120,7 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
 void MainWindow::syncMode()
 {
     const bool setup = !m_s.settings.firstLaunchDone();
-    const bool inGame = !setup && m_wantInGame && m_s.emulator.isActive();
+    const bool inGame = !setup && m_inGameMode;
     m_modes->setCurrentIndex(setup ? SetupMode : inGame ? InGameMode : ShellMode);
     m_titleBar->setVisible(!inGame);
     m_titleBar->setCaption(setup ? QStringLiteral("XSEmu \u00B7 Setup") : QString());
@@ -126,7 +135,8 @@ void MainWindow::showPage(Page page)
     case Page::GameDetails: m_pages->setCurrentWidget(m_details); break;
     }
     m_sidebar->setCurrent(page);
-    m_wantInGame = false;
+    if (m_inGameMode)
+        leaveInGame();
     syncMode();
 }
 
@@ -148,7 +158,8 @@ void MainWindow::play(const Game& game)
         return;
     }
     QString error;
-    if (!m_s.emulator.start(game, 0, &error)) {
+    m_inGame->clearExit();
+    if (!m_s.emulator.start(game, m_inGame->hostWinId(), &error)) {
         EmulatorController::ExitInfo info;
         info.kind = EmulatorController::ExitInfo::Kind::Error;
         info.message = error;
@@ -161,14 +172,37 @@ void MainWindow::play(const Game& game)
 
 void MainWindow::enterInGame()
 {
-    m_wantInGame = true;
+    m_inGameMode = true;
     syncMode();
 }
 
 void MainWindow::leaveInGame()
 {
-    m_wantInGame = false;
+    if (isFullScreen())
+        toggleFullScreen();
+    const EmulatorController::State st = m_s.emulator.state();
+    if (st == EmulatorController::State::Running || st == EmulatorController::State::Booting)
+        m_s.emulator.pause();
+    m_inGame->clearExit();
+    m_inGameMode = false;
     syncMode();
+}
+
+void MainWindow::toggleFullScreen()
+{
+    if (!isFullScreen()) {
+        if (!m_inGameMode)
+            return;
+        m_wasMaximized = isMaximized();
+        showFullScreen();
+        m_inGame->setFullScreen(true);
+        return;
+    }
+    m_inGame->setFullScreen(false);
+    if (m_wasMaximized)
+        showMaximized();
+    else
+        showNormal();
 }
 
 void MainWindow::addGameFolder()

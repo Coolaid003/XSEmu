@@ -9,6 +9,8 @@
 
 int main(int argc, char** argv)
 {
+    // The game host is a native widget; its siblings stay alien so only the host gets a window.
+    QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("XSEmuLauncher"));
     QApplication::setOrganizationName(QStringLiteral("XSEmu"));

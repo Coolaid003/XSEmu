@@ -18,7 +18,8 @@ class WarmupPage;
 
 // The frameless main window. Three modes share it: setup (first launch, no sidebar), the shell
 // (title bar, sidebar and the page router) and in-game (the game bar and the host the game window
-// docks into, without the launcher chrome).
+// docks into, without the launcher chrome). In-game stays up after a crash, a GPU device removal or a
+// failed boot to show the exit screen; a deliberate stop or the title ending returns to the library.
 class MainWindow : public QWidget {
     Q_OBJECT
 public:
@@ -28,12 +29,15 @@ public:
     void showGameDetails(const Game& game);
     void play(const Game& game);
     void enterInGame();
-    void leaveInGame();
+    void leaveInGame(); // pauses a running game: it waits under Now playing
+    void toggleFullScreen();
     void addGameFolder();
+    bool isInGame() const { return m_inGameMode; }
 
     LibraryPage* libraryPage() const { return m_library; }
     SettingsPage* settingsPage() const { return m_settings; }
     FirstLaunchPage* firstLaunchPage() const { return m_firstLaunch; }
+    InGameView* inGameView() const { return m_inGame; }
 
 protected:
     void paintEvent(QPaintEvent*) override;
@@ -58,5 +62,6 @@ private:
     GameDetailsPage* m_details;
     FirstLaunchPage* m_firstLaunch;
     InGameView* m_inGame;
-    bool m_wantInGame = false;
+    bool m_inGameMode = false;
+    bool m_wasMaximized = false;
 };

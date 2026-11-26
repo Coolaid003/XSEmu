@@ -22,4 +22,11 @@ if(XSEMU_FAKE_EMULATOR)
     xsemu_test(tst_controllers)
     add_dependencies(tst_controllers fake-xsemu)
     target_compile_definitions(tst_controllers PRIVATE XSEMU_FAKE_EMULATOR_PATH="$<TARGET_FILE:fake-xsemu>")
+
+    # The in-game view end to end: real clicks on the shipped widgets, fake-xsemu hosted in the view.
+    # Runs offscreen by default; CI also runs it on Xvfb so the game window is a real embedded child.
+    xsemu_test(tst_ingame)
+    target_link_libraries(tst_ingame PRIVATE xsemu_ui)
+    add_dependencies(tst_ingame fake-xsemu)
+    target_compile_definitions(tst_ingame PRIVATE XSEMU_FAKE_EMULATOR_PATH="$<TARGET_FILE:fake-xsemu>")
 endif()

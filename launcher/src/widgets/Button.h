@@ -5,7 +5,8 @@
 #include <QAbstractButton>
 
 // The design's buttons (Components: Buttons). 36 px for page actions, 32 px in rows and bars,
-// 26 px for inline ghost links.
+// 26 px for inline ghost links. A checkable Ghost button shows the sunken fill while checked (the
+// overlay toggle in the game bar).
 //   auto* play = new Button(QStringLiteral("Play"), Button::Variant::Primary, Button::Size::Large, QStringLiteral("play"));
 class Button : public QAbstractButton {
     Q_OBJECT
@@ -18,6 +19,8 @@ public:
         Ghost,           // no fill, text-2; hover fill
         Link,            // accent text, no fill
         OnArt,           // translucent dark fill for buttons over cover/hero art ("Details")
+        DangerGhost,     // no fill, danger text and icon ("Stop" in the game bar)
+        Soft,            // accent-soft fill, accent text ("Resume" in the game bar while paused)
     };
     enum class Size { Large = 36, Small = 32, Tiny = 26 };
 

@@ -88,4 +88,22 @@ QString exitCode(int code)
     return QString::number(code);
 }
 
+QString exitCodeName(int code)
+{
+    switch (static_cast<quint32>(code)) {
+    case 0xC0000005u: return QStringLiteral("access violation");
+    case 0xC000001Du: return QStringLiteral("illegal instruction");
+    case 0xC0000094u: return QStringLiteral("integer divide by zero");
+    case 0xC00000FDu: return QStringLiteral("stack overflow");
+    case 0xC0000409u: return QStringLiteral("stack buffer overrun");
+    case 0xC0000374u: return QStringLiteral("heap corruption");
+    case 0xC0000017u: return QStringLiteral("out of memory");
+    case 0x887A0005u: return QStringLiteral("GPU device removed");
+    case 0x887A0006u: return QStringLiteral("GPU device hung");
+    case 0x887A0007u: return QStringLiteral("GPU device reset");
+    case 0x887A0020u: return QStringLiteral("GPU driver internal error");
+    default: return {};
+    }
+}
+
 }
