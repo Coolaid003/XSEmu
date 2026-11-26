@@ -93,7 +93,7 @@ std::optional<Update> kelvaroq(const QString& line)
     if (const auto m = step.match(t); m.hasMatch()) {
         const qint64 failed = m.captured(3).toLongLong();
         return Update{m.captured(1).toLongLong(), m.captured(2).toLongLong(), QStringLiteral("Compiling pipelines"),
-                      failed > 0 ? QStringLiteral("%1 failed").arg(failed) : QString()};
+                      failed > 0 ? QStringLiteral("%1 failed").arg(failed) : QString(), failed};
     }
     return std::nullopt;
 }

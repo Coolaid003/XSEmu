@@ -11,6 +11,8 @@
 #include "pages/RunnerUi.h"
 #include "core/TitleConfig.h"
 #include "pages/FirstLaunchPage.h"
+#include "pages/GameDetailsPage.h"
+#include "pages/RunsWithPicker.h"
 #include "pages/SettingsPage.h"
 #include "shell/LaunchErrors.h"
 #include "shell/MainWindow.h"
@@ -399,7 +401,7 @@ QStringList DevLever::states()
         QStringLiteral("in-game-fullscreen"), QStringLiteral("in-game-crashed"), QStringLiteral("in-game-device-removed"),
         QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
         QStringLiteral("runners"), QStringLiteral("runners-install-confirm"), QStringLiteral("runners-building"),
-        QStringLiteral("runners-install-error"),
+        QStringLiteral("runners-install-error"), QStringLiteral("details-runs-with-kelvaroq"), QStringLiteral("details-runs-with-picker"),
     };
 }
 
@@ -518,6 +520,11 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.showGameDetails(coast);
     else if (st == QLatin1String("details-no-art"))
         w.showGameDetails(signal);
+    else if (st == QLatin1String("details-runs-with-kelvaroq")) {
+        s.settings.setGameOverride(coast.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+        w.showGameDetails(coast);
+    } else if (st == QLatin1String("details-runs-with-picker"))
+        w.showGameDetails(coast);
     else if (st.startsWith(QLatin1String("warmup"))) {
         w.showPage(Page::Warmup);
         if (st == QLatin1String("warmup-running"))
@@ -629,6 +636,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         return;
     }
 
+    if (st == QLatin1String("details-runs-with-picker"))
+        QTimer::singleShot(0, &w, [&w] { w.gameDetailsPage()->runsWith()->openPicker(); });
     if (st == QLatin1String("runners-install-confirm"))
         QTimer::singleShot(0, &w, [&w, &s] { RunnerUi::confirmInstall(&w, s, QStringLiteral("victory-7900xtx")); });
     if (st == QLatin1String("settings-shaders-clear")) {

@@ -258,9 +258,9 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
             setStep(line.left(120));
         }
     });
-    connect(m_process, &QProcess::errorOccurred, this, [this, command](QProcess::ProcessError e) {
+    connect(m_process, &QProcess::errorOccurred, this, [this, command, workDir](QProcess::ProcessError e) {
         if (e == QProcess::FailedToStart)
-            fail(QStringLiteral("Could not start %1.").arg(QFileInfo(command.value(0)).fileName()));
+            fail(QStringLiteral("Could not start %1 in %2: %3").arg(command.join(QLatin1Char(' ')), QDir::toNativeSeparators(workDir), m_process->errorString()));
     });
     connect(m_process, &QProcess::finished, this, [this, command](int code, QProcess::ExitStatus status) {
         m_process->deleteLater();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QList>
+#include <QProcessEnvironment>
 #include <QString>
 #include <QStringList>
 
@@ -65,6 +66,7 @@ struct RunnerSpec {
         QString parser;      // ProgressParsers id
         bool check = false;  // prints how much is waiting; 0 skips the steps after it
         PrecacheCancel cancel = PrecacheCancel::Kill;
+        QString label;       // what the step does, for the Warm-up page ("Building pipelines")
     };
     QList<PrecacheStep> precache; // empty: the runner has no shader pre-cache
     QString precacheNote;    // what to know before a pre-cache (when it has work, what it needs)
@@ -93,6 +95,8 @@ struct RunnerSpec {
                                           const QString& deviceType, quintptr hostHwnd) const;
     // The cache dir with its tokens filled in; empty when unknown.
     QString resolvedCacheDir() const;
+    // The system environment plus the spec's, tokens filled in; creates the *_DIR folders it names.
+    QProcessEnvironment processEnvironment(const QList<QPair<QString, QString>>& tokens) const;
 
     // Replace {token} in each argument with values[token]; unknown tokens stay as written.
     static QStringList expand(const QStringList& args, const QList<QPair<QString, QString>>& values);

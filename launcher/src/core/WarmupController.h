@@ -14,10 +14,15 @@
 #include <optional>
 
 class ProcessGate;
+class RunnerManager;
+struct RunnerSpec;
 
 // Shader warm-ups: "XSEmu.exe warm-up [--full] --progress-json", its JSON progress and cancel.
 // The cache is machine-wide (the emulator takes no game argument); the game picked in the UI is
 // recorded with the run so the Warm-up page can say which game it was for.
+// A game set to run with a third-party runner gets that runner's pre-cache instead: its steps
+// (RunnerSpec::precache) run hidden one after another, their output read by the step's progress
+// parser; a check step that finds nothing waiting ends the run, and cancel uses the step's method.
 //
 //   warmup.start(/*full*/ false, game);
 //   connect(&warmup, &WarmupController::progressChanged, ...);  // warmup.progress()
@@ -45,6 +50,9 @@ public:
         qint64 failed = 0;       // all phases so far
         bool pausedForRam = false;
         double elapsedS = 0;
+        QString runnerId;        // empty: XSEmu's warm-up
+        int step = 0;            // runner pre-cache: 1-based step and how many
+        int stepCount = 0;
 
         double phaseFraction() const { return total > 0 ? double(done) / double(total) : 0.0; }
     };
@@ -56,8 +64,11 @@ public:
     WarmupController(AppSettings& settings, ProcessGate& gate, QObject* parent = nullptr);
     ~WarmupController() override;
 
-    // Why a warm-up cannot start now (empty: it can).
-    QString checkStart() const;
+    void setRunners(RunnerManager* runners) { m_runners = runners; }
+    // The runner whose warm-up runs for this game: its "Runs with" choice (XSEmu without a game).
+    const RunnerSpec& runnerFor(const Game& game) const;
+    // Why a warm-up for this game cannot start now (empty: it can).
+    QString checkStart(const Game& forGame = {}) const;
     bool start(bool full, const Game& forGame = {}, QString* error = nullptr);
     // Ask it to stop starting compiles; builds in flight finish (can take minutes for giants).
     void cancel();
@@ -96,6 +107,10 @@ private:
     void onStderr();
     void onFinished(int exitCode, int exitStatus);
     void handle(const Protocol::Event& ev);
+    void startRunnerStep();
+    void onRunnerLine(const QString& line);
+    void onRunnerStepFinished(int exitCode, int exitStatus);
+    void finish(WarmupRun run);
 
     AppSettings& m_settings;
     ProcessGate& m_gate;
@@ -109,4 +124,8 @@ private:
     QStringList m_stderr;
     bool m_cancelRequested = false;
     QElapsedTimer m_clock;
+    QElapsedTimer m_stepClock;
+    RunnerManager* m_runners = nullptr;
+    const RunnerSpec* m_spec = nullptr; // the runner of this pre-cache; nullptr: XSEmu's warm-up
+    int m_step = 0;
 };

@@ -36,6 +36,7 @@ QVariantMap WarmupRun::toMap() const
     return {
         {QStringLiteral("titleId"), titleId},
         {QStringLiteral("titleName"), titleName},
+        {QStringLiteral("runnerId"), runnerId},
         {QStringLiteral("done"), done},
         {QStringLiteral("total"), total},
         {QStringLiteral("failed"), failed},
@@ -54,6 +55,7 @@ WarmupRun WarmupRun::fromMap(const QVariantMap& m)
     WarmupRun r;
     r.titleId = m.value(QStringLiteral("titleId")).toString();
     r.titleName = m.value(QStringLiteral("titleName")).toString();
+    r.runnerId = m.value(QStringLiteral("runnerId")).toString();
     r.done = m.value(QStringLiteral("done")).toLongLong();
     r.total = m.value(QStringLiteral("total")).toLongLong();
     r.failed = m.value(QStringLiteral("failed")).toLongLong();

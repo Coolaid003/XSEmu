@@ -1,8 +1,13 @@
 #include "WarmupController.h"
 
+#include "HardwareInfo.h"
 #include "Paths.h"
 #include "ProcessGate.h"
 #include "ProcessTree.h"
+#include "ProgressParsers.h"
+#include "Runner.h"
+#include "RunnerManager.h"
+#include "TitleConfig.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -48,6 +53,10 @@ WarmupController::~WarmupController()
 {
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_process->disconnect(this);
+        if (m_spec) {
+            m_process->killTree();
+            return;
+        }
         m_process->write(Protocol::Command::cancel());
         m_process->closeWriteChannel();
         if (!m_process->waitForFinished(3000))
@@ -69,10 +78,24 @@ QString WarmupController::logPath()
     return QDir(Paths::launcherDataDir()).filePath(QStringLiteral("logs/warm-up.log"));
 }
 
-QString WarmupController::checkStart() const
+const RunnerSpec& WarmupController::runnerFor(const Game& game) const
+{
+    const RunnerSpec* spec = game.isValid() ? Runners::find(m_settings.runnerFor(game.titleId())) : nullptr;
+    return spec ? *spec : Runners::xsemu();
+}
+
+QString WarmupController::checkStart(const Game& forGame) const
 {
     if (!m_gate.isFree())
         return m_gate.blockedReason(ProcessGate::Action::StartWarmup);
+    const RunnerSpec& spec = runnerFor(forGame);
+    if (!spec.isBuiltIn()) {
+        if (!m_runners || !m_runners->isRunnable(spec.id))
+            return QStringLiteral("%1 is not installed. Install it on the Runners page, or set this game to run with XSEmu.").arg(spec.name);
+        if (spec.precache.isEmpty())
+            return QStringLiteral("%1 has no shader pre-cache; it builds what it needs while the game runs.").arg(spec.name);
+        return {};
+    }
     const QString emulator = m_settings.emulatorPath();
     if (!QFileInfo(emulator).isExecutable())
         return QStringLiteral("XSEmu was not found at %1.").arg(QDir::toNativeSeparators(emulator));
@@ -84,7 +107,7 @@ QString WarmupController::checkStart() const
 
 bool WarmupController::start(bool full, const Game& forGame, QString* error)
 {
-    const QString why = checkStart();
+    const QString why = checkStart(forGame);
     if (!why.isEmpty() || !m_gate.acquire(ProcessGate::Owner::Warmup, forGame.title(), [this] { cancel(); })) {
         if (error)
             *error = why.isEmpty() ? m_gate.blockedReason(ProcessGate::Action::StartWarmup) : why;
@@ -100,6 +123,17 @@ bool WarmupController::start(bool full, const Game& forGame, QString* error)
     m_clock.start();
     QDir().mkpath(QFileInfo(logPath()).absolutePath());
     QFile(logPath()).open(QIODevice::WriteOnly | QIODevice::Truncate);
+
+    const RunnerSpec& spec = runnerFor(forGame);
+    m_spec = spec.isBuiltIn() ? nullptr : &spec;
+    if (m_spec) {
+        m_progress.runnerId = m_spec->id;
+        m_progress.stepCount = int(m_spec->precache.size());
+        m_step = 0;
+        setState(State::Running);
+        startRunnerStep();
+        return true;
+    }
 
     auto* p = new ProcessTree(this);
     m_process = p;
@@ -123,7 +157,12 @@ void WarmupController::cancel()
     if (!m_process || m_process->state() == QProcess::NotRunning || m_cancelRequested)
         return;
     m_cancelRequested = true;
-    m_process->write(Protocol::Command::cancel());
+    if (!m_spec)
+        m_process->write(Protocol::Command::cancel());
+    else if (m_spec->precache.at(m_step).cancel == RunnerSpec::PrecacheCancel::CloseStdin)
+        m_process->closeWriteChannel();
+    else
+        m_process->killTree();
     emit progressChanged();
 }
 
@@ -151,6 +190,8 @@ void WarmupController::onStderr()
         log.write(bytes);
     const QString text = QString::fromUtf8(bytes);
     for (const QString& line : text.split(QLatin1Char('\n'), Qt::SkipEmptyParts)) {
+        if (m_spec)
+            onRunnerLine(line.trimmed());
         m_stderr << line.trimmed();
         if (m_stderr.size() > kStderrTail)
             m_stderr.removeFirst();
@@ -232,9 +273,14 @@ void WarmupController::onFinished(int exitCode, int exitStatus)
     m_progress.elapsedS = m_clock.isValid() ? m_clock.elapsed() / 1000.0 : m_progress.elapsedS;
     if (m_error.isEmpty() && exitCode != 0 && exitCode != 4 && !m_stderr.isEmpty())
         m_error = m_stderr.last();
-    WarmupRun run = classify(exitCode, exitStatus == static_cast<int>(QProcess::CrashExit), m_done, m_progress, m_error, m_cancelRequested);
+    finish(classify(exitCode, exitStatus == static_cast<int>(QProcess::CrashExit), m_done, m_progress, m_error, m_cancelRequested));
+}
+
+void WarmupController::finish(WarmupRun run)
+{
     run.titleId = m_game.isValid() ? m_game.titleId() : QString();
     run.titleName = m_game.isValid() ? m_game.title() : QString();
+    run.runnerId = m_spec ? m_spec->id : QString();
     m_lastRun = run;
     m_settings.addRecentWarmup(run);
     if (m_process) {
@@ -250,6 +296,114 @@ void WarmupController::onFinished(int exitCode, int exitStatus)
     case WarmupRun::Result::Failed: setState(State::Failed); break;
     }
     emit finished(run);
+}
+
+void WarmupController::startRunnerStep()
+{
+    const RunnerSpec::PrecacheStep& step = m_spec->precache.at(m_step);
+    const QString program = m_runners->status(m_spec->id).executable;
+    const QString device = TitleConfig(Paths::xclToml(m_game.titleId())).value(QStringLiteral("device_type"), m_settings.defaultDeviceType()).toString();
+    const auto tokens = m_spec->tokens(m_game.folder, QDir(m_game.folder).filePath(m_game.exe), m_game.titleId(), device, 0);
+    m_progress.step = m_step + 1;
+    m_progress.phase = step.label;
+    m_progress.done = 0;
+    m_progress.total = 0;
+    m_progress.keysPerS = 0;
+    m_progress.etaS.reset();
+    m_progress.ramFreeMb = qint64(HardwareInfo::availableRam() / (1024 * 1024));
+    m_stepClock.start();
+
+    auto* p = new ProcessTree(this);
+    m_process = p;
+    p->setProcessEnvironment(m_spec->processEnvironment(tokens));
+    p->setWorkingDirectory(QFileInfo(program).absolutePath());
+    connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {
+        while (p->canReadLine())
+            onRunnerLine(QString::fromUtf8(p->readLine()).trimmed());
+    });
+    connect(p, &QProcess::readyReadStandardError, this, &WarmupController::onStderr);
+    connect(p, &QProcess::finished, this, [this](int code, QProcess::ExitStatus s) { onRunnerStepFinished(code, static_cast<int>(s)); });
+    connect(p, &QProcess::errorOccurred, this, [this, p](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart) {
+            m_error = QStringLiteral("%1 could not be started: %2").arg(m_spec->name, p->errorString());
+            onRunnerStepFinished(-1, static_cast<int>(QProcess::CrashExit));
+        }
+    });
+    emit progressChanged();
+    p->startTree(program, RunnerSpec::expand(step.args, tokens));
+}
+
+void WarmupController::onRunnerLine(const QString& line)
+{
+    if (line.isEmpty() || !m_spec)
+        return;
+    QFile log(logPath());
+    if (log.open(QIODevice::WriteOnly | QIODevice::Append))
+        log.write(line.toUtf8() + '\n');
+    if (line.startsWith(QLatin1String("Error: ")))
+        m_error = line.mid(7);
+    const RunnerSpec::PrecacheStep& step = m_spec->precache.at(m_step);
+    const auto u = ProgressParsers::parse(step.parser, line);
+    if (!u)
+        return;
+    if (u->total >= 0)
+        m_progress.total = u->total;
+    if (u->done >= 0)
+        m_progress.done = u->done;
+    if (u->failed >= 0)
+        m_progress.failed = u->failed;
+    if (step.label.isEmpty() && !u->phase.isEmpty())
+        m_progress.phase = u->phase;
+    const double stepS = m_stepClock.elapsed() / 1000.0;
+    m_progress.keysPerS = stepS > 1 ? m_progress.done / stepS : 0;
+    if (m_progress.keysPerS > 0 && m_progress.total > m_progress.done)
+        m_progress.etaS = qint64((m_progress.total - m_progress.done) / m_progress.keysPerS + 0.5);
+    else
+        m_progress.etaS.reset();
+    m_progress.ramFreeMb = qint64(HardwareInfo::availableRam() / (1024 * 1024));
+    m_progress.elapsedS = m_clock.elapsed() / 1000.0;
+    emit progressChanged();
+}
+
+void WarmupController::onRunnerStepFinished(int exitCode, int exitStatus)
+{
+    if (!m_spec || (m_state != State::Running && m_state != State::PausedForRam))
+        return;
+    if (m_process) {
+        while (m_process->canReadLine())
+            onRunnerLine(QString::fromUtf8(m_process->readLine()).trimmed());
+        onStderr();
+    }
+    m_progress.elapsedS = m_clock.elapsed() / 1000.0;
+    const RunnerSpec::PrecacheStep& step = m_spec->precache.at(m_step);
+    const bool crashed = exitStatus == static_cast<int>(QProcess::CrashExit);
+    WarmupRun run;
+    run.exitCode = exitCode;
+    run.done = m_progress.done;
+    run.total = m_progress.total;
+    run.failed = m_progress.failed;
+    run.tookS = m_progress.elapsedS;
+    run.finishedAt = QDateTime::currentDateTime();
+    if (m_cancelRequested) {
+        run.result = WarmupRun::Result::Cancelled;
+    } else if (crashed || exitCode != 0) {
+        run.result = WarmupRun::Result::Failed;
+        if (m_error.isEmpty() && !m_stderr.isEmpty())
+            m_error = m_stderr.last();
+        run.message = !m_error.isEmpty() ? m_error
+                    : crashed           ? QStringLiteral("%1 stopped unexpectedly.").arg(m_spec->name)
+                                        : QStringLiteral("%1 ended with exit code %2.").arg(m_spec->name).arg(exitCode);
+    } else if (step.check && m_progress.total <= 0) {
+        run.message = QStringLiteral("Nothing is waiting to be built.");
+    } else if (m_step + 1 < m_spec->precache.size()) {
+        m_process->disconnect(this);
+        m_process->deleteLater();
+        m_process = nullptr;
+        ++m_step;
+        startRunnerStep();
+        return;
+    }
+    finish(run);
 }
 
 void WarmupController::setState(State s)

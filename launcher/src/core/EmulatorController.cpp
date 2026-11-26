@@ -250,16 +250,9 @@ bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, Q
     // the console the game is set to run as (its xcl.toml device_type, else the launcher default)
     const QString device = TitleConfig(Paths::xclToml(game.titleId())).value(QStringLiteral("device_type"), m_settings.defaultDeviceType()).toString();
     const auto tokens = spec.tokens(game.folder, exe, game.titleId(), device, 0);
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    for (const auto& [name, value] : spec.environment) {
-        const QString v = RunnerSpec::expand(value, tokens);
-        env.insert(name, v);
-        if (name.endsWith(QLatin1String("_DIR")))
-            QDir().mkpath(v);
-    }
     auto* p = new ProcessTree(this);
     m_process = p;
-    p->setProcessEnvironment(env);
+    p->setProcessEnvironment(spec.processEnvironment(tokens));
     p->setWorkingDirectory(QFileInfo(program).absolutePath());
     p->setProcessChannelMode(QProcess::MergedChannels);
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {

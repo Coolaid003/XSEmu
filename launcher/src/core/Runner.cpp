@@ -73,6 +73,18 @@ QString RunnerSpec::resolvedCacheDir() const
     return QDir::isAbsolutePath(d) ? d : QDir(Paths::localAppDataDir()).filePath(d);
 }
 
+QProcessEnvironment RunnerSpec::processEnvironment(const QList<QPair<QString, QString>>& values) const
+{
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    for (const auto& [name, value] : environment) {
+        const QString v = expand(value, values);
+        env.insert(name, v);
+        if (name.endsWith(QLatin1String("_DIR")))
+            QDir().mkpath(v);
+    }
+    return env;
+}
+
 QString RunnerSpec::cloneUrl() const
 {
     if (repo.contains(QLatin1String("://")) || QDir::isAbsolutePath(repo))
@@ -147,8 +159,10 @@ QList<RunnerSpec> build()
     v1.environment = {{QStringLiteral("VICTORY_CONFIG"), QStringLiteral("{runnerDir}/data/victory.toml")},
                       {QStringLiteral("VICTORY_CACHE_DIR"), victoryCache},
                       {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")}};
-    v1.precache = {{{QStringLiteral("shaders"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("victory-shaders")},
-                   {{QStringLiteral("warm"), QStringLiteral("--used"), QStringLiteral("--jobs"), QStringLiteral("{jobs}")}, QStringLiteral("victory-warm")}};
+    v1.precache = {{{QStringLiteral("shaders"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("victory-shaders"), false,
+                    RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Translating shaders")},
+                   {{QStringLiteral("warm"), QStringLiteral("--used"), QStringLiteral("--jobs"), QStringLiteral("{jobs}")}, QStringLiteral("victory-warm"), false,
+                    RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Building pipelines")}};
     v1.precacheNote = QStringLiteral("Translates every shader in the game, then builds the pipelines earlier runs used. Its warm-up wants 64 GB of RAM.");
     v1.cacheDir = victoryCache;
     v1.stop = RunnerSpec::Stop::SysCommandClose;
@@ -175,7 +189,8 @@ QList<RunnerSpec> build()
     v2.artifacts = {{QStringLiteral("x86_64-pc-windows-msvc/release/victory.exe"), QStringLiteral("victory.exe")}};
     v2.buildNote = QStringLiteral("VIctory (DexNom) is built from source on this PC. It needs Git, Rust and the Visual Studio C++ build tools (installed if missing) and can take a while; build times have not been measured yet.");
     v2.launchArgs = {QStringLiteral("run"), QStringLiteral("{gameExe}"), QStringLiteral("--execute"), QStringLiteral("--console"), QStringLiteral("{console}"), QStringLiteral("{rtFlag}")};
-    v2.precache = {{{QStringLiteral("warm"), QStringLiteral("{rtFlag}"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("victory-dexnom")}};
+    v2.precache = {{{QStringLiteral("warm"), QStringLiteral("{rtFlag}"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("victory-dexnom"), false,
+                    RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Translating shaders")}};
     v2.precacheNote = QStringLiteral("Translates the game's shaders and builds its compute pipelines.");
     list << v2;
 
@@ -205,8 +220,8 @@ QList<RunnerSpec> build()
                      {QStringLiteral("VICTORY_CACHE_DIR"), QStringLiteral("{runnerDir}/cache")},
                      {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")},
                      {QStringLiteral("VICTORY_LOG"), QStringLiteral("info")}};
-    k.precache = {{{QStringLiteral("precompile"), QStringLiteral("--check")}, QStringLiteral("kelvaroq"), true},
-                  {{QStringLiteral("precompile")}, QStringLiteral("kelvaroq"), false, RunnerSpec::PrecacheCancel::CloseStdin}};
+    k.precache = {{{QStringLiteral("precompile"), QStringLiteral("--check")}, QStringLiteral("kelvaroq"), true, RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Checking what to build")},
+                  {{QStringLiteral("precompile")}, QStringLiteral("kelvaroq"), false, RunnerSpec::PrecacheCancel::CloseStdin, QStringLiteral("Building pipelines")}};
     k.precacheNote = QStringLiteral("Kelvaroq learns which pipelines a game needs while it plays, so its pre-cache has work only after the game ran once with it.");
     k.cacheDir = QStringLiteral("{runnerDir}/cache");
     k.windowReadyLine = QStringLiteral("presenting to a window");

@@ -15,6 +15,7 @@ struct Update {
     qint64 total = -1;
     QString phase;     // "Compiling", "Receiving objects"; empty: unchanged
     QString detail;    // the crate, file or shader the line names; empty: none
+    qint64 failed = -1; // failures so far, when the line says
 };
 
 // "git": git clone/fetch --progress ("Receiving objects:  45% (450/1000)").

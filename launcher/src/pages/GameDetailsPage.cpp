@@ -1,5 +1,7 @@
 #include "GameDetailsPage.h"
 
+#include "RunsWithPicker.h"
+
 #include "app/Services.h"
 #include "core/Format.h"
 #include "core/Paths.h"
@@ -303,6 +305,7 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
     , m_primary(new Button(QStringLiteral("Play"), Button::Variant::Primary, Button::Size::Large, QStringLiteral("play")))
     , m_secondary(new Button(QStringLiteral("Warm up again"), Button::Variant::Secondary, Button::Size::Large, QStringLiteral("bolt")))
     , m_state(new Badge)
+    , m_runsWith(new RunsWithSelector(services))
     , m_openFolder(new Button(QStringLiteral("Open folder"), Button::Variant::Ghost, Button::Size::Small, QStringLiteral("folder")))
     , m_more(new Button({}, Button::Variant::Ghost, Button::Size::Small, QStringLiteral("more")))
     , m_gameCard(new InfoCard(QStringLiteral("Game")))
@@ -326,7 +329,10 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
     bh->addSpacing(12);
     bh->addWidget(m_state);
     bh->addStretch(1);
+    bh->addWidget(m_runsWith);
+    bh->addSpacing(8);
     bh->addWidget(m_openFolder);
+    connect(m_runsWith, &RunsWithSelector::manageRunners, this, &GameDetailsPage::manageRunners);
     m_more->setToolTip(QStringLiteral("More"));
     bh->addWidget(m_more);
     v->addWidget(bar);
@@ -412,6 +418,7 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
 void GameDetailsPage::setGame(const Game& game)
 {
     m_game = game;
+    m_runsWith->setGame(game);
     refresh();
 }
 

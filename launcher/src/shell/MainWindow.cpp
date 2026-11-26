@@ -89,6 +89,7 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     };
     connect(m_library, &LibraryPage::warmupRequested, this, warmUp);
     connect(m_details, &GameDetailsPage::warmupRequested, this, warmUp);
+    connect(m_details, &GameDetailsPage::manageRunners, this, [this] { showPage(Page::Runners); });
     connect(m_firstLaunch, &FirstLaunchPage::addGamesRequested, this, &MainWindow::addGameFolder);
     connect(m_firstLaunch, &FirstLaunchPage::finished, this, [this] { showPage(Page::Library); });
     connect(m_inGame, &InGameView::backToLibrary, this, &MainWindow::leaveInGame);

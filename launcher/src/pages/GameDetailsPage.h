@@ -10,6 +10,7 @@ class Button;
 class DetailsHero;
 class InfoCard;
 class Label;
+class RunsWithSelector;
 class Services;
 
 // Game details (Game details page): the hero band with cover, title and play record; the action bar
@@ -21,12 +22,14 @@ class GameDetailsPage : public QWidget {
 public:
     explicit GameDetailsPage(Services& services, QWidget* parent = nullptr);
     void setGame(const Game& game);
+    RunsWithSelector* runsWith() const { return m_runsWith; }
     Game game() const { return m_game; }
 
 signals:
     void back();
     void playRequested(const Game& game);
     void warmupRequested(const Game& game);
+    void manageRunners();
 
 private:
     void refresh();
@@ -41,6 +44,7 @@ private:
     Button* m_primary;
     Button* m_secondary;
     Badge* m_state;
+    RunsWithSelector* m_runsWith;
     Button* m_openFolder;
     Button* m_more;
     InfoCard* m_gameCard;

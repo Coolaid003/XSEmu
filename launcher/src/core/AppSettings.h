@@ -16,6 +16,7 @@ struct WarmupRun {
 
     QString titleId;    // the game the user started it for (the cache itself is machine-wide)
     QString titleName;
+    QString runnerId;   // empty: XSEmu's warm-up; else the runner whose pre-cache this was
     qint64 done = 0;    // pipelines built (built + failed)
     qint64 total = 0;
     qint64 failed = 0;

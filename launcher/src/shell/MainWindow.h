@@ -37,6 +37,7 @@ public:
 
     LibraryPage* libraryPage() const { return m_library; }
     SettingsPage* settingsPage() const { return m_settings; }
+    GameDetailsPage* gameDetailsPage() const { return m_details; }
     FirstLaunchPage* firstLaunchPage() const { return m_firstLaunch; }
     InGameView* inGameView() const { return m_inGame; }
 
