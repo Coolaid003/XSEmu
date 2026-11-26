@@ -151,7 +151,7 @@ sequenceDiagram
     W->>D: Create pipeline state
     alt Title binds before the build is done
         T->>X: Bind pipeline
-        Note over X: Graphics: the stand-in draws nothing.<br/>Compute: the bind waits, and its build<br/>goes ahead of the others.
+        Note over X: The bind waits, and the build<br/>goes ahead of the others.<br/>Graphics: after the backstop or frame<br/>budget, draws are skipped until it is built.<br/>Compute: the bind keeps waiting.
     end
     D-->>W: Real pipeline
     W-->>X: Real pipeline replaces the stand-in
@@ -159,6 +159,12 @@ sequenceDiagram
     X->>D: Bind the real pipeline
 ```
 
+A graphics bind waits at most `XCL_BIND_BACKSTOP_MS` (3000 ms by default). It
+doesn't wait at all once the thread's binds have waited
+`XCL_FRAME_STALL_BUDGET_MS` (1000 ms by default) since the last present. After
+that, draws with the pipeline are skipped until it is built. By default a
+compute bind keeps waiting, because a skipped dispatch could leave the title's
+state wrong.
 `XCL_ASYNC_PSO=0` builds every pipeline inside the create call instead.
 
 ## Requirements
