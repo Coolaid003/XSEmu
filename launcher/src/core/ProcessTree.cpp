@@ -197,7 +197,7 @@ QStringList runningEmulatorProcesses(qint64 excludePid)
 #ifdef Q_OS_WIN
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE)
-        return out;
+        return {};
     PROCESSENTRY32W pe{};
     pe.dwSize = sizeof(pe);
     for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
