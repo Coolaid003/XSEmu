@@ -535,7 +535,8 @@ LaunchErrors::ExitReport LaunchErrors::describeExit(const EmulatorController::Ex
     }
     const bool report = QFileInfo::exists(Paths::reportJson(info.game.titleId()));
     r.detailPath = QDir::toNativeSeparators(report ? Paths::reportJson(info.game.titleId()) : logsFolder(info.game));
-    r.detailNote = QStringLiteral("Exit code %1. The log%2 stay on this PC, nothing is uploaded.").arg(Format::exitCode(info.exitCode), report ? QStringLiteral(" and this crash report") : QString());
+    r.detailNote = report ? QStringLiteral("Exit code %1. The log and this crash report stay on this PC; nothing is uploaded.").arg(Format::exitCode(info.exitCode))
+                          : QStringLiteral("Exit code %1. The log stays on this PC; nothing is uploaded.").arg(Format::exitCode(info.exitCode));
     r.openLabel = report ? QStringLiteral("Open crash report") : QStringLiteral("Open logs");
     return r;
 }
