@@ -18,6 +18,11 @@
 //! The mouse is read with Raw Input on the XCL window (movement in mouse counts, not the
 //! cursor); its speed becomes a stick deflection – the stick turns the camera at a rate,
 //! so a mouse moving at a given speed turns it at a matching one (`mouse_sensitivity`).
+//!
+//! Hosted in a launcher's window (`hosting`) the XCL window is a child window: it is never the
+//! foreground window and gets no WM_ACTIVATE. It has the focus while the launcher's window is
+//! the foreground one and the XCL window holds the keyboard focus (WM_SETFOCUS … WM_KILLFOCUS;
+//! a click gives it the focus).
 
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicIsize, Ordering};
@@ -128,6 +133,7 @@ impl Wheel {
 extern "system" {
     fn GetAsyncKeyState(key: i32) -> i16;
     fn GetForegroundWindow() -> *mut c_void;
+    fn GetAncestor(hwnd: *mut c_void, flags: u32) -> *mut c_void;
     fn GetWindowThreadProcessId(hwnd: *mut c_void, pid: *mut u32) -> u32;
     fn GetKeyboardLayout(id_thread: u32) -> *mut c_void;
     fn MapVirtualKeyExW(code: u32, map_type: u32, dwhkl: *mut c_void) -> u32;
@@ -183,6 +189,12 @@ struct RawMouseInput {
 
 const WM_INPUT: u32 = 0x00FF;
 const WM_ACTIVATE: u32 = 0x0006;
+const WM_SETFOCUS: u32 = 0x0007;
+const WM_KILLFOCUS: u32 = 0x0008;
+const GA_ROOT: u32 = 2;
+/// raw input reaches the window when it is not the foreground one (a child of another
+/// process's window never is); `CAPTURED` keeps it from the game while unfocused
+const RIDEV_INPUTSINK: u32 = 0x0100;
 const WM_SETCURSOR: u32 = 0x0020;
 const WM_SIZE: u32 = 0x0005;
 const WM_MOVE: u32 = 0x0003;
@@ -209,6 +221,10 @@ const SC_D: (u32, i32) = (0x20, 0x44);
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 /// the cursor is held in the window (it has the focus)
 static CAPTURED: AtomicBool = AtomicBool::new(false);
+/// the XCL window is a child of a launcher's window (`hosting`)
+static HOSTED: AtomicBool = AtomicBool::new(false);
+/// hosted: the XCL window holds the keyboard focus (WM_SETFOCUS … WM_KILLFOCUS)
+static KEYBOARD_FOCUS: AtomicBool = AtomicBool::new(false);
 /// the user is dragging or resizing the window (WM_ENTERSIZEMOVE … WM_EXITSIZEMOVE):
 /// the cursor must stay free, or the 1-pixel clip teleports it back mid-drag
 static SIZING: AtomicBool = AtomicBool::new(false);
@@ -256,13 +272,32 @@ pub fn attach(hwnd: *mut c_void) {
         return;
     }
     WINDOW.store(hwnd as isize, Ordering::Release);
+    let hosted = crate::hosting::host_hwnd().is_some();
+    HOSTED.store(hosted, Ordering::Release);
     // generic desktop mouse
-    let dev = RawInputDevice { usage_page: 1, usage: 2, flags: 0, target: hwnd };
+    let dev = RawInputDevice { usage_page: 1, usage: 2, flags: if hosted { RIDEV_INPUTSINK } else { 0 }, target: hwnd };
     let ok = unsafe { RegisterRawInputDevices(&dev, 1, std::mem::size_of::<RawInputDevice>() as u32) } != 0;
     crate::xlog_info!(
         "keyboard and mouse play as the gamepad (WASD left stick, mouse right stick, mouse buttons triggers, wheel bumpers){}",
         if ok { "" } else { " – raw mouse input unavailable, the mouse is not read" }
     );
+}
+
+/// The XCL window has the focus: the foreground window, or hosted, holding the keyboard focus
+/// in the foreground launcher window.
+unsafe fn has_focus(hwnd: *mut c_void) -> bool {
+    if HOSTED.load(Ordering::Acquire) {
+        KEYBOARD_FOCUS.load(Ordering::Acquire) && GetAncestor(hwnd, GA_ROOT) == GetForegroundWindow()
+    } else {
+        GetForegroundWindow() == hwnd
+    }
+}
+
+/// Hosted: whether the XCL window has the focus now (None: not hosted).
+pub fn hosted_focus() -> Option<bool> {
+    let hwnd = WINDOW.load(Ordering::Acquire);
+    // SAFETY: `has_focus` only queries window state; a stale handle reads as not focused.
+    HOSTED.load(Ordering::Acquire).then(|| hwnd != 0 && unsafe { has_focus(hwnd as *mut c_void) })
 }
 
 unsafe fn hold_cursor(hwnd: *mut c_void, on: bool) {
@@ -316,6 +351,15 @@ pub unsafe fn on_message(hwnd: *mut c_void, msg: u32, wp: usize, lp: isize) -> b
             }
             false // DefWindowProc cleans up
         }
+        WM_SETFOCUS | WM_KILLFOCUS if HOSTED.load(Ordering::Acquire) => {
+            KEYBOARD_FOCUS.store(msg == WM_SETFOCUS, Ordering::Release);
+            let focused = has_focus(hwnd);
+            hold_cursor(hwnd, focused);
+            if !focused {
+                reset_mouse_state();
+            }
+            false
+        }
         WM_ACTIVATE => {
             let active = wp & 0xFFFF != 0;
             hold_cursor(hwnd, active);
@@ -332,13 +376,13 @@ pub unsafe fn on_message(hwnd: *mut c_void, msg: u32, wp: usize, lp: isize) -> b
         }
         WM_EXITSIZEMOVE => {
             SIZING.store(false, Ordering::Release);
-            if GetForegroundWindow() == hwnd {
+            if has_focus(hwnd) {
                 hold_cursor(hwnd, true);
             }
             false
         }
         WM_LBUTTONDOWN | WM_SIZE | WM_MOVE => {
-            if GetForegroundWindow() == hwnd {
+            if has_focus(hwnd) {
                 hold_cursor(hwnd, true);
             }
             false
@@ -394,13 +438,20 @@ pub fn apply(s: &mut GamepadState) {
         return;
     }
     let hwnd = WINDOW.load(Ordering::Acquire);
-    let focused = hwnd != 0 && unsafe { GetForegroundWindow() } as isize == hwnd;
+    // SAFETY: `has_focus` only queries window state.
+    let focused = hwnd != 0 && unsafe { has_focus(hwnd as *mut c_void) };
     if !focused {
         // Alt+Tab, another window: the cursor is free, nothing is pressed
         // SAFETY: `hold_cursor(..., false)` only releases the cursor clip when captured.
         unsafe { hold_cursor(hwnd as *mut c_void, false) };
         reset_mouse_state();
         return;
+    }
+    if HOSTED.load(Ordering::Acquire) && !CAPTURED.load(Ordering::Acquire) {
+        // hosted, the focus came back without a message here (the launcher's window activated
+        // again): the cursor is held again
+        // SAFETY: `hold_cursor` clips the cursor to a point of the window's client area.
+        unsafe { hold_cursor(hwnd as *mut c_void, true) };
     }
     let layout = keyboard_layout_for_window(hwnd as *mut c_void);
     let sc_key = |(sc, fb): (u32, i32)| key(scancode_to_vk(sc, fb, layout));

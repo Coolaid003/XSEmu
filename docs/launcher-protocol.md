@@ -15,7 +15,10 @@ XSEmu.exe warm-up [--full] [--progress-json]
 - `--host-hwnd <hex>`: the HWND (hex, with or without `0x`) of a native widget in the launcher. The game
   window is created as `WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN` of it instead of a top-level window,
   fills the parent's client area and follows its resizes. The launcher sizes the host widget to 16:9 itself;
-  the emulator letterboxes to 16:9 inside whatever client rect it gets (black bars), so both agree. Fullscreen is
+  the emulator letterboxes to 16:9 inside whatever client rect it gets, so both agree: the child window is the
+  largest centred 16:9 rectangle of the host's client area, and the bars around it are the host widget's own
+  background, so the launcher paints the host black. The emulator polls the host's client rect (about every
+  33 ms) and moves the child; the host window closing ends the title (exit reason `stopped`). Fullscreen is
   the launcher's job (borderless top-level window, host fills the monitor); the child just follows the resize.
 - `--control-pipe <name>`: the launcher listens on a local server called `<name>` (Qt `QLocalServer`; on
   Windows that is the named pipe `\\.\pipe\<name>`). The emulator connects as a client once its window exists

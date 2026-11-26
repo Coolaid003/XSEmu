@@ -17,6 +17,7 @@ pub mod gpu;
 pub mod hle;
 pub mod hooks;
 pub mod host;
+pub mod hosting;
 pub mod insn;
 pub mod inspect;
 pub mod launcher;

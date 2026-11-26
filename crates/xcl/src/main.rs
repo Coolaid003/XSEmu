@@ -21,9 +21,10 @@ const HELP: &str = "\
 XSEmu – Xbox Series X|S emulator (based on XCL, a Windows compatibility layer)
 
 Usage:
-  XSEmu run <game folder | file.exe> [-- game arguments]
+  XSEmu run [--host-hwnd <hex>] <game folder | file.exe> [-- game arguments]
       Runs the game. The game folder is only read; writes, game saves and logs go to
       %LOCALAPPDATA%\\XCL\\<title>\\ (or %XCL_DATA_ROOT%\\<title>\\).
+      --host-hwnd: the game window is a child of that window (a launcher's), 16:9 inside it.
   XSEmu inspect <file.exe|file.dll> [--json]
       Analysis without running: imports and what XCL has for them (HLE / Windows / stub).
   XSEmu disasm <file> [--offset N] [--length N] [--all] [--hex] [--fssm FILE]
@@ -225,13 +226,16 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        Some("run") if args.len() >= 2 => {
-            let rest: Vec<String> = match args.iter().position(|a| a == "--") {
-                Some(i) => args[i + 1..].to_vec(),
-                None => args[2..].to_vec(),
-            };
-            xcl::launcher::run(&PathBuf::from(&args[1]), &rest)
-        }
+        Some("run") if args.len() >= 2 => match xcl::hosting::parse_run_args(&args[1..]) {
+            Ok(run) => {
+                run.forward();
+                xcl::launcher::run(&PathBuf::from(&run.target), &run.game_args)
+            }
+            Err(e) => {
+                eprintln!("XSEmu run: {e}");
+                2
+            }
+        },
         Some("inspect") if args.len() >= 2 => {
             let json = args.iter().any(|a| a == "--json");
             xcl::inspect::run(&PathBuf::from(&args[1]), json)

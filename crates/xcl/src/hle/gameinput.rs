@@ -275,14 +275,22 @@ extern "system" {
 }
 
 unsafe fn keyboard() -> u32 {
-    let w = GetForegroundWindow();
-    if w.is_null() {
-        return 0;
-    }
-    let mut pid = 0u32;
-    GetWindowThreadProcessId(w, &mut pid);
-    if pid != std::process::id() {
-        return 0;
+    // hosted in a launcher's window the foreground window is the launcher's: the XCL window's
+    // focus decides (`kbm::hosted_focus`)
+    match super::kbm::hosted_focus() {
+        Some(false) => return 0,
+        Some(true) => {}
+        None => {
+            let w = GetForegroundWindow();
+            if w.is_null() {
+                return 0;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(w, &mut pid);
+            if pid != std::process::id() {
+                return 0;
+            }
+        }
     }
     const KEYS: [(i32, u32); 10] = [(0x0D, A), (0x20, A), (0x1B, B), (0x08, B), (0x26, DPAD_UP), (0x28, DPAD_DOWN), (0x25, DPAD_LEFT), (0x27, DPAD_RIGHT), (0x09, VIEW), (0x50, MENU)];
     KEYS.iter().filter(|(k, _)| GetAsyncKeyState(*k) as u16 & 0x8000 != 0).fold(0, |b, (_, g)| b | g)

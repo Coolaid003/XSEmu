@@ -503,6 +503,9 @@ pub fn on_queue_console_method(_info: &StubInfo, _caller: usize) {
 // ---------------------------------------------------------------------------------------
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if let Some(r) = crate::hosting::on_message(hwnd.0, msg, wp.0, lp.0) {
+        return LRESULT(r);
+    }
     // keyboard and mouse as the gamepad: raw mouse input, the cursor held in the window
     if crate::hle::kbm::on_message(hwnd.0, msg, wp.0, lp.0) {
         return LRESULT(0);
@@ -627,6 +630,11 @@ fn window_thread() {
             hInstance: inst.into(),
             lpszClassName: class,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            hbrBackground: if crate::hosting::host_hwnd().is_some() {
+                windows::Win32::Graphics::Gdi::HBRUSH(windows::Win32::Graphics::Gdi::GetStockObject(windows::Win32::Graphics::Gdi::BLACK_BRUSH).0)
+            } else {
+                Default::default()
+            },
             ..Default::default()
         };
         RegisterClassW(&wc);
@@ -635,17 +643,25 @@ fn window_thread() {
         let mut rc = RECT { left: 0, top: 0, right: cfg.window_width as i32, bottom: cfg.window_height as i32 };
         let _ = AdjustWindowRect(&mut rc, WS_OVERLAPPEDWINDOW, false);
         let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
-        let (x, y) = window_position(&cfg.window_pos, w, h);
+        // hosted (`--host-hwnd`): a child of the launcher's window; window_pos and the size are its
+        let host = crate::hosting::host_hwnd();
+        let (style, parent, [x, y, w, h]) = match host {
+            Some(p) => (WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_VISIBLE, Some(HWND(p as *mut c_void)), crate::hosting::child_rect(p)),
+            None => {
+                let (x, y) = window_position(&cfg.window_pos, w, h);
+                (WS_OVERLAPPEDWINDOW | WS_VISIBLE, None, [x, y, w, h])
+            }
+        };
         let hwnd = CreateWindowExW(
             WINDOW_EX_STYLE(0),
             class,
             &HSTRING::from(format!("XCL – {title}")),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            style,
             x,
             y,
             w,
             h,
-            None,
+            parent,
             None,
             Some(inst.into()),
             None,
@@ -655,7 +671,12 @@ fn window_thread() {
             return;
         };
         HWND_RAW.store(hwnd.0 as isize, Ordering::Release);
-        crate::xlog_info!("XCL window created ({}x{})", cfg.window_width, cfg.window_height);
+        if host.is_some() {
+            crate::xlog_info!("XCL window created in the launcher's window ({w}x{h} at {x},{y})");
+            crate::hosting::attach(hwnd.0);
+        } else {
+            crate::xlog_info!("XCL window created ({}x{})", cfg.window_width, cfg.window_height);
+        }
         crate::hle::kbm::attach(hwnd.0);
         SetTimer(Some(hwnd), COMPILE_TIMER, 500, None);
         let raw = hwnd.0 as isize;
@@ -744,6 +765,11 @@ unsafe fn window_position(setting: &str, w: i32, h: i32) -> (i32, i32) {
         return (x, y);
     };
     (x.clamp(r.left, (r.right - w).max(r.left)), y.clamp(r.top, (r.bottom - h).max(r.top)))
+}
+
+/// The XCL window, made now if it is not up yet (None: it could not be made).
+pub fn window() -> Option<isize> {
+    ensure_window().map(|h| h.0 as isize)
 }
 
 fn ensure_window() -> Option<HWND> {
