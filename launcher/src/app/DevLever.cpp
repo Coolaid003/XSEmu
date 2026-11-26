@@ -483,7 +483,7 @@ bool DevLever::prepare(QString* error)
         qputenv("XSEMU_GPU", "10de:NVIDIA GPU (sample)");
     QFile feed(root(QStringLiteral("runner-feed.json")));
     if (feed.open(QIODevice::WriteOnly))
-        feed.write(R"({"victory-7900xtx": {"keep": true}, "victory-dexnom": {"keep": true}, "kelvaroq": {"keep": true}})");
+        feed.write(R"({"victory-7900xtx": {"keep": true}, "victory-dexnom": {"keep": true}, "kelvaroq": {"keep": true}, "coolfox": {"keep": true}})");
     feed.close();
     qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
     seedRunners();

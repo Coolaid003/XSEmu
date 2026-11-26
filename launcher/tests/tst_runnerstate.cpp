@@ -74,6 +74,7 @@ private slots:
     void dexnomReadsInstalledEverywhere();
     void changeLocationWaitsForItsRuns();
     void leftOverFilesOfferReinstallAndUninstall();
+    void coolfoxAmbientSwitchIsOffByDefault();
 
 private:
     struct Surfaces {
@@ -392,6 +393,31 @@ void TestRunnerState::leftOverFilesOfferReinstallAndUninstall()
     QVERIFY(s.runners.isRunnable(kId));
     QApplication::processEvents();
     QVERIFY(!install->isVisibleTo(card));
+}
+
+void TestRunnerState::coolfoxAmbientSwitchIsOffByDefault()
+{
+    Services s;
+    MainWindow w(s);
+    w.resize(1280, 800);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.showPage(Page::Runners);
+    QApplication::processEvents();
+    QWidget* card = w.findChild<QWidget*>(QStringLiteral("runner-coolfox"));
+    QVERIFY(card);
+    QVERIFY(anyContains(shown(card), QStringLiteral("Author's ambient light")));
+    QVERIFY(anyContains(shown(card), QStringLiteral("reports the game's licence as active")));
+    QVERIFY(anyContains(shown(card), QStringLiteral("always runs the game as a Series S")));
+    auto* toggle = card->findChild<QAbstractButton*>(QStringLiteral("option-coolfox-ambient"));
+    QVERIFY(toggle && toggle->isVisibleTo(card));
+    QVERIFY(!toggle->isChecked());
+    QVERIFY(!s.settings.runnerOptions(QStringLiteral("coolfox")).value(QStringLiteral("ambient"), false));
+    QTest::mouseClick(toggle, Qt::LeftButton);
+    QVERIFY(toggle->isChecked());
+    QVERIFY(s.settings.runnerOptions(QStringLiteral("coolfox")).value(QStringLiteral("ambient"), false));
+    QTest::mouseClick(toggle, Qt::LeftButton);
+    QVERIFY(!s.settings.runnerOptions(QStringLiteral("coolfox")).value(QStringLiteral("ambient"), true));
 }
 
 QTEST_MAIN(TestRunnerState)

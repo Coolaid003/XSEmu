@@ -578,7 +578,9 @@ void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool 
         m_block->setSubtitle(joined({m_s.warmup.game().title(), version, step}));
         m_block->setFraction(pr.total > 0 ? fractionOf(pr.done, pr.total) : -1);
         m_block->setColumns({
-            {QStringLiteral("Done"), pr.total > 0 ? QStringLiteral("%1 / %2").arg(Format::count(pr.done), Format::count(pr.total)) : Format::count(pr.done)},
+            {QStringLiteral("Done"), pr.total > 0      ? QStringLiteral("%1 / %2").arg(Format::count(pr.done), Format::count(pr.total))
+                                     : pr.estimate > 0 ? QStringLiteral("%1 / about %2").arg(Format::count(pr.done), Format::count(pr.estimate))
+                                                       : Format::count(pr.done)},
             {QStringLiteral("Speed"), pr.keysPerS > 0 ? QStringLiteral("%1/s").arg(Format::count(qRound64(pr.keysPerS))) : QStringLiteral("Measuring")},
             {QStringLiteral("Time left"), pr.etaS ? Format::duration(*pr.etaS) : QStringLiteral("Unknown")},
             {QStringLiteral("Free RAM"), freeRam},

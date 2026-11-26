@@ -260,7 +260,7 @@ bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, Q
     }
     auto* p = new ProcessTree(this);
     m_process = p;
-    p->setProcessEnvironment(spec.processEnvironment(tokens));
+    p->setProcessEnvironment(spec.processEnvironment(tokens, m_settings.runnerOptions(spec.id)));
     p->setWorkingDirectory(QFileInfo(program).absolutePath());
     p->setProcessChannelMode(QProcess::MergedChannels);
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {

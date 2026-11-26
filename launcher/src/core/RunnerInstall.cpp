@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
+#include <QProcess>
 #include <QSaveFile>
 #include <QStandardPaths>
 
@@ -64,12 +65,19 @@ RunnerInstall::RunnerInstall(const RunnerSpec& spec, QObject* parent)
                             }
                             runProcess({m_git, QStringLiteral("-c"), QStringLiteral("init.defaultBranch=main"), QStringLiteral("init"), QStringLiteral("-q"), QStringLiteral(".")}, src, {});
                         }};
+        m_steps << Step{QStringLiteral("Fetching the source"), [this, src] { fetchFrom(src, 0, {}); }};
         m_steps << Step{QStringLiteral("Fetching the source"), [this, src] {
-                            runProcess({m_git, QStringLiteral("fetch"), QStringLiteral("--progress"), QStringLiteral("--depth"), QStringLiteral("1"), m_spec.cloneUrl(), m_spec.commit},
-                                       src, QStringLiteral("git"));
-                        }};
-        m_steps << Step{QStringLiteral("Fetching the source"), [this, src] {
-                            runProcess({m_git, QStringLiteral("checkout"), QStringLiteral("-q"), QStringLiteral("--force"), QStringLiteral("--detach"), m_spec.commit}, src, {});
+                            runProcess({m_git, QStringLiteral("checkout"), QStringLiteral("-q"), QStringLiteral("--force"), QStringLiteral("--detach"), m_spec.commit}, src, {}, [this, src](bool ok) {
+                                if (!ok) {
+                                    fail(QStringLiteral("git could not check out %1: %2").arg(m_spec.commit.left(7), m_lastLine.left(200)));
+                                    return;
+                                }
+                                if (const QString why = pinMismatch(src, QStringLiteral("HEAD")); !why.isEmpty()) {
+                                    fail(QStringLiteral("The checkout is not the pinned source: %1.").arg(why));
+                                    return;
+                                }
+                                next();
+                            });
                         }};
         for (const RunnerSpec::Fetch& fetch : spec.fetches)
             m_steps << Step{QStringLiteral("Fetching the source"), [this, src, fetch] { download(fetch.url, QDir(src).filePath(fetch.to), fetch.sha256); }};
@@ -254,7 +262,66 @@ void RunnerInstall::download(const QString& url, const QString& to, const QStrin
     });
 }
 
-void RunnerInstall::runProcess(const QStringList& command, const QString& workDir, const QString& parser)
+// git fetch --depth 1 <remote> <pin>; a host that refuses a commit it does not advertise gets its HEAD
+// fetched instead. Either way FETCH_HEAD must be the pinned commit with the pinned tree, else the
+// next remote is tried.
+void RunnerInstall::fetchFrom(const QString& src, int remote, QStringList refused)
+{
+    const QStringList urls = m_spec.fetchUrls();
+    if (remote >= urls.size()) {
+        fail(QStringLiteral("No source had %1 %2: %3").arg(m_spec.name, m_spec.commit.left(7), refused.join(QStringLiteral("; "))));
+        return;
+    }
+    const QString url = urls.at(remote);
+    const QStringList fetch = {m_git, QStringLiteral("fetch"), QStringLiteral("--progress"), QStringLiteral("--no-tags"),
+                               QStringLiteral("--depth"), QStringLiteral("1"), url};
+    const auto check = [this, src, remote, refused, url] {
+        const QString why = pinMismatch(src, QStringLiteral("FETCH_HEAD"));
+        if (why.isEmpty()) {
+            next();
+            return;
+        }
+        log(QStringLiteral("Refused %1: %2").arg(url, why));
+        fetchFrom(src, remote + 1, refused + QStringList{QStringLiteral("%1 %2").arg(url, why)});
+    };
+    runProcess(fetch + QStringList{m_spec.commit}, src, QStringLiteral("git"), [this, src, remote, refused, url, fetch, check](bool ok) {
+        if (ok) {
+            check();
+            return;
+        }
+        log(QStringLiteral("%1 did not give %2; fetching its HEAD to check").arg(url, m_spec.commit.left(7)));
+        runProcess(fetch + QStringList{QStringLiteral("HEAD")}, src, QStringLiteral("git"), [this, src, remote, refused, url, check](bool headOk) {
+            if (headOk) {
+                check();
+                return;
+            }
+            log(QStringLiteral("Could not fetch from %1").arg(url));
+            fetchFrom(src, remote + 1, refused + QStringList{QStringLiteral("%1 could not be fetched").arg(url)});
+        });
+    });
+}
+
+QString RunnerInstall::pinMismatch(const QString& src, const QString& rev)
+{
+    const auto parse = [this, src](const QString& what) {
+        QProcess git;
+        git.setWorkingDirectory(src);
+        git.setProcessEnvironment(m_env);
+        git.start(resolveProgram(m_git, m_env), {QStringLiteral("rev-parse"), QStringLiteral("--verify"), QStringLiteral("-q"), what});
+        return git.waitForFinished(30000) && git.exitCode() == 0 ? QString::fromLatin1(git.readAllStandardOutput()).trimmed() : QString();
+    };
+    const QString commit = parse(rev + QStringLiteral("^{commit}"));
+    if (commit != m_spec.commit)
+        return QStringLiteral("it has commit %1, not %2").arg(commit.isEmpty() ? QStringLiteral("none") : commit, m_spec.commit);
+    if (m_spec.tree.isEmpty())
+        return {};
+    const QString tree = parse(rev + QStringLiteral("^{tree}"));
+    if (tree != m_spec.tree)
+        return QStringLiteral("commit %1 has tree %2, not %3").arg(commit.left(7), tree.isEmpty() ? QStringLiteral("none") : tree, m_spec.tree);
+    return {};
+}
+
+void RunnerInstall::runProcess(const QStringList& command, const QString& workDir, const QString& parser, std::function<void(bool)> then)
 {
     m_process = new ProcessTree(this);
     m_process->setWorkingDirectory(workDir);
@@ -293,11 +360,15 @@ void RunnerInstall::runProcess(const QStringList& command, const QString& workDi
         if (e == QProcess::FailedToStart)
             fail(QStringLiteral("Could not start %1 in %2: %3").arg(command.join(QLatin1Char(' ')), QDir::toNativeSeparators(workDir), m_process->errorString()));
     });
-    connect(m_process, &QProcess::finished, this, [this, command](int code, QProcess::ExitStatus status) {
+    connect(m_process, &QProcess::finished, this, [this, command, then](int code, QProcess::ExitStatus status) {
         m_process->deleteLater();
         if (m_cancelled || m_done)
             return;
         log(QStringLiteral("exit code %1").arg(code));
+        if (then) {
+            then(status == QProcess::NormalExit && code == 0);
+            return;
+        }
         if (status != QProcess::NormalExit || code != 0) {
             fail(QStringLiteral("%1 stopped with exit code %2%3").arg(QFileInfo(command.value(0)).fileName()).arg(code)
                      .arg(m_lastLine.isEmpty() ? QStringLiteral(".") : QStringLiteral(": ") + m_lastLine.left(200)));

@@ -62,6 +62,7 @@ public:
         static constexpr const char* DefaultRunner = "runners/default";
         static constexpr const char* RunnersFolder = "runners/folder";
         static constexpr const char* RunnerLocations = "runners/locations";
+        static constexpr const char* RunnerOptions = "runners/options";
         static constexpr const char* StoreOfflineError = "network/storeOfflineError";
         static constexpr const char* CrashDumps = "logs/crashDumps";
         static constexpr const char* ShaderCacheDir = "shaders/cacheDir";
@@ -131,6 +132,9 @@ public:
     // Runners moved somewhere else: id -> the folder that holds <id>. An empty folder clears it.
     QHash<QString, QString> runnerLocations() const;
     void setRunnerLocation(const QString& id, const QString& folder);
+    // A runner's switches (RunnerSpec::options) the user turned on or off; one not set keeps its default.
+    QHash<QString, bool> runnerOptions(const QString& id) const;
+    void setRunnerOption(const QString& id, const QString& key, bool on);
 
     // On by default: games start with XCL_STORE=offline-error (store context opens, every store
     // query fails with the store network error). Off: the store API is refused as unavailable.

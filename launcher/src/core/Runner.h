@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QProcessEnvironment>
 #include <QString>
@@ -45,6 +46,8 @@ struct RunnerSpec {
     QList<QPair<QString, QString>> fileSha256; // files inside the unpacked asset that must match
     QList<QPair<QString, QString>> copyFiles;  // {from, to} inside the unpacked asset
     QString commit;          // BuildFromSource: the pinned commit SHA
+    QString tree;            //   its tree id, checked after the checkout; empty: the commit alone is checked
+    QStringList remotes;     //   fetched from in order until one has the pin; empty: cloneUrl()
     QStringList toolchains;  //   bootstrapped first, in order: "git", "msvc" (VS C++ build tools), "rust"
     struct Fetch {
         QString url;
@@ -61,6 +64,16 @@ struct RunnerSpec {
     // ("series-s"/"series-x") {runnerDir} (runners\<id>) {installDir} {cacheDir} {jobs} {rtFlag} {hostHwnd}.
     QStringList launchArgs;
     QList<QPair<QString, QString>> environment; // set for runs and pre-cache runs
+    QStringList clearEnvironment; // never passed on from the launcher's own environment
+    // A switch on the runner's card that adds environment to its runs and pre-cache runs while on.
+    struct Option {
+        QString key;         // "ambient", as AppSettings::runnerOptions keeps it
+        QString label;       // "Author's ambient light"
+        QString description; // one line under it
+        bool on = false;     // the default
+        QList<QPair<QString, QString>> environment;
+    };
+    QList<Option> options;
     struct PrecacheStep {
         QStringList args;
         QString parser;      // ProgressParsers id
@@ -97,6 +110,7 @@ struct RunnerSpec {
     bool isPinned() const;
     QString downloadUrl() const; // ReleaseAsset: the GitHub release download URL
     QString cloneUrl() const;    // BuildFromSource: https://github.com/<repo>.git
+    QStringList fetchUrls() const; // remotes, else {cloneUrl()}
     QString dataDir() const;     // runners\<id>: install record, app\, and the runner's own data
     QString installDir() const;  // runners\<id>\app (release) or runners\<id>\bin (built)
     QString checkoutDir() const; // runners\<id>\s: the source checkout (short: deep paths break some builds)
@@ -106,8 +120,10 @@ struct RunnerSpec {
                                           const QString& deviceType, quintptr hostHwnd) const;
     // The cache dir with its tokens filled in; empty when unknown.
     QString resolvedCacheDir() const;
-    // The system environment plus the spec's, tokens filled in; creates the *_DIR folders it names.
-    QProcessEnvironment processEnvironment(const QList<QPair<QString, QString>>& tokens) const;
+    // The system environment less clearEnvironment, plus the spec's and that of each option on (choices
+    // from AppSettings::runnerOptions, else its default), tokens filled in; creates the *_DIR folders it names.
+    QProcessEnvironment processEnvironment(const QList<QPair<QString, QString>>& tokens, const QHash<QString, bool>& choices) const;
+    static bool optionOn(const Option& option, const QHash<QString, bool>& choices) { return choices.value(option.key, option.on); }
     // Writes configFile atomically and makes the folders it names; returns why it could not (empty: written or none).
     QString writeConfig(const QList<QPair<QString, QString>>& tokens) const;
 

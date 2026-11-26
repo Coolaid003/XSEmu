@@ -52,14 +52,33 @@ std::optional<Update> victoryShaders(const QString& line)
     return std::nullopt;
 }
 
-// VIctory 7900 XTX "warm --used": a header with how many pipelines are to make, "D of T, S s",
-// and "pipeline N HASH: reason" for each failure.
+// cool_fox "shaders" (apps/victory/src/translate.rs:430, 445-452 at f4b48ad): the 7900 XTX lines,
+// then "  N  why  (e.g. HASH)" for each failure cause after the final line.
+std::optional<Update> coolfoxShaders(const QString& line)
+{
+    static const QRegularExpression cause(QStringLiteral("^ *(\\d+)  (.+)  \\(e\\.g\\. ([0-9a-f]{16})\\)$"));
+    if (auto u = victoryShaders(line)) {
+        if (u->total < 0)
+            u->estimate = 25985;
+        return u;
+    }
+    if (const auto m = cause.match(line); m.hasMatch())
+        return Update{-1, -1, {}, QStringLiteral("%1 do not translate: %2").arg(m.captured(1), m.captured(2).trimmed())};
+    return std::nullopt;
+}
+
+// VIctory 7900 XTX and cool_fox "warm --used": a header with how many pipelines are to make, "D of T, S s",
+// "pipeline N HASH: reason" for each failure, and "M made in S s (R have no host pipeline, C ended
+// their process); ms each: ..." at the end.
 std::optional<Update> victoryWarm(const QString& line)
 {
     static const QRegularExpression header(QStringLiteral("^(\\d+) pipelines known, (\\d+) made before \\(([^)]*)\\), (\\d+) bad; (\\d+) to make, (\\d+) processes$"));
     static const QRegularExpression tick(QStringLiteral("^(\\d+) of (\\d+), (\\d+) s$"));
     static const QRegularExpression failed(QStringLiteral("^pipeline (\\d+) (\\S+): (.+)$"));
+    static const QRegularExpression made(QStringLiteral("^(\\d+) made in (\\d+) s \\((\\d+) have no host pipeline, (\\d+) ended their process\\); ms each: .*$"));
     const QString t = line.trimmed();
+    if (const auto m = made.match(t); m.hasMatch())
+        return Update{m.captured(1).toLongLong(), -1, QStringLiteral("Building pipelines"), {}, m.captured(3).toLongLong() + m.captured(4).toLongLong()};
     if (const auto m = header.match(t); m.hasMatch())
         return Update{0, m.captured(5).toLongLong(), QStringLiteral("Building pipelines"), QStringLiteral("%1 made before").arg(m.captured(2))};
     if (const auto m = tick.match(t); m.hasMatch())
@@ -110,6 +129,8 @@ std::optional<Update> parse(const QString& parser, const QString& line)
         return victoryWarm(line);
     if (parser == QLatin1String("victory-dexnom"))
         return victoryDexnom(line);
+    if (parser == QLatin1String("coolfox-shaders"))
+        return coolfoxShaders(line);
     if (parser == QLatin1String("git")) {
         if (auto u = git(line))
             return u;

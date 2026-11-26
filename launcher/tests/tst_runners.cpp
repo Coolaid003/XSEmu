@@ -65,6 +65,7 @@ private slots:
     void freeSpaceWarning();
     void uninstallDeletesOffTheUiThread();
     void uninstallRefusedWhileInUse();
+    void fetchFallsBackAndChecksIds();
 
 private:
     void ensureBuilt(RunnerManager& m, const QString& id);
@@ -74,6 +75,7 @@ private:
     QString m_zip;
     bool m_haveGit = false;
     QString m_commit;
+    QString m_tree;
 };
 
 void TestRunners::initTestCase()
@@ -116,6 +118,24 @@ void TestRunners::initTestCase()
         m_commit = QString::fromLatin1(p.readAllStandardOutput()).trimmed();
         // allow fetching an unadvertised commit by SHA from this repository
         QVERIFY(run(QStringLiteral("git"), {QStringLiteral("config"), QStringLiteral("uploadpack.allowReachableSHA1InWant"), QStringLiteral("true")}, repo));
+        QProcess tree;
+        tree.setWorkingDirectory(repo);
+        tree.start(QStringLiteral("git"), {QStringLiteral("rev-parse"), QStringLiteral("HEAD^{tree}")});
+        QVERIFY(tree.waitForFinished());
+        m_tree = QString::fromLatin1(tree.readAllStandardOutput()).trimmed();
+
+        // cool_fox's three sources: one gone, one a different commit (another fork's tip), one the pin
+        const QString other = m_dir.filePath(QStringLiteral("other"));
+        QDir().mkpath(other);
+        QFile o(QDir(other).filePath(QStringLiteral("README")));
+        QVERIFY(o.open(QIODevice::WriteOnly));
+        o.write("a later fork\n");
+        o.close();
+        QVERIFY(run(QStringLiteral("git"), {QStringLiteral("-c"), QStringLiteral("init.defaultBranch=main"), QStringLiteral("init"), QStringLiteral("-q")}, other));
+        QVERIFY(run(QStringLiteral("git"), {QStringLiteral("add"), QStringLiteral("README")}, other));
+        QVERIFY(run(QStringLiteral("git"), id + QStringList{QStringLiteral("commit"), QStringLiteral("-q"), QStringLiteral("-m"), QStringLiteral("fork")}, other));
+        QVERIFY(run(QStringLiteral("git"), {QStringLiteral("clone"), QStringLiteral("-q"), QStringLiteral("--bare"), other, m_dir.filePath(QStringLiteral("remote-fork.git"))}, m_dir.path()));
+        QVERIFY(run(QStringLiteral("git"), {QStringLiteral("clone"), QStringLiteral("-q"), QStringLiteral("--bare"), repo, m_dir.filePath(QStringLiteral("remote-pin.git"))}, m_dir.path()));
     }
 
     // re-pin two runners at the local asset and repository before the list is first read
@@ -138,6 +158,14 @@ void TestRunners::initTestCase()
                                                                {QStringLiteral("buildSteps"), buildSteps},
                                                                {QStringLiteral("artifacts"), QJsonObject{{QStringLiteral("runner.tar"), QStringLiteral("runner.tar")}}},
                                                                {QStringLiteral("executable"), QStringLiteral("runner.tar")}});
+    feed.insert(QStringLiteral("coolfox"), QJsonObject{{QStringLiteral("commit"), m_commit.isEmpty() ? QString(40, QLatin1Char('0')) : m_commit},
+                                                        {QStringLiteral("tree"), m_tree},
+                                                        {QStringLiteral("remotes"), QJsonArray{QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("remote-gone.git"))).toString(),
+                                                                                               QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("remote-fork.git"))).toString(),
+                                                                                               QUrl::fromLocalFile(m_dir.filePath(QStringLiteral("remote-pin.git"))).toString()}},
+                                                        {QStringLiteral("buildSteps"), buildSteps},
+                                                        {QStringLiteral("artifacts"), QJsonObject{{QStringLiteral("runner.tar"), QStringLiteral("runner.tar")}}},
+                                                        {QStringLiteral("executable"), QStringLiteral("runner.tar")}});
     const QString feedPath = m_dir.filePath(QStringLiteral("feed.json"));
     QFile f(feedPath);
     QVERIFY(f.open(QIODevice::WriteOnly));
@@ -149,7 +177,7 @@ void TestRunners::initTestCase()
 void TestRunners::curatedList()
 {
     const QList<RunnerSpec>& list = Runners::curated();
-    QCOMPARE(list.size(), 4);
+    QCOMPARE(list.size(), 5);
     QCOMPARE(list.first().id, QStringLiteral("xsemu"));
     QVERIFY(Runners::xsemu().isBuiltIn());
     for (const RunnerSpec& r : list) {
@@ -171,6 +199,19 @@ void TestRunners::curatedList()
     QCOMPARE(args, (QStringList{QStringLiteral("run"), QDir::toNativeSeparators(QStringLiteral("/g/Game.exe")), QStringLiteral("--console"), QStringLiteral("series-s"), QStringLiteral("--execute")}));
     QCOMPARE(QDir::fromNativeSeparators(k->resolvedCacheDir()), QDir(Paths::runnerDir(QStringLiteral("kelvaroq"))).filePath(QStringLiteral("cache")));
     QCOMPARE(RunnerSpec::expand(QStringLiteral("{rtFlag} {unknown}"), k->tokens({}, {}, {}, QStringLiteral("anaconda"), 0)), QStringLiteral("--no-rt {unknown}"));
+
+    // cool_fox: always a Series S, whatever the game's console (its environment: tst_controllers)
+    const RunnerSpec* f = Runners::find(QStringLiteral("coolfox"));
+    QVERIFY(f);
+    QCOMPARE(f->name, QStringLiteral("cool_fox (codec_d)"));
+    QCOMPARE(f->badge, QStringLiteral("NVIDIA \u00B7 tuned on RTX 5090 (32 GB RAM)"));
+    const auto tokens = f->tokens(QStringLiteral("/g"), QStringLiteral("/g/Game.exe"), QStringLiteral("T"), QStringLiteral("anaconda"), 0);
+    QCOMPARE(RunnerSpec::expand(f->launchArgs, tokens),
+             (QStringList{QStringLiteral("run"), QDir::toNativeSeparators(QStringLiteral("/g/Game.exe")), QStringLiteral("--console"), QStringLiteral("series-s"), QStringLiteral("--execute")}));
+    QCOMPARE(f->precache.size(), 2);
+    QCOMPARE(RunnerSpec::expand(f->precache.first().args, tokens).mid(0, 2), (QStringList{QStringLiteral("shaders"), QStringLiteral("--jobs")}));
+    QCOMPARE(RunnerSpec::expand(f->precache.last().args, tokens).mid(0, 2), (QStringList{QStringLiteral("warm"), QStringLiteral("--used")}));
+    QCOMPARE(f->precache.last().needs, QStringList{QStringLiteral("{cacheDir}/pipelines/known-pipelines.bin")});
 }
 
 void TestRunners::recommendation()
@@ -208,6 +249,16 @@ void TestRunners::parsers_data()
     QTest::newRow("dexnom tick") << "victory-dexnom" << "   12 s  2000 shaders" << qint64(2000) << qint64(-1);
     QTest::newRow("dexnom summary") << "victory-dexnom" << "warm         4210 translated, 3 refused; 812 compute pipelines, 0 refused; 0 omitted by ray-tracing mode; 7 s"
                                     << qint64(4210) << qint64(4210);
+    // cool_fox, lines as apps/victory/src/translate.rs and warm.rs print them at f4b48ad
+    QTest::newRow("coolfox shaders") << "coolfox-shaders" << "4000 shaders in the cache, 12 s" << qint64(4000) << qint64(-1);
+    QTest::newRow("coolfox shaders done") << "coolfox-shaders" << "25985 shaders in the cache, 12 do not translate, 340 s" << qint64(25985) << qint64(25985);
+    QTest::newRow("coolfox cause") << "coolfox-shaders" << "     12  wave64 lane intrinsic  (e.g. 00ff13a2c4b5d6e7)" << qint64(-1) << qint64(-1);
+    QTest::newRow("coolfox warm header") << "victory-warm" << "84012 pipelines known, 0 made before (3f9a0c11d2e4b5a6), 0 bad; 2104 to make, 21 processes" << qint64(0) << qint64(2104);
+    QTest::newRow("coolfox warm tick") << "victory-warm" << "1000 of 2104, 61 s" << qint64(1000) << qint64(2104);
+    QTest::newRow("coolfox warm failed") << "victory-warm" << "pipeline 17 00ff13a2c4b5d6e7aa: the compiler ended the process" << qint64(-1) << qint64(-1);
+    QTest::newRow("coolfox warm made") << "victory-warm"
+                                       << "2101 made in 133 s (2 have no host pipeline, 1 ended their process); ms each: median 9.1, p90 30.2, p99 120.0, most 900, sum 40 s"
+                                       << qint64(2101) << qint64(-1);
     QTest::newRow("generic") << "other" << "step 3/9" << qint64(3) << qint64(9);
 }
 
@@ -222,6 +273,12 @@ void TestRunners::parsers()
     QCOMPARE(u->done, done);
     QCOMPARE(u->total, total);
     QVERIFY(!ProgressParsers::parse(QStringLiteral("kelvaroq"), QStringLiteral("presenting to a window")).has_value());
+    // cool_fox gives no total while it translates: the bar stays indeterminate, with an estimate
+    QCOMPARE(ProgressParsers::parse(QStringLiteral("coolfox-shaders"), QStringLiteral("4000 shaders in the cache, 12 s"))->estimate, 25985);
+    QCOMPARE(ProgressParsers::parse(QStringLiteral("coolfox-shaders"), QStringLiteral("25985 shaders in the cache, 12 do not translate, 340 s"))->estimate, -1);
+    QCOMPARE(ProgressParsers::parse(QStringLiteral("coolfox-shaders"), QStringLiteral("     12  wave64 lane intrinsic  (e.g. 00ff13a2c4b5d6e7)"))->detail,
+             QStringLiteral("12 do not translate: wave64 lane intrinsic"));
+    QCOMPARE(ProgressParsers::parse(QStringLiteral("victory-warm"), QStringLiteral("2101 made in 133 s (2 have no host pipeline, 1 ended their process); ms each: median 9.1, p90 30.2, p99 120.0, most 900, sum 40 s"))->failed, 3);
 }
 
 void TestRunners::installsReleaseAsset()
@@ -301,6 +358,49 @@ void TestRunners::buildsFromSource()
     QCOMPARE(s.installedVersion, m_commit.left(7));
     QCOMPARE(QDir::cleanPath(QFileInfo(s.executable).absolutePath()), QDir::cleanPath(Runners::find(id)->installDir()));
     QVERIFY(QFileInfo(s.executable).size() > 0);
+}
+
+void TestRunners::fetchFallsBackAndChecksIds()
+{
+    if (!m_haveGit)
+        QSKIP("git is not installed");
+    resetLocations();
+    const QString id = QStringLiteral("coolfox");
+    const RunnerSpec* spec = Runners::find(id);
+    QCOMPARE(spec->fetchUrls().size(), 3);
+    RunnerManager m;
+    QSignalSpy done(&m, &RunnerManager::installFinished);
+    QString error;
+    QVERIFY2(m.install(id, &error), qPrintable(error));
+    QVERIFY(done.wait(60000));
+    QVERIFY2(done.first().at(1).toBool(), qPrintable(done.first().at(2).toString()));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+    QFile log(m.installLogPath(id));
+    QVERIFY(log.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(log.readAll());
+    // the first source is gone, the second has another commit and is refused, the third is the pin
+    QVERIFY2(text.contains(QStringLiteral("Could not fetch from ") + spec->fetchUrls().at(0)), qPrintable(text));
+    QVERIFY2(text.contains(QStringLiteral("Refused %1: it has commit ").arg(spec->fetchUrls().at(1))), qPrintable(text));
+    QVERIFY2(!text.contains(QStringLiteral("Refused ") + spec->fetchUrls().at(2)), qPrintable(text));
+    QProcess head;
+    head.setWorkingDirectory(spec->checkoutDir());
+    head.start(QStringLiteral("git"), {QStringLiteral("rev-parse"), QStringLiteral("HEAD"), QStringLiteral("HEAD^{tree}")});
+    QVERIFY(head.waitForFinished());
+    QCOMPARE(QString::fromLatin1(head.readAllStandardOutput()).split(QLatin1Char('\n'), Qt::SkipEmptyParts), (QStringList{m_commit, m_tree}));
+
+    // the pinned commit with a tree other than the pinned one is refused at every source
+    RunnerSpec wrongTree = *spec;
+    wrongTree.id = QStringLiteral("coolfox-wrong-tree");
+    wrongTree.tree = QString(40, QLatin1Char('e'));
+    RunnerInstall install(wrongTree);
+    QSignalSpy finished(&install, &RunnerInstall::finished);
+    install.start();
+    QVERIFY(finished.wait(60000));
+    QVERIFY(!finished.first().at(0).toBool());
+    const QString why = finished.first().at(1).toString();
+    QVERIFY2(why.startsWith(QStringLiteral("No source had cool_fox (codec_d) %1").arg(m_commit.left(7))), qPrintable(why));
+    QVERIFY2(why.contains(QStringLiteral("has tree %1, not %2").arg(m_tree, wrongTree.tree)), qPrintable(why));
+    QVERIFY(!QFileInfo::exists(wrongTree.installDir()));
 }
 
 QTEST_GUILESS_MAIN(TestRunners)

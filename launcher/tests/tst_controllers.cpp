@@ -15,6 +15,7 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -44,6 +45,7 @@ private slots:
     void xtxWarmWaitsForThePipelineBook();
     void kelvaroqNothingToBuildYet();
     void silentPrecacheIsNotFinished();
+    void coolfoxRunsWithItsOwnEnvironment();
     void gameRunPauseResumeStop();
     void gameCrash();
     void gameFilesMissing();
@@ -73,7 +75,7 @@ void TestControllers::initTestCase()
     qputenv("XSEMU_RUNNERS_DIR", m_fixtures.filePath(QStringLiteral("runners")).toUtf8());
     QFile feed(m_fixtures.filePath(QStringLiteral("feed.json")));
     QVERIFY(feed.open(QIODevice::WriteOnly));
-    feed.write(R"({"kelvaroq": {"keep": true}, "victory-dexnom": {"keep": true}, "victory-7900xtx": {"keep": true}})");
+    feed.write(R"({"kelvaroq": {"keep": true}, "victory-dexnom": {"keep": true}, "victory-7900xtx": {"keep": true}, "coolfox": {"keep": true}})");
     feed.close();
     qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
     QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
@@ -349,6 +351,93 @@ void TestControllers::silentPrecacheIsNotFinished()
     QCOMPARE(run.result, WarmupRun::Result::NothingToBuild);
     QCOMPARE(run.exitCode, 0);
     QVERIFY2(run.message.contains(QStringLiteral("finished without building anything")), qPrintable(run.message));
+}
+
+// what fake-xsemu recorded about its last invocation (FAKE_XSEMU_RECORD)
+static QJsonObject lastRecord(const QString& path)
+{
+    const QStringList lines = readText(path).split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    return lines.isEmpty() ? QJsonObject() : QJsonDocument::fromJson(lines.last().toUtf8()).object();
+}
+
+void TestControllers::coolfoxRunsWithItsOwnEnvironment()
+{
+    const QString id = QStringLiteral("coolfox");
+    installFakeRunner(id);
+    const RunnerSpec* spec = Runners::find(id);
+    const QString record = m_dir->filePath(QStringLiteral("record.jsonl"));
+    qputenv("FAKE_XSEMU_RECORD", record.toUtf8());
+    // never passed on, even when the launcher's own environment has them
+    qputenv("VICTORY_KEYS", "2:F1");
+    qputenv("VICTORY_CONFIG", m_dir->filePath(QStringLiteral("missing.toml")).toUtf8());
+    const auto checkEnv = [&](bool ambient) {
+        const QJsonObject e = lastRecord(record).value(QStringLiteral("env")).toObject();
+        QVERIFY(!e.contains(QStringLiteral("VICTORY_KEYS")));
+        QVERIFY(!e.contains(QStringLiteral("VICTORY_CONFIG")));
+        QCOMPARE(e.value(QStringLiteral("VICTORY_PIPELINE_BOOK")).toString(), QStringLiteral("1"));
+        QCOMPARE(e.value(QStringLiteral("VICTORY_TEXTURE_NO_WAIT")).toString(), QStringLiteral("1"));
+        QCOMPARE(e.value(QStringLiteral("VICTORY_RELAY")).toString(), QStringLiteral("2"));
+        QCOMPARE(e.value(QStringLiteral("VICTORY_CARD_BUFFERS_MIN_KB")).toString(), QStringLiteral("64"));
+        QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(e.value(QStringLiteral("VICTORY_CACHE_DIR")).toString())), QDir(spec->dataDir()).filePath(QStringLiteral("cache")));
+        QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(e.value(QStringLiteral("VICTORY_DATA_DIR")).toString())), QDir(spec->dataDir()).filePath(QStringLiteral("data")));
+        QCOMPARE(e.value(QStringLiteral("VICTORY_AMBIENT")).toString(), ambient ? QStringLiteral("0.8") : QString());
+        QCOMPARE(e.value(QStringLiteral("VICTORY_AMBIENT_AIR")).toString(), ambient ? QStringLiteral("1.5") : QString());
+        QCOMPARE(QDir::cleanPath(lastRecord(record).value(QStringLiteral("cwd")).toString()), QDir::cleanPath(spec->installDir()));
+    };
+    QDir(QDir(spec->dataDir()).filePath(QStringLiteral("cache/pipelines"))).removeRecursively();
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+
+    // no pipeline book yet: shaders only
+    QStringList steps;
+    WarmupRun run = precache(id, game, &steps);
+    QVERIFY2(run.result == WarmupRun::Result::Finished, qPrintable(run.message));
+    QCOMPARE(steps, QStringList{QStringLiteral("Translating shaders")});
+    QCOMPARE(run.done, 4210);
+    QCOMPARE(run.message, QStringLiteral("Play once with cool_fox to record pipelines; the next warm-up builds them."));
+    const QJsonArray shaders = lastRecord(record).value(QStringLiteral("args")).toArray();
+    QCOMPARE(shaders.at(0).toString(), QStringLiteral("shaders"));
+    QCOMPARE(shaders.at(1).toString(), QStringLiteral("--jobs"));
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(shaders.at(3).toString())), QDir::cleanPath(game.folder));
+    checkEnv(false);
+    QVERIFY(!QFileInfo::exists(QDir(spec->dataDir()).filePath(QStringLiteral("data/victory.toml"))));
+
+    // after a run recorded the book: both steps
+    QVERIFY(QDir().mkpath(QDir(spec->dataDir()).filePath(QStringLiteral("cache/pipelines"))));
+    QFile book(QDir(spec->dataDir()).filePath(QStringLiteral("cache/pipelines/known-pipelines.bin")));
+    QVERIFY(book.open(QIODevice::WriteOnly));
+    book.write(QByteArray(2000, '\n'));
+    book.close();
+    steps.clear();
+    run = precache(id, game, &steps);
+    QCOMPARE(steps, (QStringList{QStringLiteral("Translating shaders"), QStringLiteral("Building pipelines")}));
+    QCOMPARE(run.total, 1996);
+    QCOMPARE(lastRecord(record).value(QStringLiteral("args")).toArray().at(1).toString(), QStringLiteral("--used"));
+
+    // the launch: its own exe, always a Series S; the author's ambient light only when switched on
+    for (const bool ambient : {false, true}) {
+        m_settings->setRunnerOption(id, QStringLiteral("ambient"), ambient);
+        RunnerManager runners;
+        EmulatorController emu(*m_settings, *m_gate);
+        emu.setRunners(&runners);
+        QSignalSpy exited(&emu, &EmulatorController::exited);
+        QString error;
+        QVERIFY2(emu.start(game, 0, &error), qPrintable(error));
+        QVERIFY(!exited.wait(1500));
+        QVERIFY(emu.isActive());
+        const QJsonArray args = lastRecord(record).value(QStringLiteral("args")).toArray();
+        QCOMPARE(args.size(), 5);
+        QCOMPARE(args.at(0).toString(), QStringLiteral("run"));
+        QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(args.at(1).toString())), QDir::cleanPath(QDir(game.folder).filePath(game.exe)));
+        QCOMPARE(args.at(2).toString(), QStringLiteral("--console"));
+        QCOMPARE(args.at(3).toString(), QStringLiteral("series-s"));
+        QCOMPARE(args.at(4).toString(), QStringLiteral("--execute"));
+        checkEnv(ambient);
+        emu.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(emu.state(), EmulatorController::State::Idle, 15000);
+    }
+    qunsetenv("FAKE_XSEMU_RECORD");
+    qunsetenv("VICTORY_KEYS");
+    qunsetenv("VICTORY_CONFIG");
 }
 
 void TestControllers::warmupFinishesThroughEveryPhase()

@@ -16,7 +16,8 @@ class QNetworkReply;
 
 // One install or update of a third-party runner, step by step, every process hidden:
 //   release asset: download (SHA-256 checked) -> unpack -> swap into place
-//   source:        toolchain bootstrap -> fetch the pinned commit -> build steps -> swap into place
+//   source:        toolchain bootstrap -> fetch the pinned commit (each remote in turn until one
+//                  has it, its commit and tree ids checked) -> build steps -> swap into place
 // The new copy is assembled in <runner>\staging and only replaces <runner>\app when every step
 // succeeded, so a cancelled or failed update leaves the installed version working. Each run writes
 // <runner>\install.log; a failed run also leaves <runner>\install-failed.json with the reason, so the
@@ -55,7 +56,11 @@ private:
     void fail(const QString& error);
     void setStep(const QString& detail = {});
     void download(const QString& url, const QString& to, const QString& sha256);
-    void runProcess(const QStringList& command, const QString& workDir, const QString& parser);
+    // then (when set) gets whether it exited 0 instead of the run going on or failing
+    void runProcess(const QStringList& command, const QString& workDir, const QString& parser, std::function<void(bool)> then = {});
+    void fetchFrom(const QString& src, int remote, QStringList refused);
+    // Why the checkout's commit or tree is not the pinned one (empty: it is).
+    QString pinMismatch(const QString& src, const QString& rev);
     void ensureGit();
     void ensureMsvc();
     void ensureRust();

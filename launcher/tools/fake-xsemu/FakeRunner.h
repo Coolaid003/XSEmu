@@ -9,11 +9,16 @@
 //   fake-xsemu --as kelvaroq precompile [--check]
 //   fake-xsemu --as victory shaders --jobs N <game dir> | warm --used --jobs N
 //   fake-xsemu --as victory-dexnom warm --no-rt --jobs N <game dir>
-// The kind also follows the program's file name: a copy named kelvaroq-engine or victory acts as one.
+// The kind also follows the program's file name: a copy named kelvaroq-engine or victory acts as one
+// (a victory under a folder named coolfox or victory-dexnom acts as that fork).
+// FAKE_XSEMU_RECORD=<file>: each invocation appends one JSON line with its arguments, working folder
+// and VICTORY_* environment.
 // FAKE_XSEMU_SCENARIO = ok | crash | files_missing (exit 1 with "Error: ...") | slow_boot | silent (a
 // pre-cache command exits 0 at once and prints nothing). FAKE_XSEMU_WAITING: what Kelvaroq's check
 // finds waiting (812).
-// Both VIctory kinds load their config first, as the forks do: with VICTORY_CONFIG unset, naming a file
+// cool_fox reads its paths from the environment: VICTORY_GAME_DIR, VICTORY_CACHE_DIR and VICTORY_DATA_DIR
+// must be set, a set VICTORY_CONFIG must exist, and a set VICTORY_KEYS is refused.
+// The other VIctory kinds load their config first, as the forks do: with VICTORY_CONFIG unset, naming a file
 // that is not there, or holding anything but [paths] game_dir, cache_dir and data_dir (DexNom also
 // [graphics] ray_tracing), they print "Error: ..." and exit 1. The 7900 XTX "warm" counts the pipelines
 // in <VICTORY_CACHE_DIR>/pipelines/known-pipelines.bin (one per line here).

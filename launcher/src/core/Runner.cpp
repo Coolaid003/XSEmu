@@ -75,10 +75,17 @@ QString RunnerSpec::resolvedCacheDir() const
     return QDir::isAbsolutePath(d) ? d : QDir(Paths::localAppDataDir()).filePath(d);
 }
 
-QProcessEnvironment RunnerSpec::processEnvironment(const QList<QPair<QString, QString>>& values) const
+QProcessEnvironment RunnerSpec::processEnvironment(const QList<QPair<QString, QString>>& values, const QHash<QString, bool>& choices) const
 {
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    for (const auto& [name, value] : environment) {
+    for (const QString& name : clearEnvironment)
+        env.remove(name);
+    QList<QPair<QString, QString>> all = environment;
+    for (const Option& o : options) {
+        if (optionOn(o, choices))
+            all += o.environment;
+    }
+    for (const auto& [name, value] : all) {
         const QString v = expand(value, values);
         env.insert(name, v);
         if (name.endsWith(QLatin1String("_DIR")))
@@ -119,6 +126,8 @@ QString RunnerSpec::cloneUrl() const
         return repo; // a feed may point at a local repository
     return QStringLiteral("https://github.com/%1.git").arg(repo);
 }
+
+QStringList RunnerSpec::fetchUrls() const { return remotes.isEmpty() ? QStringList{cloneUrl()} : remotes; }
 
 QString RunnerSpec::expand(const QString& arg, const QList<QPair<QString, QString>>& values)
 {
@@ -273,6 +282,61 @@ QList<RunnerSpec> build()
     k.embed = RunnerSpec::Embed::Docked;
     list << k;
 
+    // codec_d's cool_fox at f4b48ad (tree 832b1ea), audited 2026-11-26: avatarmanz's VIctory 7900 XTX
+    // plus six commits for a 32 GB RTX 5090 box. The GitHub original is gone, so three copies of the
+    // same commit are tried in turn and the commit and tree ids are checked. Built from source only:
+    // never its README's prebuilt exe or its Play-VIctory.cmd, whose environment (lines 20-37, less the
+    // ambient light, which is a switch here) is set below. It reads paths from the environment and
+    // no config file, and VICTORY_KEYS (scripted key presses) is never passed on.
+    RunnerSpec f;
+    f.id = QStringLiteral("coolfox");
+    f.name = QStringLiteral("cool_fox (codec_d)");
+    f.repo = QStringLiteral("codec-d/cool_fox");
+    f.badge = QStringLiteral("NVIDIA \u00B7 tuned on RTX 5090 (32 GB RAM)");
+    f.summary = QStringLiteral("VIctory fork tuned on a GeForce RTX 5090 with 32 GB of RAM; 64 GB recommended.");
+    f.licence = QStringLiteral("GPL-3.0");
+    f.note = QStringLiteral("cool_fox reports the game's licence as active. It signs the DXIL it makes without validating it, and skips some of the "
+                            "title's ray-tracing shaders by name. It always runs the game as a Series S, whatever the game's console setting. "
+                            "Its GitHub repository was deleted; XSEmu builds the audited commit. Needs 32 GB of RAM.");
+    f.windowsOnly = true;
+    f.install = RunnerSpec::Install::BuildFromSource;
+    f.commit = QStringLiteral("f4b48ad766ddbec1a1867022cd42f7645b0dd55e");
+    f.tree = QStringLiteral("832b1ea59576e5e2688d49c2530b67f0efae43bc");
+    f.remotes = {QStringLiteral("https://github.com/cputroll/cgbj-reupload.git"), QStringLiteral("https://git.gtahub.st/github/codec-d--cool_fox.git"),
+                 QStringLiteral("https://github.com/DoubleGhosty/cool_fox.git")};
+    f.toolchains = {QStringLiteral("git"), QStringLiteral("msvc"), QStringLiteral("rust")};
+    f.buildSteps = {{QStringLiteral("cargo"), QStringLiteral("build"), QStringLiteral("--release"), QStringLiteral("--locked"), QStringLiteral("-p"), QStringLiteral("victory")}};
+    f.artifacts = {{QStringLiteral("release/victory.exe"), QStringLiteral("victory.exe")}};
+    f.executable = QStringLiteral("victory.exe");
+    f.buildNote = QStringLiteral("cool_fox is built from source on this PC, from a commit that was checked for malware. It needs Git, Rust and the Visual Studio C++ build tools (installed if missing) and can take a while; build times have not been measured yet.");
+    f.launchArgs = {QStringLiteral("run"), QStringLiteral("{gameExe}"), QStringLiteral("--console"), QStringLiteral("series-s"), QStringLiteral("--execute")};
+    f.environment = {{QStringLiteral("VICTORY_GAME_DIR"), QStringLiteral("{gameDir}")},
+                     {QStringLiteral("VICTORY_CACHE_DIR"), QStringLiteral("{runnerDir}/cache")},
+                     {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")},
+                     {QStringLiteral("VICTORY_LOG"), QStringLiteral("warn")},
+                     {QStringLiteral("VICTORY_PIPELINE_BOOK"), QStringLiteral("1")}};
+    for (const auto& [name, value] : QList<QPair<const char*, const char*>>{
+             {"TEXTURE_NO_WAIT", "1"}, {"RELAY", "2"}, {"WIDE_BACK", "1"}, {"CARD_REHASH_RUNS", "1"}, {"JOIN_COPIES", "1"}, {"INDIRECT_WINDOW", "1"},
+             {"RELAY_COPY", "1"}, {"CARD_STEPS", "2"}, {"INDIRECT_BATCH", "2"}, {"MAP_THREADS", "1"}, {"CARD_AWAKE", "1"}, {"SHOW_AFTER", "1"},
+             {"THIN", "1"}, {"JOIN_PARTS", "8"}, {"UPLOAD_AHEAD", "1"}, {"LEVELS_ON_DEMAND", "1"}, {"CARD_BUFFERS_MIN_KB", "64"}})
+        f.environment << qMakePair(QStringLiteral("VICTORY_") + QLatin1String(name), QString::fromLatin1(value));
+    f.clearEnvironment = {QStringLiteral("VICTORY_KEYS"), QStringLiteral("VICTORY_CONFIG"), QStringLiteral("VICTORY_AMBIENT"), QStringLiteral("VICTORY_AMBIENT_AIR")};
+    f.options = {{QStringLiteral("ambient"), QStringLiteral("Author's ambient light"),
+                  QStringLiteral("The stand-in light codec_d plays with (VICTORY_AMBIENT=0.8, VICTORY_AMBIENT_AIR=1.5). Not the game's own lighting."), false,
+                  {{QStringLiteral("VICTORY_AMBIENT"), QStringLiteral("0.8")}, {QStringLiteral("VICTORY_AMBIENT_AIR"), QStringLiteral("1.5")}}}};
+    f.precache = {{{QStringLiteral("shaders"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("coolfox-shaders"), false,
+                   RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Translating shaders")},
+                  {{QStringLiteral("warm"), QStringLiteral("--used"), QStringLiteral("--jobs"), QStringLiteral("{jobs}")}, QStringLiteral("victory-warm"), false,
+                   RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Building pipelines"), {QStringLiteral("{cacheDir}/pipelines/known-pipelines.bin")},
+                   QStringLiteral("Play once with cool_fox to record pipelines; the next warm-up builds them.")}};
+    f.precacheNote = QStringLiteral("Translates every shader in the game (about 26,000), then builds the pipelines earlier runs drew with.");
+    f.recommendMinRamBytes = 32ULL * 1024 * 1024 * 1024;
+    f.cacheDir = QStringLiteral("{runnerDir}/cache");
+    f.stop = RunnerSpec::Stop::SysCommandClose;
+    f.stopGraceMs = 5000;
+    f.embed = RunnerSpec::Embed::Docked;
+    list << f;
+
     return list;
 }
 
@@ -310,6 +374,8 @@ static void applyFeed(QList<RunnerSpec>& list)
             r.install = RunnerSpec::Install::BuildFromSource;
             r.commit = o.value(QLatin1String("commit")).toString();
             r.repo = o.value(QLatin1String("repo")).toString(r.repo);
+            r.tree = o.value(QLatin1String("tree")).toString();
+            r.remotes = strings(o.value(QLatin1String("remotes")));
         } else {
             r.install = RunnerSpec::Install::ReleaseAsset;
             r.releaseTag = o.value(QLatin1String("tag")).toString();
@@ -335,6 +401,7 @@ static void applyFeed(QList<RunnerSpec>& list)
         r.fetches.clear();
         r.toolchains.clear();
         r.environment.clear();
+        r.options.clear();
         r.configFile.clear();
         r.configPaths.clear();
         if (o.contains(QLatin1String("buildSteps"))) {

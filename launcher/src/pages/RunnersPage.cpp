@@ -12,6 +12,7 @@
 #include "widgets/PageHeader.h"
 #include "widgets/Spinner.h"
 #include "widgets/Text.h"
+#include "widgets/Toggle.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -167,6 +168,25 @@ public:
             auto* note = new Label(spec.note, Label::Style::Caption, Theme::Role::Warning);
             note->setWordWrap(true);
             mid->addWidget(note);
+        }
+        const QHash<QString, bool> choices = m_s.settings.runnerOptions(spec.id);
+        for (const RunnerSpec::Option& option : spec.options) {
+            auto* row = new QHBoxLayout;
+            row->setSpacing(8);
+            auto* toggle = new Toggle;
+            toggle->setObjectName(QStringLiteral("option-%1-%2").arg(spec.id, option.key));
+            toggle->setChecked(RunnerSpec::optionOn(option, choices));
+            toggle->setToolTip(option.description);
+            connect(toggle, &Toggle::toggled, this, [this, key = option.key](bool on) { m_s.settings.setRunnerOption(m_spec.id, key, on); });
+            row->addWidget(toggle, 0, Qt::AlignTop);
+            auto* text = new QVBoxLayout;
+            text->setSpacing(2);
+            text->addWidget(new Label(option.label, Label::Style::Small, Theme::Role::Text));
+            auto* what = new Label(option.description, Label::Style::Caption, Theme::Role::Text3);
+            what->setWordWrap(true);
+            text->addWidget(what);
+            row->addLayout(text, 1);
+            mid->addLayout(row);
         }
         top->addLayout(mid, 1);
 

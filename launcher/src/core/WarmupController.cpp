@@ -322,6 +322,7 @@ void WarmupController::startRunnerStep()
     m_progress.phase = step.label;
     m_progress.done = 0;
     m_progress.total = 0;
+    m_progress.estimate = 0;
     m_progress.keysPerS = 0;
     m_progress.etaS.reset();
     m_progress.ramFreeMb = qint64(HardwareInfo::availableRam() / (1024 * 1024));
@@ -334,7 +335,7 @@ void WarmupController::startRunnerStep()
 
     auto* p = new ProcessTree(this);
     m_process = p;
-    p->setProcessEnvironment(m_spec->processEnvironment(tokens));
+    p->setProcessEnvironment(m_spec->processEnvironment(tokens, m_settings.runnerOptions(m_spec->id)));
     p->setWorkingDirectory(QFileInfo(program).absolutePath());
     connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {
         while (p->canReadLine())
@@ -371,6 +372,8 @@ void WarmupController::onRunnerLine(const QString& line)
         m_progress.done = u->done;
     if (u->failed >= 0)
         m_progress.failed = u->failed;
+    if (u->estimate > 0)
+        m_progress.estimate = u->estimate;
     if (step.label.isEmpty() && !u->phase.isEmpty())
         m_progress.phase = u->phase;
     const double stepS = m_stepClock.elapsed() / 1000.0;

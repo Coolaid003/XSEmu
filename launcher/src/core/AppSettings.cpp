@@ -182,6 +182,24 @@ void AppSettings::setRunnerLocation(const QString& id, const QString& folder)
     write(Key::RunnerLocations, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
 }
 
+QHash<QString, bool> AppSettings::runnerOptions(const QString& id) const
+{
+    QHash<QString, bool> out;
+    const QVariantMap all = readMap(Key::RunnerOptions).value(id).toMap();
+    for (auto it = all.begin(); it != all.end(); ++it)
+        out.insert(it.key(), it.value().toBool());
+    return out;
+}
+
+void AppSettings::setRunnerOption(const QString& id, const QString& key, bool on)
+{
+    QVariantMap all = readMap(Key::RunnerOptions);
+    QVariantMap mine = all.value(id).toMap();
+    mine.insert(key, on);
+    all.insert(id, mine);
+    write(Key::RunnerOptions, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
+}
+
 bool AppSettings::windowGameBarAutoHide() const { return read(Key::WindowGameBarAutoHide, false).toBool(); }
 void AppSettings::setWindowGameBarAutoHide(bool on) { write(Key::WindowGameBarAutoHide, on); }
 

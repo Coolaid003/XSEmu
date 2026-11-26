@@ -42,6 +42,7 @@ public:
         QString phase;           // starting, giants, bound, compute, compute_blobs, rest
         qint64 done = 0;         // within the phase
         qint64 total = 0;        // within the phase
+        qint64 estimate = 0;     // runner pre-cache: a likely total while the step gives none
         double keysPerS = 0;     // the phase's average
         std::optional<qint64> etaS; // rest of the phase; absent while unknown
         std::optional<qint64> ramFreeMb;
