@@ -8,7 +8,7 @@
 
 // Original line icons (resources/icons/<name>.svg, stroke="currentColor") rendered in any colour.
 // Names: library bolt gear search plus play pause stop overlay fullscreen back lock folder info
-// keyboard monitor file network network-off chip gamepad warning check refresh close chevron-down
+// keyboard monitor file clock more network network-off chip gamepad warning check refresh close chevron-down
 // chevron-right external key win-min win-max win-restore win-close.
 namespace Icon {
 

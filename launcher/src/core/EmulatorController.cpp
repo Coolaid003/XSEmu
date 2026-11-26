@@ -162,7 +162,7 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
     m_killed = false;
     m_playedMs = 0;
     m_playClock.invalidate();
-    m_overlay = m_settings.overlayDefault();
+    m_overlay = m_settings.gameOverrides(game.titleId()).value(QStringLiteral("overlay"), m_settings.overlayDefault()).toBool();
 
     m_pipeName = QStringLiteral("xsemu-%1-%2").arg(QCoreApplication::applicationPid()).arg(++g_pipeCounter);
     delete m_server;

@@ -210,6 +210,38 @@ bool TitleConfig::set(const QVariantMap& values)
     return save.commit();
 }
 
+bool TitleConfig::remove(const QStringList& keys)
+{
+    QFile in(m_path);
+    if (!in.exists())
+        return true;
+    if (!in.open(QIODevice::ReadOnly))
+        return false;
+    const QString text = QString::fromUtf8(in.readAll());
+    in.close();
+    const QString out = without(text, keys);
+    if (out == text)
+        return true;
+    QSaveFile save(m_path);
+    if (!save.open(QIODevice::WriteOnly))
+        return false;
+    save.write(out.toUtf8());
+    return save.commit();
+}
+
+QString TitleConfig::without(const QString& text, const QStringList& keys)
+{
+    QStringList lines = text.split(QLatin1Char('\n'));
+    for (qsizetype i = 0; i < lines.size(); ++i) {
+        if (isTableHeader(lines[i]))
+            break;
+        QString key, raw;
+        if (splitKeyValue(lines[i], &key, &raw) && keys.contains(key))
+            lines.removeAt(i--);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
 QVariantMap TitleConfig::parse(const QString& text)
 {
     QVariantMap out;

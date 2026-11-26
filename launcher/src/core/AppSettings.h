@@ -62,12 +62,13 @@ public:
         static constexpr const char* GameOverrides = "games/overrides";
         static constexpr const char* RecentWarmups = "warmup/recentRuns";
         static constexpr const char* PlayStats = "games/play";
+        static constexpr const char* LibrarySort = "library/sort";
     };
 
     static constexpr int kRecentWarmupLimit = 20;
     static constexpr int kDefaultGiantCompileCap = 3;
-    // RAM a launch needs on top of EmulatorController::kRamFloorMb. 0: no estimate, so a launch only
-    // needs the 1 GB floor free (the emulator admits work while it fits above that floor).
+    // No fixed run floor: a launch only needs the 1 GB floor free (EmulatorController::kRamFloorMb)
+    // plus whatever the user configures here.
     static constexpr int kDefaultLaunchNeedMb = 0;
 
     // Opens Paths::settingsFile(), or the given ini file.
@@ -133,6 +134,14 @@ public:
     qint64 playSeconds(const QString& titleId) const;
     QDateTime lastPlayed(const QString& titleId) const;
     void addPlayTime(const QString& titleId, qint64 seconds, const QDateTime& endedAt);
+    // The title's last run as the Game details page shows it: an open map (result, exitCode, at,
+    // seconds, fpsAverage, stalls, worstMs, heldPeakBytes, freeMinMb), empty when it never ran.
+    QVariantMap lastRun(const QString& titleId) const;
+    void setLastRun(const QString& titleId, const QVariantMap& run);
+
+    // The library's sort: "recent" (default), "name" or "size".
+    QString librarySort() const;
+    void setLibrarySort(const QString& sort);
 
 signals:
     void changed(const QString& key);

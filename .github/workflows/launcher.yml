@@ -46,6 +46,17 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --output-on-failure --timeout 120
+      - name: Run each test directly when ctest failed
+        if: failure()
+        working-directory: build
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          Get-ChildItem tests -Filter 'tst_*.exe' | ForEach-Object {
+            & $_.FullName -o '-,txt' -v2 2>&1 | Select-Object -Last 40
+            '{0}: exit 0x{1:X8}' -f $_.Name, $LASTEXITCODE
+          }
       - name: Install and deploy Qt
         run: cmake --install build --prefix dist
       - name: Upload XSEmuLauncher
@@ -65,7 +76,7 @@ jobs:
       - name: Install Qt 6 and build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ qt6-base-dev qt6-svg-dev libgl-dev
+          sudo apt-get install -y --no-install-recommends cmake ninja-build g++ qt6-base-dev qt6-svg-dev qt6-qpa-plugins libgl-dev libxcb1-dev pkg-config xvfb xauth
       - name: Configure
         run: cmake -S launcher -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_COMPILE_WARNING_AS_ERROR=ON
       - name: Build
@@ -73,6 +84,11 @@ jobs:
       - name: Test
         working-directory: build
         run: ctest --output-on-failure --timeout 120
+      - name: In-game view on Xvfb (fake-xsemu embedded as a real child window)
+        working-directory: build
+        env:
+          QT_QPA_PLATFORM: xcb
+        run: xvfb-run -a -s "-screen 0 1280x800x24" ./tests/tst_ingame -o -,txt
       - name: Render every design state headless
         working-directory: build
         env:

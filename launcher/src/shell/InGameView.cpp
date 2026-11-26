@@ -134,9 +134,9 @@ protected:
 }
 
 // The game's small cover in the bar and the boot screen: cached SteamGridDB art, or a neutral tile.
-class CoverThumb : public QWidget {
+class GameCover : public QWidget {
 public:
-    CoverThumb(QSize size, int radius, bool onDark)
+    GameCover(QSize size, int radius, bool onDark)
         : m_radius(radius)
         , m_onDark(onDark)
     {
@@ -214,7 +214,7 @@ class BootPanel : public OverlayPanel {
 public:
     explicit BootPanel(QWidget* host)
         : OverlayPanel(host, 0)
-        , m_cover(new CoverThumb(QSize(72, 108), 6, true))
+        , m_cover(new GameCover(QSize(72, 108), 6, true))
         , m_title(new Label({}, Label::Style::SectionTitle, Theme::Role::HudText))
         , m_subtitle(new Label({}, Label::Style::Small, Theme::Role::HudText2))
         , m_step1Icon(new IconView(QStringLiteral("check"), Theme::Role::Success, 14))
@@ -278,7 +278,7 @@ protected:
     }
 
 private:
-    CoverThumb* m_cover;
+    GameCover* m_cover;
     Label* m_title;
     Label* m_subtitle;
     IconView* m_step1Icon;
@@ -615,7 +615,7 @@ InGameView::InGameView(Services& services, QWidget* parent)
     : QWidget(parent)
     , m_s(services)
     , m_bar(new GameBar)
-    , m_cover(new CoverThumb(QSize(16, 22), 3, false))
+    , m_cover(new GameCover(QSize(16, 22), 3, false))
     , m_title(new Label({}, Label::Style::SmallStrong))
     , m_spinner(new Spinner(14))
     , m_paused(new Badge({}, Theme::Tone::Warning, Badge::Kind::Pill))

@@ -1,0 +1,193 @@
+// The in-game view end to end: MainWindow launches fake-xsemu through EmulatorController with
+// --host-hwnd and --control-pipe, and the test drives it with real clicks on the game bar and the
+// exit screens, plus the launcher's own F1/F3/F11/Esc keys.
+#include "DevFixtures.h"
+#include "EmulatorController.h"
+#include "Library.h"
+#include "app/Services.h"
+#include "shell/InGameView.h"
+#include "shell/MainWindow.h"
+#include "theme/Theme.h"
+
+#include <QAbstractButton>
+#include <QApplication>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QTest>
+
+using State = EmulatorController::State;
+
+class TestInGame : public QObject {
+    Q_OBJECT
+private slots:
+    void initTestCase();
+    void init();
+    void cleanup();
+    void playPauseOverlayFullscreenBack();
+    void stopReturnsToLibrary();
+    void crashScreen_data();
+    void crashScreen();
+
+private:
+    QAbstractButton* button(const char* name) const;
+    void click(const char* name);
+    Game fixtureGame(const QString& title) const;
+
+    QTemporaryDir m_fixtures;
+    std::unique_ptr<QTemporaryDir> m_dir;
+    std::unique_ptr<Services> m_s;
+    std::unique_ptr<MainWindow> m_w;
+    GameList m_games;
+};
+
+void TestInGame::initTestCase()
+{
+    QStandardPaths::setTestModeEnabled(true);
+    qputenv("XSEMU_EMULATOR", XSEMU_FAKE_EMULATOR_PATH);
+    qputenv("FAKE_XSEMU_TICK_MS", "5");
+    QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
+    m_games = Library::scan({m_fixtures.filePath(QStringLiteral("games"))}, 3, false);
+    QCOMPARE(m_games.size(), 4);
+    Theme::instance().install(*qApp);
+}
+
+void TestInGame::init()
+{
+    m_dir = std::make_unique<QTemporaryDir>();
+    qputenv("XCL_DATA_ROOT", m_dir->filePath(QStringLiteral("xcl")).toUtf8());
+    qputenv("FAKE_XSEMU_SCENARIO", "ok");
+    m_s = std::make_unique<Services>();
+    m_s->settings.setLaunchNeedMb(0);
+    m_s->settings.setFirstLaunchDone(true);
+    m_s->settings.setGameFolders({m_fixtures.filePath(QStringLiteral("games"))});
+    m_w = std::make_unique<MainWindow>(*m_s);
+    m_w->resize(1280, 800);
+    m_w->show();
+    QVERIFY(QTest::qWaitForWindowExposed(m_w.get()));
+}
+
+void TestInGame::cleanup()
+{
+    if (m_s->emulator.isActive()) {
+        m_s->emulator.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(m_s->emulator.state(), State::Idle, 10000);
+    }
+    m_w.reset();
+    m_s.reset();
+    m_dir.reset();
+}
+
+QAbstractButton* TestInGame::button(const char* name) const
+{
+    return m_w->inGameView()->findChild<QAbstractButton*>(QLatin1String(name));
+}
+
+void TestInGame::click(const char* name)
+{
+    QAbstractButton* b = button(name);
+    QVERIFY2(b, name);
+    QTRY_VERIFY2_WITH_TIMEOUT(b->isVisible() && b->isEnabled(), qPrintable(QStringLiteral("%1 ingame=%2 view=%3 win=%4 visibleToView=%5 st=%6").arg(QLatin1String(name)).arg(m_w->isInGame()).arg(m_w->inGameView()->isVisible()).arg(m_w->isVisible()).arg(b->isVisibleTo(m_w->inGameView())).arg(int(m_s->emulator.state()))), 5000);
+    QTest::mouseClick(b, Qt::LeftButton);
+}
+
+Game TestInGame::fixtureGame(const QString& title) const
+{
+    for (const Game& g : m_games) {
+        if (g.title() == title)
+            return g;
+    }
+    return {};
+}
+
+void TestInGame::playPauseOverlayFullscreenBack()
+{
+    EmulatorController& emu = m_s->emulator;
+    m_w->play(fixtureGame(QStringLiteral("Signal Garden")));
+    QVERIFY(m_w->isInGame());
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Running, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(emu.stats().fps.has_value(), 5000);
+
+    click("barPause");
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Paused, 5000);
+    click("pausedResume");
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Running, 5000);
+
+    QVERIFY(!emu.overlayOn());
+    click("barOverlay");
+    QTRY_VERIFY_WITH_TIMEOUT(emu.overlayOn(), 5000);
+    QVERIFY(button("barOverlay")->isChecked());
+    m_w->inGameView()->handleKey(QStringLiteral("F3"));
+    QTRY_VERIFY_WITH_TIMEOUT(!emu.overlayOn(), 5000);
+
+    m_w->inGameView()->handleKey(QStringLiteral("F1"));
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Paused, 5000);
+    m_w->inGameView()->handleKey(QStringLiteral("F1"));
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Running, 5000);
+
+    click("barFullscreen");
+    QTRY_VERIFY_WITH_TIMEOUT(m_w->inGameView()->isFullScreen(), 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(m_w->inGameView()->findChild<QWidget*>(QStringLiteral("keyHint"))->isVisible(), 5000);
+    m_w->inGameView()->handleKey(QStringLiteral("Escape"));
+    QTRY_VERIFY_WITH_TIMEOUT(!m_w->inGameView()->isFullScreen(), 5000);
+
+    // Back to Library keeps the game, paused, under Now playing.
+    click("barBack");
+    QVERIFY(!m_w->isInGame());
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Paused, 5000);
+    QVERIFY(emu.isActive());
+}
+
+void TestInGame::stopReturnsToLibrary()
+{
+    qputenv("FAKE_XSEMU_SCENARIO", "slow_boot");
+    m_w->play(fixtureGame(QStringLiteral("Signal Garden")));
+    QCOMPARE(m_s->emulator.state(), State::Booting);
+    QTRY_VERIFY_WITH_TIMEOUT(m_s->emulator.hello().has_value(), 10000);
+    QCOMPARE(m_s->emulator.state(), State::Booting);
+    click("barStop");
+    QTRY_COMPARE_WITH_TIMEOUT(m_s->emulator.state(), State::Idle, 10000);
+    QTRY_VERIFY_WITH_TIMEOUT(!m_w->isInGame(), 5000);
+    QVERIFY(!m_w->inGameView()->showingExit());
+}
+
+void TestInGame::crashScreen_data()
+{
+    QTest::addColumn<QByteArray>("scenario");
+    QTest::addColumn<QString>("relaunchText");
+    QTest::newRow("crash") << QByteArray("crash") << QStringLiteral("Relaunch");
+    QTest::newRow("device_removed") << QByteArray("device_removed") << QStringLiteral("Relaunch");
+    QTest::newRow("files_missing") << QByteArray("files_missing") << QStringLiteral("Try again");
+}
+
+void TestInGame::crashScreen()
+{
+    QFETCH(QByteArray, scenario);
+    QFETCH(QString, relaunchText);
+    qputenv("FAKE_XSEMU_SCENARIO", scenario);
+    const Game game = fixtureGame(QStringLiteral("Coastline Drive"));
+    m_w->play(game);
+    QTRY_COMPARE_WITH_TIMEOUT(m_s->emulator.state(), State::Idle, 15000);
+    QVERIFY(m_w->isInGame());
+    QTRY_VERIFY_WITH_TIMEOUT(m_w->inGameView()->showingExit(), 5000);
+    QCOMPARE(button("exitRelaunch")->text(), relaunchText);
+
+    // Restart from the exit screen launches the same game again.
+    qputenv("FAKE_XSEMU_SCENARIO", "ok");
+    click("exitRelaunch");
+    QTRY_COMPARE_WITH_TIMEOUT(m_s->emulator.state(), State::Running, 10000);
+    QCOMPARE(m_s->emulator.game().titleId(), game.titleId());
+    QVERIFY(!m_w->inGameView()->showingExit());
+    m_s->emulator.stop();
+    QTRY_VERIFY_WITH_TIMEOUT(!m_w->isInGame(), 10000);
+}
+
+int main(int argc, char** argv)
+{
+    QApplication::setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
+    QApplication app(argc, argv);
+    QApplication::setApplicationName(QStringLiteral("XSEmuLauncherTest"));
+    TestInGame t;
+    return QTest::qExec(&t, argc, argv);
+}
+
+#include "tst_ingame.moc"

@@ -25,6 +25,7 @@ private slots:
     void parsesQuotingAndComments();
     void roundTripsStrings();
     void unwritableLeavesFileAlone();
+    void removeDropsOnlyTopLevelKeys();
 };
 
 void TestTitleConfig::readsTheEmulatorsFile()
@@ -97,6 +98,23 @@ void TestTitleConfig::keepsWindowsLineEndings()
     QCOMPARE(TitleConfig::parse(crlf).value(QStringLiteral("window_width")).toLongLong(), 1280);
     QCOMPARE(TitleConfig::apply(crlf, {{QStringLiteral("device_type"), QStringLiteral("anaconda")}, {QStringLiteral("raytracing"), QStringLiteral("off")}}),
              QStringLiteral("# head\r\ndevice_type = \"anaconda\"\r\nwindow_width = 1280\r\nraytracing = \"off\"\r\n\r\n[mounts]\r\n\"G:\" = \"{game}\"\r\n"));
+}
+
+void TestTitleConfig::removeDropsOnlyTopLevelKeys()
+{
+    const QString text = QStringLiteral("# header\ndevice_type = \"anaconda\"\nlog_level = \"debug\" # mine\nraytracing = \"off\"\n\n[stub_returns]\nlog_level = \"x\"\n");
+    QCOMPARE(TitleConfig::without(text, {QStringLiteral("log_level"), QStringLiteral("raytracing")}),
+             QStringLiteral("# header\ndevice_type = \"anaconda\"\n\n[stub_returns]\nlog_level = \"x\"\n"));
+
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("xcl.toml"));
+    TitleConfig cfg(path);
+    QVERIFY(cfg.remove({QStringLiteral("device_type")}));
+    QVERIFY(!cfg.exists());
+    QVERIFY(cfg.set(QVariantMap{{QStringLiteral("device_type"), QStringLiteral("anaconda")}, {QStringLiteral("keyboard_mouse"), false}}));
+    QVERIFY(cfg.remove({QStringLiteral("device_type")}));
+    QVERIFY(!cfg.contains(QStringLiteral("device_type")));
+    QCOMPARE(cfg.value(QStringLiteral("keyboard_mouse")).toBool(), false);
 }
 
 void TestTitleConfig::createsAMissingFileWithOnlyTheKeys()

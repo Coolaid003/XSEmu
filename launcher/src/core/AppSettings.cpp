@@ -227,6 +227,23 @@ QDateTime AppSettings::lastPlayed(const QString& titleId) const
     return QDateTime::fromString(readMap(Key::PlayStats).value(titleId).toMap().value(QStringLiteral("last")).toString(), Qt::ISODate);
 }
 
+QVariantMap AppSettings::lastRun(const QString& titleId) const
+{
+    return readMap(Key::PlayStats).value(titleId).toMap().value(QStringLiteral("lastRun")).toMap();
+}
+
+void AppSettings::setLastRun(const QString& titleId, const QVariantMap& run)
+{
+    QVariantMap all = readMap(Key::PlayStats);
+    QVariantMap one = all.value(titleId).toMap();
+    one.insert(QStringLiteral("lastRun"), run);
+    all.insert(titleId, one);
+    write(Key::PlayStats, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
+}
+
+QString AppSettings::librarySort() const { return read(Key::LibrarySort, QStringLiteral("recent")).toString(); }
+void AppSettings::setLibrarySort(const QString& sort) { write(Key::LibrarySort, sort); }
+
 void AppSettings::addPlayTime(const QString& titleId, qint64 seconds, const QDateTime& endedAt)
 {
     QVariantMap all = readMap(Key::PlayStats);

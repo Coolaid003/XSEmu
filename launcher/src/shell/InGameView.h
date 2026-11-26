@@ -9,7 +9,7 @@
 class Badge;
 class BootPanel;
 class Button;
-class CoverThumb;
+class GameCover;
 class ExitPanel;
 class GameHost;
 class KeyHint;
@@ -67,7 +67,7 @@ private:
 
     Services& m_s;
     QWidget* m_bar;
-    CoverThumb* m_cover;
+    GameCover* m_cover;
     Label* m_title;
     Spinner* m_spinner;
     Badge* m_paused;
