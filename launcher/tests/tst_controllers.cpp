@@ -5,9 +5,14 @@
 #include "Library.h"
 #include "Paths.h"
 #include "ProcessGate.h"
+#include "Runner.h"
+#include "RunnerManager.h"
 #include "TitleConfig.h"
 #include "WarmupController.h"
 
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
@@ -22,6 +27,8 @@ private slots:
     void warmupCancel();
     void warmupFailure();
     void warmupRefused();
+    void runnerPrecacheRunsEachStep();
+    void runnerPrecacheCancelClosesStdin();
     void gameRunPauseResumeStop();
     void gameCrash();
     void gameFilesMissing();
@@ -29,6 +36,7 @@ private slots:
 
 private:
     Game fixtureGame(const QString& title) const;
+    void installFakeKelvaroq() const;
     QTemporaryDir m_fixtures;
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<AppSettings> m_settings;
@@ -40,6 +48,13 @@ void TestControllers::initTestCase()
 {
     qputenv("XSEMU_EMULATOR", XSEMU_FAKE_EMULATOR_PATH);
     qputenv("FAKE_XSEMU_TICK_MS", "5");
+    // Kelvaroq at its curated pin on any OS, played by a copy of fake-xsemu (read before the list is first used)
+    qputenv("XSEMU_RUNNERS_DIR", m_fixtures.filePath(QStringLiteral("runners")).toUtf8());
+    QFile feed(m_fixtures.filePath(QStringLiteral("feed.json")));
+    QVERIFY(feed.open(QIODevice::WriteOnly));
+    feed.write(R"({"kelvaroq": {"keep": true}})");
+    feed.close();
+    qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
     QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
     m_games = Library::scan({m_fixtures.filePath(QStringLiteral("games"))}, 3, false);
     QCOMPARE(m_games.size(), 4);
@@ -69,6 +84,70 @@ Game TestControllers::fixtureGame(const QString& title) const
             return g;
     }
     return {};
+}
+
+void TestControllers::installFakeKelvaroq() const
+{
+    const RunnerSpec* spec = Runners::find(QStringLiteral("kelvaroq"));
+    QVERIFY(spec);
+    const QString exe = QDir(spec->installDir()).filePath(spec->executable);
+    QDir().mkpath(QFileInfo(exe).absolutePath());
+    QFile::remove(exe);
+    QVERIFY(QFile::copy(QStringLiteral(XSEMU_FAKE_EMULATOR_PATH), exe));
+    QFile rec(QDir(spec->dataDir()).filePath(QStringLiteral("runner.json")));
+    QVERIFY(rec.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    rec.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), spec->id}, {QStringLiteral("version"), spec->pinnedVersion()}, {QStringLiteral("executable"), spec->executable}}).toJson());
+}
+
+void TestControllers::runnerPrecacheRunsEachStep()
+{
+    installFakeKelvaroq();
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    m_settings->setGameOverride(game.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+    RunnerManager runners;
+    WarmupController w(*m_settings, *m_gate);
+    w.setRunners(&runners);
+    QCOMPARE(w.runnerFor(game).id, QStringLiteral("kelvaroq"));
+    QVERIFY2(w.checkStart(game).isEmpty(), qPrintable(w.checkStart(game)));
+    QStringList steps;
+    connect(&w, &WarmupController::progressChanged, this, [&] {
+        if (steps.isEmpty() || steps.last() != w.progress().phase)
+            steps << w.progress().phase;
+    });
+    QSignalSpy finished(&w, &WarmupController::finished);
+    QString error;
+    QVERIFY2(w.start(false, game, &error), qPrintable(error));
+    QCOMPARE(m_gate->owner(), ProcessGate::Owner::Warmup);
+    QVERIFY2(finished.wait(20000), qPrintable(w.stderrTail().join(QLatin1Char('|'))));
+    QCOMPARE(w.state(), WarmupController::State::Finished);
+    QCOMPARE(steps, (QStringList{QStringLiteral("Checking what to build"), QStringLiteral("Building pipelines")}));
+    const WarmupRun run = *w.lastRun();
+    QCOMPARE(run.runnerId, QStringLiteral("kelvaroq"));
+    QCOMPARE(run.done, 812);
+    QCOMPARE(run.total, 812);
+    QCOMPARE(run.exitCode, 0);
+    QVERIFY(m_gate->isFree());
+    QCOMPARE(m_settings->recentWarmups().first().runnerId, QStringLiteral("kelvaroq"));
+}
+
+void TestControllers::runnerPrecacheCancelClosesStdin()
+{
+    qputenv("FAKE_XSEMU_TICK_MS", "40");
+    installFakeKelvaroq();
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    m_settings->setGameOverride(game.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+    RunnerManager runners;
+    WarmupController w(*m_settings, *m_gate);
+    w.setRunners(&runners);
+    QSignalSpy finished(&w, &WarmupController::finished);
+    QVERIFY(w.start(false, game));
+    QTRY_VERIFY_WITH_TIMEOUT(w.progress().step == 2 && w.progress().done > 0, 10000);
+    w.cancel();
+    QVERIFY(finished.wait(10000));
+    QCOMPARE(w.state(), WarmupController::State::Cancelled);
+    QCOMPARE(w.lastRun()->exitCode, 0); // closing stdin let it stop on its own; nothing was killed
+    QVERIFY(w.lastRun()->done < 812);
+    qputenv("FAKE_XSEMU_TICK_MS", "5");
 }
 
 void TestControllers::warmupFinishesThroughEveryPhase()

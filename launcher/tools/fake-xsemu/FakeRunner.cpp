@@ -3,6 +3,7 @@
 #include "Scene.h"
 
 #include <QCoreApplication>
+#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QTimer>
@@ -100,7 +101,12 @@ int precompile(int argc, char** argv)
     t.start(tickMs());
     // closing stdin asks it to stop: it saves what it has and exits 0
     std::thread([] {
-        while (std::getchar() != EOF) {
+        // read the descriptor, not stdio: exit() locks stdio streams and would wait forever on a getchar() blocked here
+        QFile in;
+        if (in.open(0, QIODevice::ReadOnly, QFileDevice::DontCloseHandle)) {
+            char buf[256];
+            while (in.read(buf, sizeof buf) > 0) {
+            }
         }
         QMetaObject::invokeMethod(qApp, [] {
             QTimer::singleShot(100, qApp, [] { QCoreApplication::exit(0); });

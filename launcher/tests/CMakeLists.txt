@@ -19,6 +19,17 @@ xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
 xsemu_test(tst_runners)
 
+if(WIN32)
+    # a window from another process reparented into a Qt host: needs the real windows platform
+    add_executable(reparent-helper WIN32 reparent-helper.cpp)
+    xsemu_warnings(reparent-helper)
+    xsemu_test(tst_reparent)
+    target_link_libraries(tst_reparent PRIVATE Qt6::Widgets user32)
+    add_dependencies(tst_reparent reparent-helper)
+    target_compile_definitions(tst_reparent PRIVATE XSEMU_REPARENT_HELPER="$<TARGET_FILE:reparent-helper>")
+    set_tests_properties(tst_reparent PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=windows")
+endif()
+
 if(XSEMU_FAKE_EMULATOR)
     xsemu_test(tst_controllers)
     add_dependencies(tst_controllers fake-xsemu)
