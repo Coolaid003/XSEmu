@@ -1,16 +1,25 @@
 // The in-game view end to end: MainWindow launches fake-xsemu through EmulatorController with
 // --host-hwnd and --control-pipe, and the test drives it with real clicks on the game bar and the
-// exit screens, plus the launcher's own F1/F3/F11/Esc keys.
+// exit screens, plus the launcher's own F1/F3/F11/Esc keys. A third-party runner (fake-xsemu playing
+// Kelvaroq) is never embedded: it keeps its own window and the floating bar follows it.
 #include "DevFixtures.h"
 #include "EmulatorController.h"
 #include "Library.h"
+#include "Runner.h"
+#include "RunnerManager.h"
 #include "app/Services.h"
+#include "shell/FloatingBar.h"
 #include "shell/InGameView.h"
 #include "shell/MainWindow.h"
 #include "theme/Theme.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
@@ -25,6 +34,7 @@ private slots:
     void cleanup();
     void playPauseOverlayFullscreenBack();
     void stopReturnsToLibrary();
+    void runnerKeepsItsOwnWindow();
     void crashScreen_data();
     void crashScreen();
 
@@ -45,6 +55,12 @@ void TestInGame::initTestCase()
     QStandardPaths::setTestModeEnabled(true);
     qputenv("XSEMU_EMULATOR", XSEMU_FAKE_EMULATOR_PATH);
     qputenv("FAKE_XSEMU_TICK_MS", "5");
+    qputenv("XSEMU_RUNNERS_DIR", m_fixtures.filePath(QStringLiteral("runners")).toUtf8());
+    QFile feed(m_fixtures.filePath(QStringLiteral("feed.json")));
+    QVERIFY(feed.open(QIODevice::WriteOnly));
+    feed.write(R"({"kelvaroq": {"keep": true}})");
+    feed.close();
+    qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
     QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
     m_games = Library::scan({m_fixtures.filePath(QStringLiteral("games"))}, 3, false);
     QCOMPARE(m_games.size(), 4);
@@ -135,6 +151,43 @@ void TestInGame::playPauseOverlayFullscreenBack()
     QVERIFY(!m_w->isInGame());
     QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Paused, 5000);
     QVERIFY(emu.isActive());
+}
+
+void TestInGame::runnerKeepsItsOwnWindow()
+{
+    const RunnerSpec* spec = Runners::find(QStringLiteral("kelvaroq"));
+    QVERIFY(spec);
+    const QString exe = QDir(spec->installDir()).filePath(spec->executable);
+    QDir().mkpath(QFileInfo(exe).absolutePath());
+    QFile::remove(exe);
+    QVERIFY(QFile::copy(QStringLiteral(XSEMU_FAKE_EMULATOR_PATH), exe));
+    QFile rec(QDir(spec->dataDir()).filePath(QStringLiteral("runner.json")));
+    QVERIFY(rec.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    rec.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), spec->id}, {QStringLiteral("version"), spec->pinnedVersion()}, {QStringLiteral("executable"), spec->executable}}).toJson());
+    rec.close();
+
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    m_s->settings.setGameOverride(game.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+    EmulatorController& emu = m_s->emulator;
+    m_w->play(game);
+    QVERIFY(emu.isActive());
+    QCOMPARE(emu.runner().id, QStringLiteral("kelvaroq"));
+    QVERIFY(!m_w->isInGame()); // never embedded: the library stays, the game gets its own window
+    QVERIFY(!emu.canPause() && !emu.canOverlay());
+    if (QGuiApplication::platformName() != QLatin1String("xcb") && QGuiApplication::platformName() != QLatin1String("windows")) {
+        emu.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Idle, 15000);
+        QSKIP("finding the runner's own window needs X11 or Windows");
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Running, 10000);
+    QVERIFY(emu.gameWindow() != 0);
+    FloatingBar* bar = m_w->floatingBar();
+    QTRY_VERIFY_WITH_TIMEOUT(bar->isVisible(), 5000);
+    auto* stop = bar->findChild<QAbstractButton*>(QStringLiteral("floatingStop"));
+    QVERIFY(stop);
+    QTest::mouseClick(stop, Qt::LeftButton);
+    QTRY_COMPARE_WITH_TIMEOUT(emu.state(), State::Idle, 15000);
+    QTRY_VERIFY_WITH_TIMEOUT(!bar->isVisible(), 5000);
 }
 
 void TestInGame::stopReturnsToLibrary()
