@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Game configVersion="1">
+  <Identity Name="HarborlightGames.CoastlineDrive" Publisher="CN=Example" Version="2.3.0.0" />
+  <ExecutableList>
+    <!-- <Executable Name="Old.exe" Id="Game" /> -->
+    <Executable Name="Binaries\CoastlineDrive.exe" Id="Game" />
+  </ExecutableList>
+  <ShellVisuals DefaultDisplayName="Coastline Drive" PublisherDisplayName="Harborlight Games" StoreLogo="StoreLogo.png" Square150x150Logo="Logo.png" Square44x44Logo="SmallLogo.png" Description="Fixture" />
+</Game>

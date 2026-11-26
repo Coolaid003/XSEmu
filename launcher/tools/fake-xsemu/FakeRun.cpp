@@ -92,6 +92,7 @@ void FakeRun::start()
         m_scene->resize(1280, 720);
         m_scene->show();
     }
+    m_scene->setForwardKeys(m_o.hostHwnd != 0); // keys go to the launcher only when hosted
     connect(m_scene, &Scene::launcherKey, this, [this](const QString& key) {
         send({{QStringLiteral("ev"), QStringLiteral("key")}, {QStringLiteral("key"), key}});
     });
@@ -104,28 +105,34 @@ void FakeRun::start()
     QJsonObject hello{{QStringLiteral("ev"), QStringLiteral("hello")},
                       {QStringLiteral("proto"), 1},
                       {QStringLiteral("pid"), QCoreApplication::applicationPid()},
-                      {QStringLiteral("version"), QStringLiteral("0.0.0-fake")},
-                      {QStringLiteral("title"), QDir(m_o.folder).dirName()},
-                      {QStringLiteral("device_type"), QStringLiteral("lockhart")}};
-    if (m_o.hostHwnd != 0)
-        hello.insert(QStringLiteral("hwnd"), QString::number(static_cast<qulonglong>(m_scene->winId()), 16));
-    send(hello);
-    sendState("booting");
-    m_stats.start();
-
+                      {QStringLiteral("version"), QStringLiteral("0.0.0-fake")}};
     if (m_o.scenario == QLatin1String("files_missing") || !hasManifest(m_o.folder)) {
-        QTimer::singleShot(800, this, [this] {
+        // a boot failure in the outer "XSEmu run": hello without a title, then exit reason error
+        send(hello);
+        QTimer::singleShot(400, this, [this] {
             exitWith("error", 2, QStringLiteral("game files missing: %1 has no MicrosoftGame.config or its executable")
                                      .arg(QDir::toNativeSeparators(m_o.folder)));
         });
         return;
     }
+    hello.insert(QStringLiteral("title"), QDir(m_o.folder).dirName());
+    hello.insert(QStringLiteral("device_type"), QStringLiteral("lockhart"));
+    if (m_o.hostHwnd != 0)
+        hello.insert(QStringLiteral("hwnd"), QString::number(static_cast<qulonglong>(m_scene->winId()), 16));
+    send(hello);
+    sendState("booting");
+    m_stats.start();
     const int bootMs = m_o.scenario == QLatin1String("slow_boot") ? 8000 : 1500;
     QTimer::singleShot(bootMs, this, &FakeRun::enterRunning);
 }
 
 void FakeRun::enterRunning()
 {
+    if (m_state == QLatin1String("paused")) {
+        // boot finishes while paused: the first frame waits for resume
+        m_scene->setBooting(false);
+        return;
+    }
     if (m_state != QLatin1String("booting"))
         return;
     m_scene->setBooting(false);
@@ -140,31 +147,28 @@ void FakeRun::enterRunning()
         });
     } else if (m_o.scenario == QLatin1String("device_removed")) {
         QTimer::singleShot(3000, this, [this] {
-            exitWith("device_removed", 1, QStringLiteral("DXGI_ERROR_DEVICE_HUNG (0x887A0006): the GPU stopped responding"));
+            exitWith("device_removed", static_cast<int>(0x887A0006u), QStringLiteral("DXGI_ERROR_DEVICE_HUNG (0x887A0006): the GPU stopped responding"));
         });
     }
 }
 
 void FakeRun::sendStats()
 {
+    // once a second while booting or running; nothing while paused
     if (m_state != QLatin1String("booting") && m_state != QLatin1String("running"))
         return;
     QJsonObject o{{QStringLiteral("ev"), QStringLiteral("stats")}, {QStringLiteral("ram_free_mb"), freeRamMb()}};
+    const Scene::Window w = m_scene ? m_scene->takeWindow() : Scene::Window{};
     if (m_state == QLatin1String("running")) {
         m_pipelines += QRandomGenerator::global()->bounded(40);
-        const double fps = m_scene ? m_scene->fps() : 60.0;
-        o.insert(QStringLiteral("fps"), qRound(fps * 10) / 10.0);
-        o.insert(QStringLiteral("frame_ms"), fps > 0 ? qRound(10000.0 / fps) / 10.0 : 0.0);
-        o.insert(QStringLiteral("vram_used_mb"), 3100 + QRandomGenerator::global()->bounded(200));
-        o.insert(QStringLiteral("vram_budget_mb"), 8192);
-        o.insert(QStringLiteral("stalls"), 0);
-        o.insert(QStringLiteral("worst_ms"), 24.0);
+        o.insert(QStringLiteral("fps"), w.frames);
+        o.insert(QStringLiteral("frame_ms"), qRound(w.meanMs * 10) / 10.0);
+        o.insert(QStringLiteral("worst_ms"), qRound(w.worstMs * 10) / 10.0);
+        o.insert(QStringLiteral("stalls"), w.stalls);
         o.insert(QStringLiteral("pipelines"), m_pipelines);
         o.insert(QStringLiteral("compiling"), QRandomGenerator::global()->bounded(3));
-        if (m_scene)
-            m_scene->setStatsText(QStringLiteral("%1 fps  %2 ms\n%3 pipelines  fake-xsemu")
-                                      .arg(fps, 0, 'f', 0).arg(fps > 0 ? 1000.0 / fps : 0, 0, 'f', 1).arg(m_pipelines));
     }
+    // a fake has no adapter to query: vram_used_mb / vram_budget_mb are left out, as the protocol asks
     send(o);
 }
 
@@ -172,17 +176,18 @@ void FakeRun::onCommand(const QByteArray& line)
 {
     const QJsonObject o = QJsonDocument::fromJson(line).object();
     const QString cmd = o.value(QStringLiteral("cmd")).toString();
-    if (cmd == QLatin1String("pause") && m_state == QLatin1String("running")) {
+    if (cmd == QLatin1String("pause") && (m_state == QLatin1String("running") || m_state == QLatin1String("booting"))) {
         m_scene->setPaused(true);
         sendState("paused");
     } else if (cmd == QLatin1String("resume") && m_state == QLatin1String("paused")) {
         m_scene->setPaused(false);
-        sendState("running");
+        sendState(m_scene->framePresentedYet() ? "running" : "booting");
     } else if (cmd == QLatin1String("stop")) {
         sendState("stopping");
         QTimer::singleShot(300, this, [this] { exitWith("stopped", 0, QString()); });
     } else if (cmd == QLatin1String("overlay")) {
-        m_overlay = o.value(QStringLiteral("on")).toBool();
+        const QJsonValue on = o.value(QStringLiteral("on"));
+        m_overlay = on.isBool() ? on.toBool() : !m_overlay;
         m_scene->setOverlay(m_overlay);
     } else if (cmd == QLatin1String("focus")) {
         m_scene->requestActivate();

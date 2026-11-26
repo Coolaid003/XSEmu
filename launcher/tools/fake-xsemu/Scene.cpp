@@ -26,11 +26,25 @@ Scene::Scene(QWindow* parent)
 void Scene::setPaused(bool paused)
 {
     m_paused = paused;
+    m_lastFrame = -1;
     update();
+}
+
+Scene::Window Scene::takeWindow()
+{
+    Window w = m_window;
+    w.meanMs = w.frames > 0 ? m_windowSum / w.frames : 0;
+    m_window = {};
+    m_windowSum = 0;
+    return w;
 }
 
 void Scene::keyPressEvent(QKeyEvent* e)
 {
+    if (!m_forwardKeys) {
+        QRasterWindow::keyPressEvent(e);
+        return;
+    }
     switch (e->key()) {
     case Qt::Key_F1: emit launcherKey(QStringLiteral("F1")); return;
     case Qt::Key_F3: emit launcherKey(QStringLiteral("F3")); return;
@@ -130,27 +144,43 @@ void Scene::paintEvent(QPaintEvent*)
     }
 
     if (m_overlay) {
-        const QRectF panel(r.left() + h * 0.02, r.top() + h * 0.02, h * 0.42, h * 0.11);
+        // the frame-time graph of the protocol's overlay: last 120 frames, green to 60 fps,
+        // amber to 30, red slower, a line at 16.7 ms; no text
+        const double gw = h * 0.36, gh = h * 0.12;
+        const QRectF panel(r.left() + h * 0.02, r.top() + h * 0.02, gw, gh);
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(18, 18, 20, 214));
-        p.drawRoundedRect(panel, 8, 8);
-        QFont f(QStringLiteral("monospace"));
-        f.setStyleHint(QFont::Monospace);
-        f.setPixelSize(std::max(10, int(h * 0.024)));
-        p.setFont(f);
-        p.setPen(QColor(242, 242, 243));
-        p.drawText(panel.adjusted(12, 8, -12, -8), Qt::AlignLeft | Qt::AlignVCenter,
-                   m_stats.isEmpty() ? QStringLiteral("fake-xsemu") : m_stats);
+        p.setBrush(QColor(18, 18, 20, 200));
+        p.drawRoundedRect(panel, 6, 6);
+        const double maxMs = 50.0;
+        const double bw = gw / 120.0;
+        for (int i = 0; i < m_history.size(); ++i) {
+            const double ms = m_history[i];
+            const QColor col = ms <= 16.7 ? QColor(63, 185, 80) : ms <= 33.3 ? QColor(227, 179, 65) : QColor(240, 96, 90);
+            const double bh = std::min(1.0, ms / maxMs) * (gh - 8);
+            p.setBrush(col);
+            p.drawRect(QRectF(panel.left() + i * bw, panel.bottom() - 4 - bh, std::max(1.0, bw - 0.5), bh));
+        }
+        p.setPen(QPen(QColor(255, 255, 255, 120), 1, Qt::DashLine));
+        const double y60 = panel.bottom() - 4 - (16.7 / maxMs) * (gh - 8);
+        p.drawLine(QPointF(panel.left() + 4, y60), QPointF(panel.right() - 4, y60));
     }
     p.setClipping(false);
 
+    if (m_booting || m_paused)
+        return;
     const qint64 now = m_clock.elapsed();
-    ++m_frames;
-    if (now - m_fpsWindowStart >= 500) {
-        m_fps = m_frames * 1000.0 / double(now - m_fpsWindowStart);
-        m_frames = 0;
-        m_fpsWindowStart = now;
+    if (m_lastFrame >= 0) {
+        const double ms = double(now - m_lastFrame);
+        m_history.append(ms);
+        if (m_history.size() > 120)
+            m_history.removeFirst();
+        ++m_window.frames;
+        m_windowSum += ms;
+        m_window.worstMs = std::max(m_window.worstMs, ms);
+        if (ms >= 100.0)
+            ++m_window.stalls;
     }
-    if (!m_booting && !m_paused)
-        emit framePresented();
+    m_lastFrame = now;
+    m_presentedAny = true;
+    emit framePresented();
 }

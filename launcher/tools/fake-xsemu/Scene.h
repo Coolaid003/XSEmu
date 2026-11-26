@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QElapsedTimer>
+#include <QList>
 #include <QRasterWindow>
 #include <QTimer>
 
@@ -14,9 +15,17 @@ public:
     void setPaused(bool paused);
     void setOverlay(bool on) { m_overlay = on; update(); }
     void setBooting(bool booting) { m_booting = booting; update(); }
-    void setStatsText(const QString& t) { m_stats = t; }
-    double fps() const { return m_fps; }
-    double frameMs() const { return m_fps > 0 ? 1000.0 / m_fps : 0; }
+    void setForwardKeys(bool on) { m_forwardKeys = on; }
+    bool framePresentedYet() const { return m_presentedAny; }
+
+    // What the protocol's stats line reports for the time since the last call.
+    struct Window {
+        int frames = 0;
+        double meanMs = 0;
+        double worstMs = 0;
+        int stalls = 0; // frames shown 100 ms or more after the one before
+    };
+    Window takeWindow();
 
 signals:
     void launcherKey(const QString& key);
@@ -31,11 +40,13 @@ private:
     QElapsedTimer m_clock;
     double m_t = 0;
     qint64 m_last = 0;
-    double m_fps = 0;
-    int m_frames = 0;
-    qint64 m_fpsWindowStart = 0;
+    qint64 m_lastFrame = -1;
+    QList<double> m_history; // last 120 frame times, ms
+    Window m_window;
+    double m_windowSum = 0;
+    bool m_presentedAny = false;
+    bool m_forwardKeys = false;
     bool m_paused = false;
     bool m_overlay = false;
     bool m_booting = true;
-    QString m_stats;
 };

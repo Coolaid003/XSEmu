@@ -1,5 +1,8 @@
-Invented game folders for tests and screenshots. Each has a MicrosoftGame.config and a placeholder
-text file where the executable would be. No real game, art, logo or trademark is used.
+Invented game folders for tests and screenshots. No real game, art, logo or trademark is used.
+
+The repository's PR check refuses files named like game data (MicrosoftGame.config, *.exe), so every
+such file is kept as text with a `.fixture` suffix and `DevFixtures::materialize()` copies the tree
+under the real names before a test or a screenshot state uses it. The "executables" are one line of text.
 
 - SignalGarden: Northwind Interactive, UTF-8.
 - Coastline Drive: Harborlight Games, executable in a subfolder, a commented-out executable before it.

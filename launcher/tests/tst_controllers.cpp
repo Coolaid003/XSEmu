@@ -1,5 +1,6 @@
 // EmulatorController and WarmupController against fake-xsemu: real processes, real pipe, real JSON.
 #include "AppSettings.h"
+#include "DevFixtures.h"
 #include "EmulatorController.h"
 #include "Library.h"
 #include "Paths.h"
@@ -28,6 +29,7 @@ private slots:
 
 private:
     Game fixtureGame(const QString& title) const;
+    QTemporaryDir m_fixtures;
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<AppSettings> m_settings;
     std::unique_ptr<ProcessGate> m_gate;
@@ -38,7 +40,8 @@ void TestControllers::initTestCase()
 {
     qputenv("XSEMU_EMULATOR", XSEMU_FAKE_EMULATOR_PATH);
     qputenv("FAKE_XSEMU_TICK_MS", "5");
-    m_games = Library::scan({QStringLiteral(XSEMU_FIXTURES_DIR "/games")}, 3, false);
+    QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
+    m_games = Library::scan({m_fixtures.filePath(QStringLiteral("games"))}, 3, false);
     QCOMPARE(m_games.size(), 4);
 }
 

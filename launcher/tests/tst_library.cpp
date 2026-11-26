@@ -1,3 +1,4 @@
+#include "DevFixtures.h"
 #include "GameManifest.h"
 #include "Library.h"
 #include "Paths.h"
@@ -19,7 +20,13 @@ private slots:
     void watcherPicksUpNewGames();
 };
 
-static QString fixtures() { return QStringLiteral(XSEMU_FIXTURES_DIR "/games"); }
+static QString fixtures()
+{
+    static QTemporaryDir dir;
+    static const bool ok = DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), dir.filePath(QStringLiteral("games")));
+    Q_ASSERT(ok);
+    return dir.filePath(QStringLiteral("games"));
+}
 
 void TestLibrary::scansFixtures()
 {

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Game configVersion="1">
+  <Identity Name="NorthwindInteractive.SignalGarden" Publisher="CN=Example" Version="1.0.4.0" />
+  <ExecutableList>
+    <Executable Name="SignalGarden.exe" Id="Game" />
+  </ExecutableList>
+  <ShellVisuals DefaultDisplayName="Signal Garden" PublisherDisplayName="Northwind Interactive" StoreLogo="StoreLogo.png" Square150x150Logo="Logo.png" Square44x44Logo="SmallLogo.png" Description="Fixture" />
+  <PersistentLocalStorage><SizeMB>1024</SizeMB></PersistentLocalStorage>
+</Game>

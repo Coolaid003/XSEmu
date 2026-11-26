@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Game configVersion="1">
+  <Identity Name="NorthwindInteractive.TidePools" Publisher="CN=Example" Version="1.0.0.0" />
+  <ExecutableList>
+    <Executable Name="TidePools.exe" Id="Game" />
+  </ExecutableList>
+  <ShellVisuals DefaultDisplayName="Tide Pools" PublisherDisplayName="Northwind Interactive" StoreLogo="StoreLogo.png" Square150x150Logo="Logo.png" Square44x44Logo="SmallLogo.png" Description="Fixture" />
+</Game>
