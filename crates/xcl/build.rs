@@ -183,6 +183,46 @@ fn normalized(src: &[u8]) -> Vec<u8> {
     out
 }
 
+/// A compiled resource file (.res, what rc.exe makes of `1 ICON "XSEmu.ico"`) holding the icon
+/// `ico`: each of its images as an RT_ICON (ids 1, 2, …) and the RT_GROUP_ICON 1 that lists
+/// them. The linker (link.exe, lld-link) takes a .res as an input.
+fn icon_res(ico: &[u8]) -> Vec<u8> {
+    let u16_at = |at: usize| u16::from_le_bytes([ico[at], ico[at + 1]]);
+    let u32_at = |at: usize| u32::from_le_bytes([ico[at], ico[at + 1], ico[at + 2], ico[at + 3]]);
+    let entry = |res: &mut Vec<u8>, kind: u16, id: u16, flags: u16, language: u16, data: &[u8]| {
+        res.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        res.extend_from_slice(&32u32.to_le_bytes());
+        for v in [0xFFFF, kind, 0xFFFF, id] {
+            res.extend_from_slice(&u16::to_le_bytes(v));
+        }
+        res.extend_from_slice(&0u32.to_le_bytes());
+        res.extend_from_slice(&flags.to_le_bytes());
+        res.extend_from_slice(&language.to_le_bytes());
+        res.extend_from_slice(&[0; 8]);
+        res.extend_from_slice(data);
+        res.resize(res.len().next_multiple_of(4), 0);
+    };
+    const RT_ICON: u16 = 3;
+    const RT_GROUP_ICON: u16 = 14;
+    const EN_US: u16 = 0x0409;
+    let mut res = Vec::new();
+    entry(&mut res, 0, 0, 0, 0, &[]);
+    let count = u16_at(4);
+    let mut group = vec![0, 0, 1, 0];
+    group.extend_from_slice(&count.to_le_bytes());
+    for k in 0..count as usize {
+        let at = 6 + 16 * k;
+        let (len, offset) = (u32_at(at + 8) as usize, u32_at(at + 12) as usize);
+        entry(&mut res, RT_ICON, k as u16 + 1, 0x1010, EN_US, &ico[offset..offset + len]);
+        group.extend_from_slice(&ico[at..at + 4]);
+        group.extend_from_slice(&u16_at(at + 4).max(1).to_le_bytes());
+        group.extend_from_slice(&ico[at + 6..at + 12]);
+        group.extend_from_slice(&(k as u16 + 1).to_le_bytes());
+    }
+    entry(&mut res, RT_GROUP_ICON, 1, 0x1030, EN_US, &group);
+    res
+}
+
 fn main() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut sources: Vec<String> = TRANSLATOR_FILES.iter().map(|s| s.to_string()).collect();
@@ -216,5 +256,14 @@ fn main() {
         let manifest = root.join("xcl.manifest");
         println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}", manifest.display());
+    }
+
+    // XSEmu.exe's icon (assets/logo/XSEmu.ico)
+    println!("cargo:rerun-if-changed=../../assets/logo/XSEmu.ico");
+    if std::env::var("CARGO_CFG_TARGET_OS").is_ok_and(|os| os == "windows") && std::env::var("CARGO_CFG_TARGET_ENV").is_ok_and(|e| e == "msvc") {
+        let ico = std::fs::read(root.join("../../assets/logo/XSEmu.ico")).expect("read assets/logo/XSEmu.ico");
+        let res = Path::new(&std::env::var("OUT_DIR").expect("OUT_DIR")).join("XSEmu.res");
+        std::fs::write(&res, icon_res(&ico)).expect("write XSEmu.res");
+        println!("cargo:rustc-link-arg-bins={}", res.display());
     }
 }
