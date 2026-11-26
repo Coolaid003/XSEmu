@@ -6,7 +6,6 @@
 #include "core/Format.h"
 #include "core/Paths.h"
 #include "core/ShaderCacheInfo.h"
-#include "core/TitleConfig.h"
 #include "shell/LaunchErrors.h"
 #include "widgets/Badge.h"
 #include "widgets/Button.h"
@@ -699,9 +698,10 @@ void GameDetailsPage::refreshOverrides()
          {QStringLiteral("Default"), QStringLiteral("Warn"), QStringLiteral("Debug"), QStringLiteral("Trace")},
          {QVariant(), QStringLiteral("warn"), QStringLiteral("debug"), QStringLiteral("trace")}, QStringLiteral("info")},
     };
+    // every per-game choice lives in AppSettings::gameOverrides: LaunchConfig::prepareTitle writes the
+    // xcl.toml keys from there into the title's xcl.toml when the game starts
     const QString tomlPath = Paths::xclToml(id);
-    const QVariantMap toml = TitleConfig(tomlPath).values();
-    const QVariantMap launcher = m_s.settings.gameOverrides(id);
+    const QVariantMap chosen = m_s.settings.gameOverrides(id);
 
     m_overrides->clear();
     int count = 0;
@@ -709,8 +709,7 @@ void GameDetailsPage::refreshOverrides()
         QStringList labels = spec.labels;
         int current = 0;
         if (spec.backed) {
-            const QVariantMap& source = spec.launcherSide ? launcher : toml;
-            const QVariant value = source.value(spec.key);
+            const QVariant value = chosen.value(spec.key);
             if (value.isValid() && !sameValue(value, spec.defaultValue)) {
                 current = -1;
                 for (int i = 1; i < spec.values.size(); ++i) {
@@ -743,22 +742,13 @@ void GameDetailsPage::refreshOverrides()
             continue;
         const QVariantList values = spec.values;
         const QString key = spec.key;
-        const bool launcherSide = spec.launcherSide;
-        connect(seg, &SegmentedControl::currentChanged, this, [this, id, tomlPath, key, values, launcherSide](int index) {
+        connect(seg, &SegmentedControl::currentChanged, this, [this, id, key, values](int index) {
             if (index >= values.size())
                 return;
-            if (launcherSide) {
-                if (index == 0)
-                    m_s.settings.clearGameOverride(id, key);
-                else
-                    m_s.settings.setGameOverride(id, key, values[index]);
-            } else {
-                TitleConfig cfg(tomlPath);
-                if (index == 0)
-                    cfg.remove({key});
-                else
-                    cfg.set(key, values[index]);
-            }
+            if (index == 0)
+                m_s.settings.clearGameOverride(id, key);
+            else
+                m_s.settings.setGameOverride(id, key, values[index]);
             QTimer::singleShot(0, this, &GameDetailsPage::refreshOverrides);
         });
     }
@@ -768,15 +758,13 @@ void GameDetailsPage::refreshOverrides()
                           Label::Style::Caption, Theme::Role::Text3);
     if (count > 0) {
         auto* reset = new Button(QStringLiteral("Use defaults"), Button::Variant::Link, Button::Size::Tiny);
-        QStringList tomlKeys;
-        QStringList launcherKeys;
+        QStringList keys;
         for (const OverrideSpec& spec : specs) {
             if (spec.backed)
-                (spec.launcherSide ? launcherKeys : tomlKeys) << spec.key;
+                keys << spec.key;
         }
-        connect(reset, &Button::clicked, this, [this, id, tomlPath, tomlKeys, launcherKeys] {
-            TitleConfig(tomlPath).remove(tomlKeys);
-            for (const QString& k : launcherKeys)
+        connect(reset, &Button::clicked, this, [this, id, keys] {
+            for (const QString& k : keys)
                 m_s.settings.clearGameOverride(id, k);
             QTimer::singleShot(0, this, &GameDetailsPage::refreshOverrides);
         });
@@ -786,6 +774,6 @@ void GameDetailsPage::refreshOverrides()
 
     const bool playingThis = m_s.emulator.isActive() && m_s.emulator.game().titleId() == id;
     m_overridesNote->setText(playingThis ? QStringLiteral("Changes apply the next time %1 starts.").arg(m_game.title())
-                                         : QStringLiteral("Console, display mode, raytracing, keyboard and mouse and log level are written to %1.")
+                                         : QStringLiteral("Console, display mode, raytracing, keyboard and mouse and log level are written to %1 when the game starts.")
                                                .arg(QDir::toNativeSeparators(tomlPath)));
 }

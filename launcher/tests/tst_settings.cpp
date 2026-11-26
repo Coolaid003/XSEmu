@@ -190,6 +190,23 @@ void TestSettings::titleConfigAtLaunch()
     QCOMPARE(after.value(QStringLiteral("mouse_sensitivity")).toDouble(), 1.5);
     QCOMPARE(after.value(QStringLiteral("log_level")).toString(), QStringLiteral("debug"));
     QVERIFY(QFileInfo(LaunchConfig::crashDumpDir(id)).isDir());
+
+    // a per-game choice made on Game details (the overrides store) survives the launch rewrite;
+    // launcher-only choices stay out of xcl.toml
+    s.setGameOverride(id, QStringLiteral("device_type"), QStringLiteral("anaconda"));
+    s.setGameOverride(id, QStringLiteral("log_level"), QStringLiteral("trace"));
+    s.setGameOverride(id, QStringLiteral("runner"), QStringLiteral("kelvaroq"));
+    QVERIFY(LaunchConfig::prepareTitle(s, id));
+    const QVariantMap chosen = cfg.values();
+    QCOMPARE(chosen.value(QStringLiteral("device_type")).toString(), QStringLiteral("anaconda"));
+    QCOMPARE(chosen.value(QStringLiteral("log_level")).toString(), QStringLiteral("trace"));
+    QVERIFY(!chosen.contains(QStringLiteral("runner")));
+    // Use defaults clears the store; the next launch writes the defaults back
+    for (const char* key : {"device_type", "log_level", "runner"})
+        s.clearGameOverride(id, QLatin1String(key));
+    QVERIFY(LaunchConfig::prepareTitle(s, id));
+    QCOMPARE(cfg.values().value(QStringLiteral("device_type")).toString(), QStringLiteral("lockhart"));
+    QCOMPARE(cfg.values().value(QStringLiteral("log_level")).toString(), QStringLiteral("debug"));
 }
 
 void TestSettings::warmupClassification()
