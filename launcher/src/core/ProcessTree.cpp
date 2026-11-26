@@ -92,40 +92,51 @@ void ProcessTree::killTree()
 #endif
 }
 
+QList<qint64> ProcessTree::pids() const
+{
+    QList<qint64> out;
+    if (state() == QProcess::NotRunning)
+        return out;
+#ifdef Q_OS_WIN
+    if (!m_job)
+        return out;
+    std::vector<char> buf(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 1024 * sizeof(ULONG_PTR));
+    auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buf.data());
+    if (!QueryInformationJobObject(m_job, JobObjectBasicProcessIdList, list, static_cast<DWORD>(buf.size()), nullptr))
+        return out;
+    for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i)
+        out << static_cast<qint64>(list->ProcessIdList[i]);
+#else
+    const qint64 group = processId();
+    if (group <= 0)
+        return out;
+    const QDir proc(QStringLiteral("/proc"));
+    for (const QString& entry : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        bool isPid = false;
+        const int pid = entry.toInt(&isPid);
+        if (isPid && ::getpgid(pid) == group)
+            out << pid;
+    }
+#endif
+    return out;
+}
+
 qint64 ProcessTree::heldBytes() const
 {
     if (state() == QProcess::NotRunning)
         return -1;
-#ifdef Q_OS_WIN
-    if (!m_job)
-        return -1;
-    std::vector<char> buf(sizeof(JOBOBJECT_BASIC_PROCESS_ID_LIST) + 1024 * sizeof(ULONG_PTR));
-    auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buf.data());
-    if (!QueryInformationJobObject(m_job, JobObjectBasicProcessIdList, list, static_cast<DWORD>(buf.size()), nullptr))
-        return -1;
     qint64 total = 0;
-    for (DWORD i = 0; i < list->NumberOfProcessIdsInList; ++i) {
-        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(list->ProcessIdList[i]));
+    for (const qint64 pid : pids()) {
+#ifdef Q_OS_WIN
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
         if (!h)
             continue;
         PROCESS_MEMORY_COUNTERS_EX pmc{};
         if (GetProcessMemoryInfo(h, reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc)))
             total += static_cast<qint64>(pmc.PrivateUsage);
         CloseHandle(h);
-    }
-    return total;
 #else
-    const qint64 group = processId();
-    if (group <= 0)
-        return -1;
-    qint64 total = 0;
-    const QDir proc(QStringLiteral("/proc"));
-    for (const QString& entry : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
-        bool isPid = false;
-        const int pid = entry.toInt(&isPid);
-        if (!isPid || ::getpgid(pid) != group)
-            continue;
-        QFile status(proc.filePath(entry + QStringLiteral("/status")));
+        QFile status(QStringLiteral("/proc/%1/status").arg(pid));
         if (!status.open(QIODevice::ReadOnly))
             continue;
         for (const QByteArray& line : status.readAll().split('\n')) {
@@ -135,9 +146,9 @@ qint64 ProcessTree::heldBytes() const
                     total += parts.at(1).toLongLong() * 1024;
             }
         }
+#endif
     }
     return total;
-#endif
 }
 
 QStringList runningEmulatorProcesses(qint64 excludePid)

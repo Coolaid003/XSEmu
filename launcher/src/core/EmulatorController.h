@@ -3,6 +3,7 @@
 #include "Game.h"
 #include "ProcessTree.h"
 #include "Protocol.h"
+#include "Runner.h"
 
 #include <QLocalSocket>
 
@@ -18,8 +19,10 @@
 class AppSettings;
 class ProcessGate;
 class QLocalServer;
+class RunnerManager;
 
-// Game runs: the one XSEmu.exe "run" process, its control pipe and what it reports.
+// Game runs: the one game process tree, XSEmu.exe "run" with its control pipe and what it reports, or
+// a third-party runner (RunnerSpec) started hidden, whose own top-level window we find by process.
 //
 //   auto check = emu.checkLaunch(game);          // why it cannot start, if it cannot
 //   if (check.ok()) emu.start(game, hostWidget->winId());
@@ -61,7 +64,7 @@ public:
     };
 
     struct LaunchCheck {
-        enum class Problem { None, EmulatorMissing, GameFilesMissing, Busy, OtherEmulatorRunning, NotEnoughRam };
+        enum class Problem { None, EmulatorMissing, RunnerNotInstalled, GameFilesMissing, Busy, OtherEmulatorRunning, NotEnoughRam };
         Problem problem = Problem::None;
         QString reason;          // a human sentence, empty when ok
         QStringList processes;   // OtherEmulatorRunning: "name pid"
@@ -72,6 +75,17 @@ public:
 
     EmulatorController(AppSettings& settings, ProcessGate& gate, QObject* parent = nullptr);
     ~EmulatorController() override;
+
+    // Third-party runners come from here; without it every game runs with XSEmu.
+    void setRunners(RunnerManager* runners) { m_runners = runners; }
+    // The runner a game would start with now (its setting, or XSEmu when that runner is unknown).
+    const RunnerSpec& runnerFor(const Game& game) const;
+    // The runner of the current (or last) run.
+    const RunnerSpec& runner() const;
+    bool canPause() const { return runner().canPause; }
+    bool canOverlay() const { return runner().canOverlay; }
+    // A third-party runner's own game window once it is up (0 before, and always 0 for XSEmu).
+    quintptr gameWindow() const { return m_gameWindow; }
 
     LaunchCheck checkLaunch(const Game& game) const;
     // Free RAM a launch needs: the 1 GB floor plus AppSettings::launchNeedMb() (0 unless set).
@@ -110,6 +124,7 @@ signals:
     void stateChanged(EmulatorController::State state);
     void statsChanged();
     void helloReceived();
+    void gameWindowChanged();
     void keyPressed(const QString& key); // F1, F3, F11, Escape (from the game window)
     void exited(const EmulatorController::ExitInfo& info);
     void logLine(const QString& line);   // the emulator's stdout/stderr, for a log view
@@ -122,6 +137,9 @@ private:
     void onFinished(int exitCode, int exitStatus);
     void send(const QByteArray& line);
     void pollMemory();
+    bool startRunner(const RunnerSpec& spec, const Game& game, QString* error);
+    void pollGameWindow();
+    void onRunnerOutput(const QString& line);
 
     AppSettings& m_settings;
     ProcessGate& m_gate;
@@ -145,6 +163,12 @@ private:
     QElapsedTimer m_launchClock;
     qint64 m_helloAfterMs = -1;
     qint64 m_playedMs = 0;
+    RunnerManager* m_runners = nullptr;
+    QString m_runnerId = QStringLiteral("xsemu");
+    quintptr m_gameWindow = 0;
+    bool m_windowReady = false;
+    QTimer m_windowTimer;
+    QStringList m_recentOutput; // a runner's last output lines, for its exit message
 };
 
 Q_DECLARE_METATYPE(EmulatorController::ExitInfo)

@@ -11,6 +11,10 @@
     <file>icons/external.svg</file>
     <file>icons/file.svg</file>
     <file>icons/folder.svg</file>
+    <file>icons/download.svg</file>
+    <file>icons/runner.svg</file>
+    <file>icons/window.svg</file>
+    <file>icons/build.svg</file>
     <file>icons/fullscreen.svg</file>
     <file>icons/gamepad.svg</file>
     <file>icons/gear.svg</file>

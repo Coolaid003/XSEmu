@@ -467,6 +467,19 @@ void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& g
         d->open();
         return;
     }
+    case P::RunnerNotInstalled: {
+        const RunnerSpec& runner = s.emulator.runnerFor(game);
+        auto* d = new Dialog(window, 500);
+        begin(d, QStringLiteral("download"), Theme::Tone::Accent, QStringLiteral("%1 is not installed").arg(runner.name));
+        d->body()->addWidget(paragraph(check.reason));
+        d->addButton(actionButton(d, QStringLiteral("Play with XSEmu"), [&s, game, retry] {
+            s.settings.setGameOverride(game.titleId(), QStringLiteral("runner"), QString::fromLatin1(Runners::XSEmu));
+            retry();
+        }, Button::Variant::Secondary));
+        d->addButton(actionButton(d, QStringLiteral("Install %1").arg(runner.name), [&s, id = runner.id] { s.runners.install(id); }, Button::Variant::Primary, QStringLiteral("download")));
+        d->open();
+        return;
+    }
     case P::OtherEmulatorRunning: {
         auto* d = new Dialog(window, 500);
         begin(d, QStringLiteral("warning"), Theme::Tone::Warning, QStringLiteral("Another XSEmu is running"));

@@ -22,6 +22,9 @@ public:
     // processes; Linux: RssAnon + VmSwap over the process group). -1 when it cannot be measured.
     qint64 heldBytes() const;
 
+    // Every process in the tree now (Windows: the job's processes; Linux: the process group).
+    QList<qint64> pids() const;
+
 private:
     void onStarted();
 #ifdef Q_OS_WIN

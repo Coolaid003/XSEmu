@@ -5,6 +5,7 @@
 #include "core/EmulatorController.h"
 #include "core/Library.h"
 #include "core/ProcessGate.h"
+#include "core/RunnerManager.h"
 #include "core/WarmupController.h"
 
 // Every long-lived service of the launcher, created once in main() and handed to the shell by
@@ -16,6 +17,7 @@ public:
 
     AppSettings settings;
     ProcessGate gate;
+    RunnerManager runners;
     Library library;
     EmulatorController emulator;
     WarmupController warmup;

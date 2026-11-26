@@ -56,6 +56,7 @@ public:
         static constexpr const char* SteamGridDbKey = "covers/steamGridDbKey";
         static constexpr const char* ArtLookups = "covers/lookups";
         static constexpr const char* WindowGameBarAutoHide = "ingame/windowBarAutoHide";
+        static constexpr const char* DefaultRunner = "runners/default";
         static constexpr const char* StoreOfflineError = "network/storeOfflineError";
         static constexpr const char* CrashDumps = "logs/crashDumps";
         static constexpr const char* ShaderCacheDir = "shaders/cacheDir";
@@ -112,6 +113,12 @@ public:
     // auto-hidden until the mouse reaches the top edge (true). Launcher-side only.
     bool windowGameBarAutoHide() const;
     void setWindowGameBarAutoHide(bool on);
+
+    // The runner a game uses unless its "runner" override names another (Runners ids; "xsemu").
+    QString defaultRunner() const;
+    void setDefaultRunner(const QString& id);
+    // The runner this game runs with: its override, else the default.
+    QString runnerFor(const QString& titleId) const;
 
     // On by default: games start with XCL_STORE=offline-error (store context opens, every store
     // query fails with the store network error). Off: the store API is refused as unavailable.

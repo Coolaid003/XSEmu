@@ -147,6 +147,15 @@ void AppSettings::setSteamGridDbKey(const QString& key) { write(Key::SteamGridDb
 bool AppSettings::artLookups() const { return read(Key::ArtLookups, true).toBool(); }
 void AppSettings::setArtLookups(bool on) { write(Key::ArtLookups, on); }
 
+QString AppSettings::defaultRunner() const { return read(Key::DefaultRunner, QStringLiteral("xsemu")).toString(); }
+void AppSettings::setDefaultRunner(const QString& id) { write(Key::DefaultRunner, id); }
+
+QString AppSettings::runnerFor(const QString& titleId) const
+{
+    const QString id = gameOverrides(titleId).value(QStringLiteral("runner")).toString();
+    return id.isEmpty() ? defaultRunner() : id;
+}
+
 bool AppSettings::windowGameBarAutoHide() const { return read(Key::WindowGameBarAutoHide, false).toBool(); }
 void AppSettings::setWindowGameBarAutoHide(bool on) { write(Key::WindowGameBarAutoHide, on); }
 

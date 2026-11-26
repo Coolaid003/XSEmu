@@ -42,6 +42,7 @@ add_library(xsemu_core STATIC
     src/core/GameManifest.cpp src/core/GameManifest.h
     src/core/HardwareInfo.cpp src/core/HardwareInfo.h
     src/core/LaunchConfig.cpp src/core/LaunchConfig.h
+    src/core/NativeWindow.cpp src/core/NativeWindow.h
     src/core/Library.cpp src/core/Library.h
     src/core/Paths.cpp src/core/Paths.h
     src/core/ProcessGate.cpp src/core/ProcessGate.h
@@ -58,7 +59,17 @@ add_library(xsemu_core STATIC
 target_include_directories(xsemu_core PUBLIC src src/core)
 target_link_libraries(xsemu_core PUBLIC Qt6::Core Qt6::Network)
 if(WIN32)
-    target_link_libraries(xsemu_core PUBLIC dxgi psapi)
+    target_link_libraries(xsemu_core PUBLIC dxgi psapi user32)
+elseif(UNIX AND NOT APPLE)
+    # other processes' windows (NativeWindow) on X11
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(XCB QUIET IMPORTED_TARGET xcb)
+        if(XCB_FOUND)
+            target_link_libraries(xsemu_core PUBLIC PkgConfig::XCB)
+            target_compile_definitions(xsemu_core PRIVATE XSEMU_XCB)
+        endif()
+    endif()
 endif()
 xsemu_warnings(xsemu_core)
 

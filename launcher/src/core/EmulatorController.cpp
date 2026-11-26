@@ -6,6 +6,9 @@
 #include "ProcessGate.h"
 #include "ProcessTree.h"
 #include "LaunchConfig.h"
+#include "NativeWindow.h"
+#include "TitleConfig.h"
+#include "RunnerManager.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -38,6 +41,8 @@ EmulatorController::EmulatorController(AppSettings& settings, ProcessGate& gate,
             m_process->killTree();
         }
     });
+    m_windowTimer.setInterval(250);
+    connect(&m_windowTimer, &QTimer::timeout, this, &EmulatorController::pollGameWindow);
     m_memoryTimer.setInterval(2000);
     connect(&m_memoryTimer, &QTimer::timeout, this, &EmulatorController::pollMemory);
 }
@@ -56,6 +61,18 @@ qint64 EmulatorController::launchNeedMb() const
     return m_settings.launchNeedMb() + kRamFloorMb;
 }
 
+const RunnerSpec& EmulatorController::runnerFor(const Game& game) const
+{
+    const RunnerSpec* spec = Runners::find(m_settings.runnerFor(game.titleId()));
+    return spec && (spec->isBuiltIn() || m_runners) ? *spec : Runners::xsemu();
+}
+
+const RunnerSpec& EmulatorController::runner() const
+{
+    const RunnerSpec* spec = Runners::find(m_runnerId);
+    return spec ? *spec : Runners::xsemu();
+}
+
 EmulatorController::LaunchCheck EmulatorController::checkLaunch(const Game& game) const
 {
     LaunchCheck c;
@@ -64,8 +81,15 @@ EmulatorController::LaunchCheck EmulatorController::checkLaunch(const Game& game
         c.reason = m_gate.blockedReason(ProcessGate::Action::LaunchGame);
         return c;
     }
+    const RunnerSpec& spec = runnerFor(game);
     const QString emulator = m_settings.emulatorPath();
-    if (!QFileInfo(emulator).isExecutable()) {
+    if (!spec.isBuiltIn()) {
+        if (!m_runners->isRunnable(spec.id)) {
+            c.problem = LaunchCheck::Problem::RunnerNotInstalled;
+            c.reason = QStringLiteral("%1 runs with %2, which is not installed. Install it on the Runners page, or pick another runner for this game.").arg(game.title(), spec.name);
+            return c;
+        }
+    } else if (!QFileInfo(emulator).isExecutable()) {
         c.problem = LaunchCheck::Problem::EmulatorMissing;
         c.reason = QStringLiteral("XSEmu was not found at %1.").arg(QDir::toNativeSeparators(emulator));
         return c;
@@ -130,8 +154,11 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
         return false;
     }
 
-    LaunchConfig::prepareTitle(m_settings, game.titleId());
-
+    const RunnerSpec& spec = runnerFor(game);
+    m_runnerId = spec.id;
+    m_gameWindow = 0;
+    m_windowReady = false;
+    m_recentOutput.clear();
     m_game = game;
     m_stats = {};
     m_hello.reset();
@@ -143,7 +170,10 @@ bool EmulatorController::start(const Game& game, quintptr hostWindow, QString* e
     m_killed = false;
     m_playedMs = 0;
     m_playClock.invalidate();
-    m_overlay = m_settings.gameOverrides(game.titleId()).value(QStringLiteral("overlay"), m_settings.overlayDefault()).toBool();
+    m_overlay = spec.canOverlay && m_settings.gameOverrides(game.titleId()).value(QStringLiteral("overlay"), m_settings.overlayDefault()).toBool();
+    if (!spec.isBuiltIn())
+        return startRunner(spec, game, error);
+    LaunchConfig::prepareTitle(m_settings, game.titleId());
 
     m_pipeName = QStringLiteral("xsemu-%1-%2").arg(QCoreApplication::applicationPid()).arg(++g_pipeCounter);
     delete m_server;
@@ -207,7 +237,79 @@ void EmulatorController::setOverlay(bool on)
 
 void EmulatorController::focusGame()
 {
-    send(Protocol::Command::focus());
+    if (m_gameWindow)
+        NativeWindow::activate(m_gameWindow);
+    else
+        send(Protocol::Command::focus());
+}
+
+bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, QString* error)
+{
+    const QString program = m_runners->status(spec.id).executable;
+    const QString exe = QDir(game.folder).filePath(game.exe);
+    // the console the game is set to run as (its xcl.toml device_type, else the launcher default)
+    const QString device = TitleConfig(Paths::xclToml(game.titleId())).value(QStringLiteral("device_type"), m_settings.defaultDeviceType()).toString();
+    const auto tokens = spec.tokens(game.folder, exe, game.titleId(), device, 0);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    for (const auto& [name, value] : spec.environment) {
+        const QString v = RunnerSpec::expand(value, tokens);
+        env.insert(name, v);
+        if (name.endsWith(QLatin1String("_DIR")))
+            QDir().mkpath(v);
+    }
+    auto* p = new ProcessTree(this);
+    m_process = p;
+    p->setProcessEnvironment(env);
+    p->setWorkingDirectory(QFileInfo(program).absolutePath());
+    p->setProcessChannelMode(QProcess::MergedChannels);
+    connect(p, &QProcess::readyReadStandardOutput, this, [this, p] {
+        while (p->canReadLine())
+            onRunnerOutput(QString::fromUtf8(p->readLine()).trimmed());
+    });
+    connect(p, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) { onFinished(code, static_cast<int>(status)); });
+    connect(p, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart)
+            onFinished(-1, static_cast<int>(QProcess::CrashExit));
+    });
+    Q_UNUSED(error);
+    m_windowReady = spec.windowReadyLine.isEmpty();
+    m_killTimer.setInterval(spec.stopGraceMs);
+    setState(State::Booting);
+    p->startTree(program, RunnerSpec::expand(spec.launchArgs, tokens));
+    m_windowTimer.start();
+    m_memoryTimer.start();
+    pollMemory();
+    return true;
+}
+
+void EmulatorController::onRunnerOutput(const QString& line)
+{
+    if (line.isEmpty())
+        return;
+    emit logLine(line);
+    m_recentOutput << line;
+    if (m_recentOutput.size() > 40)
+        m_recentOutput.removeFirst();
+    if (!m_windowReady && line.contains(runner().windowReadyLine))
+        m_windowReady = true;
+}
+
+void EmulatorController::pollGameWindow()
+{
+    if (!m_process || m_state == State::Stopping || !m_windowReady)
+        return;
+    if (m_gameWindow && NativeWindow::exists(m_gameWindow))
+        return;
+    // the window may also be replaced (a runner respawns its engine when the title relaunches)
+    const quintptr w = NativeWindow::findTopLevel(m_process->pids());
+    if (w == m_gameWindow)
+        return;
+    m_gameWindow = w;
+    if (w && m_state == State::Booting) {
+        m_playClock.start();
+        setState(State::Running);
+    }
+    emit gameWindowChanged();
 }
 
 void EmulatorController::stop()
@@ -216,8 +318,13 @@ void EmulatorController::stop()
         return;
     m_stopRequested = true;
     setState(State::Stopping);
+    const RunnerSpec& spec = runner();
     if (m_socket && m_socket->state() == QLocalSocket::ConnectedState)
         send(Protocol::Command::stop());
+    else if (m_gameWindow && (spec.stop == RunnerSpec::Stop::CloseWindow || spec.stop == RunnerSpec::Stop::SysCommandClose))
+        NativeWindow::requestClose(m_gameWindow, spec.stop == RunnerSpec::Stop::SysCommandClose);
+    else if (spec.stop == RunnerSpec::Stop::Kill)
+        m_killTimer.setInterval(0);
     else
         m_process->terminate();
     m_killTimer.start();
@@ -290,10 +397,16 @@ void EmulatorController::pollMemory()
     if (!m_process)
         return;
     const qint64 held = m_process->heldBytes();
-    if (held != m_stats.heldBytes) {
-        m_stats.heldBytes = held;
-        emit statsChanged();
+    bool changed = held != m_stats.heldBytes;
+    m_stats.heldBytes = held;
+    if (!runner().isBuiltIn()) {
+        // a runner reports nothing to us: show the free RAM we measure ourselves
+        const qint64 freeMb = static_cast<qint64>(HardwareInfo::availableRam() / (1024 * 1024));
+        changed = changed || m_stats.ramFreeMb != freeMb;
+        m_stats.ramFreeMb = freeMb;
     }
+    if (changed)
+        emit statsChanged();
 }
 
 void EmulatorController::onFinished(int exitCode, int exitStatus)
@@ -306,7 +419,13 @@ void EmulatorController::onFinished(int exitCode, int exitStatus)
         onSocketReadyRead();
     }
     m_killTimer.stop();
+    m_killTimer.setInterval(kStopGraceMs);
     m_memoryTimer.stop();
+    m_windowTimer.stop();
+    if (m_gameWindow) {
+        m_gameWindow = 0;
+        emit gameWindowChanged();
+    }
 
     ExitInfo info;
     info.game = m_game;
@@ -330,6 +449,23 @@ void EmulatorController::onFinished(int exitCode, int exitStatus)
             info.exitCode = m_exitLine->code;
     } else if (m_stopRequested) {
         info.kind = ExitInfo::Kind::Stopped;
+    } else if (!runner().isBuiltIn() && exitStatus == static_cast<int>(QProcess::NormalExit)) {
+        // third-party runners: 0 normal, 1 a setup error, DXGI_ERROR_DEVICE_REMOVED, anything else a crash
+        const quint32 code = static_cast<quint32>(exitCode);
+        QString error;
+        for (auto it = m_recentOutput.crbegin(); it != m_recentOutput.crend() && error.isEmpty(); ++it) {
+            if (it->startsWith(QLatin1String("Error:")))
+                error = it->mid(6).trimmed();
+        }
+        if (code == 0)
+            info.kind = ExitInfo::Kind::TitleExit;
+        else if (code == 0x887A0005u)
+            info.kind = ExitInfo::Kind::DeviceRemoved;
+        else if (code == 1)
+            info.kind = ExitInfo::Kind::Error;
+        else
+            info.kind = ExitInfo::Kind::Crash;
+        info.message = !error.isEmpty() ? error : (code == 0 ? QString() : m_recentOutput.mid(qMax(0, int(m_recentOutput.size()) - 3)).join(QLatin1Char('\n')));
     } else if (exitCode == -1 && exitStatus == static_cast<int>(QProcess::CrashExit) && m_process && m_process->error() == QProcess::FailedToStart) {
         info.kind = ExitInfo::Kind::Error;
         info.message = QStringLiteral("XSEmu could not be started: %1").arg(m_process->errorString());

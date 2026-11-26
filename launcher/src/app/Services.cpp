@@ -9,6 +9,7 @@ Services::Services(QObject* parent)
     , warmup(settings, gate)
     , covers(settings)
 {
+    emulator.setRunners(&runners);
     Theme::instance().setMode(Theme::Mode(int(settings.theme())));
     LaunchConfig::followShaderCacheDir(settings);
     library.setFolders(settings.gameFolders());
