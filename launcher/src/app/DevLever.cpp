@@ -80,7 +80,6 @@ WarmupController::Progress runningProgress()
     p.etaS = 60;
     p.ramFreeMb = 12 * 1024;
     p.giantsCompiling = 2;
-    p.giantsMax = 3;
     p.inFlight = 14;
     p.elapsedS = 124;
     return p;
@@ -418,6 +417,10 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
             run.result = WarmupRun::Result::Failed;
             run.exitCode = 3;
             run.finishedAt = QDateTime::currentDateTime();
+            QDir().mkpath(QFileInfo(WarmupController::logPath()).absolutePath());
+            QFile log(WarmupController::logPath());
+            if (log.open(QIODevice::WriteOnly | QIODevice::Truncate))
+                log.write("warm-up: the driver compile of DXIL 3f2a91c07d1e4b55 crashed (0xC0000005)\n");
             s.warmup.simulateForScreenshot(WarmupController::State::Failed, signal, p,
                                            QStringLiteral("warm-up: the driver compile of DXIL 3f2a91c07d1e4b55 crashed (0xC0000005)"), run);
         } else if (st == QLatin1String("warmup-finished")) {

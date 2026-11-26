@@ -8,6 +8,7 @@
 #include "shell/MainWindow.h"
 #include "widgets/Badge.h"
 #include "widgets/Button.h"
+#include "widgets/CoverThumb.h"
 #include "widgets/Icon.h"
 #include "widgets/PageHeader.h"
 #include "widgets/ProgressBlock.h"
@@ -34,36 +35,6 @@ protected:
         QPainter p(this);
         p.fillRect(rect(), Theme::color(Theme::Role::Border));
     }
-};
-
-// A 22×30 cover thumbnail: the cached SteamGridDB grid image, or a plain sunken tile.
-class Thumb : public QWidget {
-public:
-    explicit Thumb(const QString& art)
-        : m_art(art.isEmpty() ? QPixmap() : QPixmap(art))
-    {
-        setFixedSize(22, 30);
-    }
-
-protected:
-    void paintEvent(QPaintEvent*) override
-    {
-        QPainter p(this);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setRenderHint(QPainter::SmoothPixmapTransform);
-        QPainterPath clip;
-        clip.addRoundedRect(QRectF(rect()), 3, 3);
-        p.setClipPath(clip);
-        if (m_art.isNull()) {
-            p.fillRect(rect(), Theme::color(Theme::Role::Sunken));
-            return;
-        }
-        const QPixmap scaled = m_art.scaled(size() * devicePixelRatioF(), Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
-        p.drawPixmap(rect(), scaled, QRect(QPoint((scaled.width() - width() * devicePixelRatioF()) / 2, 0), size() * devicePixelRatioF()));
-    }
-
-private:
-    QPixmap m_art;
 };
 
 // The amber banner while a game holds the one XSEmu slot (Warm-up: blocked).
@@ -132,6 +103,18 @@ struct RunResult {
     QString text;
     Theme::Tone tone;
 };
+
+Theme::Role toneText(Theme::Tone tone)
+{
+    switch (tone) {
+    case Theme::Tone::Neutral: return Theme::Role::Text2;
+    case Theme::Tone::Accent: return Theme::Role::AccentText;
+    case Theme::Tone::Success: return Theme::Role::Success;
+    case Theme::Tone::Warning: return Theme::Role::Warning;
+    case Theme::Tone::Danger: return Theme::Role::Danger;
+    }
+    return Theme::Role::Text2;
+}
 
 RunResult runResult(const WarmupRun& run)
 {
@@ -566,7 +549,9 @@ void WarmupPage::refreshRuns()
         auto* nh = new QHBoxLayout(nameCell);
         nh->setContentsMargins(0, 0, 0, 0);
         nh->setSpacing(10);
-        nh->addWidget(new Thumb(titleId.isEmpty() ? QString() : m_s.covers.artPath(titleId, CoverCache::Kind::Grid)));
+        auto* thumb = new CoverThumb(QSize(22, 30));
+        thumb->setCover(titleId.isEmpty() ? QPixmap() : QPixmap(m_s.covers.artPath(titleId, CoverCache::Kind::Grid)), titleName);
+        nh->addWidget(thumb);
         nh->addWidget(new Label(titleName.isEmpty() ? QStringLiteral("All games") : titleName, Label::Style::BodyMedium), 1);
         m_runs->addWidget(nameCell, row, 0);
         auto* countLabel = new Label(count, Label::Style::Number, Theme::Role::Text2);
@@ -575,8 +560,13 @@ void WarmupPage::refreshRuns()
         auto* tookLabel = new Label(took, Label::Style::Number, Theme::Role::Text2);
         tookLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_runs->addWidget(tookLabel, row, 2);
-        auto* badge = new Badge(rr.text, rr.tone, Badge::Kind::Plain);
-        m_runs->addWidget(badge, row, 3, Qt::AlignLeft | Qt::AlignVCenter);
+        auto* resultCell = new QWidget;
+        auto* rh = new QHBoxLayout(resultCell);
+        rh->setContentsMargins(0, 0, 0, 0);
+        rh->setSpacing(0);
+        rh->addWidget(new Badge({}, rr.tone, Badge::Kind::Plain));
+        rh->addWidget(new Label(rr.text, Label::Style::Small, toneText(rr.tone)));
+        m_runs->addWidget(resultCell, row, 3, Qt::AlignLeft | Qt::AlignVCenter);
         auto* whenLabel = new Label(when, Label::Style::Small, Theme::Role::Text3);
         whenLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         m_runs->addWidget(whenLabel, row, 4);

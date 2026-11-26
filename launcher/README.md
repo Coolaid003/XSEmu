@@ -71,6 +71,39 @@ The lever copies `tests/fixtures` to a temporary folder and points the launcher 
 data root and the shader cache there. It reads and writes nothing else on the machine. Without
 `--grab` the window stays open in that state. Keep grabs out of the repository.
 
+## Settings
+
+Every control is backed by an `xcl.toml` key, an `XCL_*` variable or a launcher setting. Controls
+XSEmu can't honour yet are shown disabled with the reason. The `xcl.toml` keys are launcher defaults
+(`AppSettings::xclDefault`, under `xcl/`): `LaunchConfig::prepareTitle` writes them into the title's
+`xcl.toml` at launch, and a game's own setting in Game details wins over the default. The `XCL_*`
+variables come from `LaunchConfig::runEnvironment`.
+
+| Section | Control | Backing |
+| --- | --- | --- |
+| Console | Device type | `device_type` (`lockhart` or `anaconda`), from `defaultDeviceType` |
+| Network | Offline mode | `XCL_NETWORK=0` when on |
+| Network | Store behaviour | `XCL_STORE=offline-error` (Offline error), unset (Not available) |
+| Shaders | Warm up when the translator changes | Disabled: XSEmu doesn't report its translator version yet |
+| Shaders | RAM floor | Read only, 1 GB (`EmulatorController::kRamFloorMb`), with the admission rule |
+| Shaders | Cache folder | `XCL_DXIL_CACHE`; a value already in the environment wins |
+| Shaders | Clear cache | Deletes the cache folder's contents when it looks like an XSEmu cache; never the driver's cache |
+| Overlay | Stall and performance overlay | `overlayDefault`, sent over the control pipe at launch |
+| Overlay | Position, size, metrics | Disabled: not in the protocol |
+| Game folders | Folders, rescan | `gameFolders` |
+| Game folders | SteamGridDB API key, art lookups | `steamGridDbKey`, `artLookups` |
+| Input | Keyboard and mouse as gamepad | `keyboard_mouse` |
+| Input | Mouse sensitivity | `mouse_sensitivity` |
+| Input | Controller | XInput state (Windows only) |
+| Graphics | Theme, game bar in a window | `theme`, `ingame/windowBarAutoHide` |
+| Graphics | Show the game image | `present` (`auto` or `off`) |
+| Graphics | Display mode, D3D12 adapter, raytracing | `display_mode`, `d3d12_adapter`, `raytracing`; each is disabled while `XCL_DISPLAY_MODE`, `XCL_ADAPTER` or `XCL_RAYTRACING` sets it |
+| Graphics | Start games in, scaling, low-latency present | Disabled: not in this build |
+| Logs | Log detail | `log_level` (`info` or `debug`) |
+| Logs | Keep logs for | Disabled: XSEmu keeps `xcl.log` and `xcl.prev.log` |
+| Logs | Crash reports | `XCL_FULL_DUMP=<data root>/<title>/logs/dumps` when on |
+| About | XSEmu.exe version | `XSEmu.exe --version` |
+
 ## Layout
 
 | Path | Contents |
@@ -79,7 +112,7 @@ data root and the shader cache there. It reads and writes nothing else on the ma
 | `src/theme` | Design tokens, light and dark palettes, the global style sheet. |
 | `src/widgets` | The component kit: Label, Button, Badge, Toggle, SegmentedControl, SearchBox, CoverTile, ProgressBlock, Card, Dialog, InfoNote, ChoiceCard, NavItem, PageHeader, Spinner, icons and the app mark. |
 | `src/shell` | The frameless main window, title bar, sidebar, in-game view and error dialogs. |
-| `src/pages` | Library, Warm-up, Settings, Game details and First launch. |
+| `src/pages` | Library, Warm-up, Settings, Game details and First launch. Each Settings section is a file in `src/pages/settings`. |
 | `src/app` | Service wiring and the screenshot lever. |
 | `resources` | Line icons as SVG, the Qt resource file and the Windows `.rc`. The app logo comes from `assets/logo` at the repository root. |
 | `tools/fake-xsemu` | The protocol stand-in used by the tests and on Linux. |
