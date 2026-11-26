@@ -18,6 +18,8 @@ QRect geometry(quintptr window);
 void requestClose(quintptr window, bool sysCommand);
 // Bring the window to the front and give it the keyboard.
 void activate(quintptr window);
+// Whether the window, or the given one of ours, has the keyboard now; true where that can't be told (X11).
+bool isForeground(quintptr window, quintptr ours = 0);
 // Make window a borderless child of host filling rect (host coordinates). False when it failed.
 bool reparent(quintptr window, quintptr host, const QRect& rect);
 void moveChild(quintptr window, const QRect& rect);

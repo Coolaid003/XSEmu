@@ -87,6 +87,12 @@ void activate(quintptr window)
         AttachThreadInput(self, fg, FALSE);
 }
 
+bool isForeground(quintptr window, quintptr ours)
+{
+    const HWND fg = GetForegroundWindow();
+    return fg && (fg == hwnd(window) || (ours && fg == hwnd(ours)));
+}
+
 bool reparent(quintptr window, quintptr host, const QRect& rect)
 {
     HWND w = hwnd(window);
@@ -228,6 +234,8 @@ void activate(quintptr window)
     xcb_flush(conn());
 }
 
+bool isForeground(quintptr, quintptr) { return true; }
+
 bool reparent(quintptr window, quintptr host, const QRect& rect)
 {
     if (!conn() || !window || !host)
@@ -258,6 +266,7 @@ bool exists(quintptr) { return false; }
 QRect geometry(quintptr) { return {}; }
 void requestClose(quintptr, bool) {}
 void activate(quintptr) {}
+bool isForeground(quintptr, quintptr) { return true; }
 bool reparent(quintptr, quintptr, const QRect&) { return false; }
 void moveChild(quintptr, const QRect&) {}
 

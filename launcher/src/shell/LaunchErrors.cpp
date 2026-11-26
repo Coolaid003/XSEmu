@@ -365,6 +365,8 @@ void showNotEnoughRam(QWidget* window, const Game& game, const EmulatorControlle
 
 bool LaunchErrors::shadersCold(Services& s, const Game& game)
 {
+    if (!s.emulator.runnerFor(game).isBuiltIn())
+        return false; // a third-party runner keeps its own cache; its pre-cache is optional
     switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), ShaderCacheInfo::readDefault())) {
     case TitleShaderState::NeverWarmed:
     case TitleShaderState::LastRunIncomplete:

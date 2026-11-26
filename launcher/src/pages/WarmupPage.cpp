@@ -3,6 +3,7 @@
 #include "PageScaffold.h"
 #include "app/Services.h"
 #include "core/Format.h"
+#include "core/Runner.h"
 #include "core/ShaderCacheInfo.h"
 #include "settings/SettingsKit.h"
 #include "shell/MainWindow.h"
@@ -118,6 +119,13 @@ Theme::Role toneText(Theme::Tone tone)
 
 RunResult runResult(const WarmupRun& run)
 {
+    if (const RunnerSpec* spec = run.runnerId.isEmpty() ? nullptr : Runners::find(run.runnerId)) {
+        WarmupRun plain = run;
+        plain.runnerId.clear();
+        RunResult r = runResult(plain);
+        r.text += QStringLiteral(" \u00B7 ") + spec->name;
+        return r;
+    }
     switch (run.result) {
     case WarmupRun::Result::Finished: return {QStringLiteral("Finished"), Theme::Tone::Success};
     case WarmupRun::Result::Cancelled: return {QStringLiteral("Cancelled"), Theme::Tone::Neutral};
@@ -170,7 +178,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
     , m_runs(nullptr)
 {
     const PageScaffold page = makePageScaffold(this, QStringLiteral("Shader warm-up"));
-    page.header->setSubtitle(QStringLiteral("Pre-builds every pipeline so the first run doesn't stall"));
+    page.header->setSubtitle(QStringLiteral("Pre-builds every pipeline with the game's runner so the first run doesn't stall"));
     m_game->setFixedHeight(Metrics::PageAction);
     page.header->addAction(m_game);
     page.header->addAction(m_start);
@@ -281,8 +289,6 @@ void WarmupPage::refresh()
     const WarmupController::Progress pr = m_s.warmup.progress();
     const bool active = m_s.warmup.isActive();
     const bool gameHolds = m_s.gate.owner() == ProcessGate::Owner::Game;
-    const QString cannot = active ? QString() : m_s.warmup.checkStart();
-
     if (active || (st != State::Idle && !m_dismissed)) {
         const int i = m_game->findData(m_s.warmup.game().titleId());
         if (i >= 0)
@@ -291,9 +297,17 @@ void WarmupPage::refresh()
     m_game->setEnabled(!active);
     const Game picked = m_s.library.game(m_game->currentData().toString());
     const QString pickedName = picked.isValid() ? picked.title() : QString();
+    const QString cannot = active ? QString() : m_s.warmup.checkStart(picked);
+    const bool showResult = !active && st != State::Idle && !m_dismissed;
+    // the runner this block is about: the running or last pre-cache's, else the picked game's
+    const QString runnerId = active ? pr.runnerId : showResult ? m_s.warmup.lastRun().value_or(WarmupRun{}).runnerId : m_s.warmup.runnerFor(picked).id;
+    const RunnerSpec* runner = Runners::find(runnerId);
+    if (runner && runner->isBuiltIn())
+        runner = nullptr;
 
     m_start->setEnabled(cannot.isEmpty() && !active);
-    m_start->setText(active ? QStringLiteral("Warming up...") : QStringLiteral("Start warm-up"));
+    m_start->setText(active ? (pr.runnerId.isEmpty() ? QStringLiteral("Warming up...") : QStringLiteral("Pre-caching..."))
+                            : (runner ? QStringLiteral("Start pre-cache") : QStringLiteral("Start warm-up")));
     m_start->setIconName(gameHolds ? QStringLiteral("lock") : QStringLiteral("bolt"));
     m_start->setToolTip(cannot);
 
@@ -318,11 +332,14 @@ void WarmupPage::refresh()
     for (Button* b : {m_warm, m_play, m_resume, m_log, m_dismiss, m_cancel})
         b->hide();
     m_block->setNote({});
-    const bool showResult = !active && st != State::Idle && !m_dismissed;
     const bool blockShown = !gameHolds && (active || showResult || picked.isValid() || m_game->count() == 0);
     m_block->setVisible(blockShown);
     if (!blockShown)
         return;
+    if (runner) {
+        refreshRunner(*runner, picked, showResult, cannot);
+        return;
+    }
 
     const QString game = m_s.warmup.game().title();
     const auto withGame = [&game](const QString& s) { return game.isEmpty() ? s : game + QStringLiteral(" · ") + s; };
@@ -516,6 +533,127 @@ void WarmupPage::refresh()
     }
     m_block->setNote((note + joinSentences(others)).trimmed());
     m_warm->setText(pickedName.isEmpty() || pickedName.size() > 24 ? QStringLiteral("Warm up") : QStringLiteral("Warm up %1").arg(pickedName));
+    m_warm->setEnabled(cannot.isEmpty());
+    m_warm->setToolTip(cannot);
+    m_warm->show();
+}
+
+void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool showResult, const QString& cannot)
+{
+    using State = WarmupController::State;
+    const State st = m_s.warmup.state();
+    const WarmupController::Progress pr = m_s.warmup.progress();
+    const QString version = QStringLiteral("%1 %2").arg(spec.name, spec.pinnedVersion()).trimmed();
+    const auto joined = [](const QStringList& parts) {
+        QStringList out;
+        for (const QString& p : parts) {
+            if (!p.isEmpty())
+                out << p;
+        }
+        return out.join(QStringLiteral(" · "));
+    };
+    const QString freeRam = pr.ramFreeMb ? ramText(*pr.ramFreeMb) : QStringLiteral("Unknown");
+
+    if (m_s.warmup.isActive()) {
+        m_block->setState(ProgressBlock::State::Running);
+        m_block->setTitle(QStringLiteral("Pre-caching shaders with %1").arg(spec.name));
+        const QString step = pr.stepCount > 1 ? QStringLiteral("%1, step %2 of %3").arg(pr.phase).arg(pr.step).arg(pr.stepCount) : pr.phase;
+        m_block->setSubtitle(joined({m_s.warmup.game().title(), version, step}));
+        m_block->setFraction(pr.total > 0 ? fractionOf(pr.done, pr.total) : -1);
+        m_block->setColumns({
+            {QStringLiteral("Done"), pr.total > 0 ? QStringLiteral("%1 / %2").arg(Format::count(pr.done), Format::count(pr.total)) : Format::count(pr.done)},
+            {QStringLiteral("Speed"), pr.keysPerS > 0 ? QStringLiteral("%1/s").arg(Format::count(qRound64(pr.keysPerS))) : QStringLiteral("Measuring")},
+            {QStringLiteral("Time left"), pr.etaS ? Format::duration(*pr.etaS) : QStringLiteral("Unknown")},
+            {QStringLiteral("Free RAM"), freeRam},
+        });
+        const bool gentle = pr.step > 0 && pr.step <= spec.precache.size() && spec.precache.at(pr.step - 1).cancel == RunnerSpec::PrecacheCancel::CloseStdin;
+        m_block->setNote(!m_s.warmup.cancelRequested() ? QStringLiteral("%1 runs in the background with no console window. XSEmu reads its progress; its output goes to the logs folder.").arg(spec.name)
+                         : gentle                      ? QStringLiteral("%1 finishes the pipelines in flight, then stops.").arg(spec.name)
+                                                       : QStringLiteral("Stopping %1.").arg(spec.name));
+        m_cancel->setText(m_s.warmup.cancelRequested() ? QStringLiteral("Cancelling...") : QStringLiteral("Cancel"));
+        m_cancel->setEnabled(!m_s.warmup.cancelRequested());
+        m_cancel->show();
+        m_log->setEnabled(true);
+        m_log->show();
+        return;
+    }
+
+    if (showResult) {
+        const WarmupRun run = m_s.warmup.lastRun().value_or(WarmupRun{});
+        const bool comparable = run.total > 0 && run.done <= run.total;
+        const QString at = QStringLiteral("at %1 of %2").arg(Format::count(run.done), Format::count(run.total));
+        m_block->setColumns({});
+        switch (st) {
+        case State::Finished:
+            m_block->setState(ProgressBlock::State::Finished);
+            if (run.total <= 0) {
+                m_block->setTitle(QStringLiteral("Nothing to pre-cache yet"));
+                m_block->setSubtitle(joined({m_s.warmup.game().title(), version}));
+                m_block->setFraction(1.0);
+                m_block->setNote(spec.precacheNote);
+            } else {
+                m_block->setTitle(QStringLiteral("Pre-cache finished"));
+                m_block->setSubtitle(QStringLiteral("%1 pipelines in %2 with %3").arg(Format::count(run.done), Format::duration(qint64(run.tookS + 0.5)), version));
+                m_block->setFraction(1.0);
+                m_block->setColumns({{QStringLiteral("Done"), builtOf(run.done, run.total)},
+                                     {QStringLiteral("Speed"), run.tookS > 0 ? QStringLiteral("%1/s avg").arg(Format::count(qRound64(run.done / run.tookS))) : QStringLiteral("Unknown")},
+                                     {QStringLiteral("Free RAM"), freeRam}});
+                if (run.failed > 0)
+                    m_block->setNote(QStringLiteral("%1 pipelines failed to build; %2 builds them when the game needs them. The log names them.").arg(Format::count(run.failed), spec.name));
+            }
+            if (m_s.warmup.game().isValid() && m_s.gate.isFree()) {
+                const QString name = m_s.warmup.game().title();
+                m_play->setText(name.size() > 24 ? QStringLiteral("Play") : QStringLiteral("Play %1").arg(name));
+                m_play->show();
+            }
+            m_dismiss->show();
+            return;
+        case State::Failed:
+            m_block->setState(ProgressBlock::State::Failed);
+            m_block->setTitle(QStringLiteral("Pre-cache failed"));
+            m_block->setSubtitle(joined({comparable ? at : m_s.warmup.game().title(), version}));
+            m_block->setFraction(comparable ? fractionOf(run.done, run.total) : -1);
+            m_block->setNote(QStringLiteral("%1 exited with code %2.").arg(spec.name, Format::exitCode(run.exitCode))
+                             + (run.message.isEmpty() ? QString() : QStringLiteral(" ") + sentence(run.message)));
+            m_resume->setText(QStringLiteral("Retry"));
+            m_resume->show();
+            m_log->setEnabled(QFileInfo::exists(WarmupController::logPath()));
+            m_log->show();
+            return;
+        default:
+            m_block->setState(ProgressBlock::State::Cancelled);
+            m_block->setTitle(QStringLiteral("Pre-cache cancelled"));
+            m_block->setSubtitle(joined({comparable ? at : m_s.warmup.game().title(), version}));
+            m_block->setFraction(comparable ? fractionOf(run.done, run.total) : -1);
+            m_block->setNote(QStringLiteral("What %1 built is kept in its own cache.").arg(spec.name));
+            m_resume->setText(QStringLiteral("Run again"));
+            m_resume->show();
+            m_dismiss->show();
+            return;
+        }
+    }
+
+    // idle: what a pre-cache would do for the picked game with its runner
+    m_block->setState(ProgressBlock::State::Idle);
+    m_block->setFraction(0);
+    m_block->setColumns({});
+    std::optional<WarmupRun> last;
+    for (const WarmupRun& r : m_s.settings.recentWarmups()) {
+        if (r.titleId == picked.titleId() && r.runnerId == spec.id) {
+            last = r;
+            break;
+        }
+    }
+    const QString name = picked.title();
+    if (last && last->result == WarmupRun::Result::Finished && last->total > 0)
+        m_block->setTitle(QStringLiteral("%1 is pre-cached with %2").arg(name, spec.name));
+    else if (last && last->result == WarmupRun::Result::Failed)
+        m_block->setTitle(QStringLiteral("%1's last pre-cache with %2 failed").arg(name, spec.name));
+    else
+        m_block->setTitle(QStringLiteral("%1 runs with %2").arg(name, spec.name));
+    m_block->setSubtitle(last ? QStringLiteral("last run %1").arg(Format::ago(last->finishedAt).toLower()) : version);
+    m_block->setNote(spec.precache.isEmpty() ? QStringLiteral("%1 has no shader pre-cache; it builds what it needs while the game runs.").arg(spec.name) : spec.precacheNote);
+    m_warm->setText(QStringLiteral("Pre-cache with %1").arg(spec.name));
     m_warm->setEnabled(cannot.isEmpty());
     m_warm->setToolTip(cannot);
     m_warm->show();

@@ -1,10 +1,12 @@
 #include "MainWindow.h"
 
+#include "FloatingBar.h"
 #include "InGameView.h"
 #include "LaunchErrors.h"
 #include "Sidebar.h"
 #include "TitleBar.h"
 #include "app/Services.h"
+#include "core/NativeWindow.h"
 #include "pages/FirstLaunchPage.h"
 #include "pages/GameDetailsPage.h"
 #include "pages/LibraryPage.h"
@@ -44,6 +46,7 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     , m_library(new LibraryPage(services))
     , m_warmup(new WarmupPage(services))
     , m_runners(new RunnersPage(services))
+    , m_floating(new FloatingBar(services))
     , m_settings(new SettingsPage(services))
     , m_details(new GameDetailsPage(services))
     , m_firstLaunch(new FirstLaunchPage(services))
@@ -90,6 +93,15 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     connect(m_library, &LibraryPage::warmupRequested, this, warmUp);
     connect(m_details, &GameDetailsPage::warmupRequested, this, warmUp);
     connect(m_details, &GameDetailsPage::manageRunners, this, [this] { showPage(Page::Runners); });
+    // a third-party runner's own window: the floating bar over it brings the launcher back
+    connect(this, &QObject::destroyed, m_floating, &QObject::deleteLater);
+    connect(m_floating, &FloatingBar::showLauncher, this, [this] {
+        if (isMinimized())
+            showNormal();
+        raise();
+        activateWindow();
+        showPage(Page::Library);
+    });
     connect(m_firstLaunch, &FirstLaunchPage::addGamesRequested, this, &MainWindow::addGameFolder);
     connect(m_firstLaunch, &FirstLaunchPage::finished, this, [this] { showPage(Page::Library); });
     connect(m_inGame, &InGameView::backToLibrary, this, &MainWindow::leaveInGame);
@@ -178,11 +190,19 @@ void MainWindow::play(const Game& game)
         LaunchErrors::showExit(this, info, [this, game] { play(game); });
         return;
     }
+    if (!m_s.emulator.runner().isBuiltIn()) {
+        showPage(Page::Library); // it opens its own window; the library says so and the floating bar follows it
+        return;
+    }
     enterInGame();
 }
 
 void MainWindow::enterInGame()
 {
+    if (m_s.emulator.isActive() && !m_s.emulator.runner().isBuiltIn()) {
+        NativeWindow::activate(m_s.emulator.gameWindow());
+        return;
+    }
     m_inGameMode = true;
     syncMode();
 }
@@ -192,7 +212,7 @@ void MainWindow::leaveInGame()
     if (isFullScreen())
         toggleFullScreen();
     const EmulatorController::State st = m_s.emulator.state();
-    if (st == EmulatorController::State::Running || st == EmulatorController::State::Booting)
+    if ((st == EmulatorController::State::Running || st == EmulatorController::State::Booting) && m_s.emulator.canPause())
         m_s.emulator.pause();
     m_inGame->clearExit();
     m_inGameMode = false;

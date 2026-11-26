@@ -583,7 +583,10 @@ void LibraryPage::refreshState()
         if (isPlaying) {
             switch (st) {
             case EmulatorController::State::Booting: status = {QStringLiteral("Starting"), Theme::Tone::Accent}; break;
-            case EmulatorController::State::Running: status = {QStringLiteral("Playing · in Now playing"), Theme::Tone::Success}; break;
+            case EmulatorController::State::Running:
+                status = m_s.emulator.runner().isBuiltIn() ? TileStatus{QStringLiteral("Playing · in Now playing"), Theme::Tone::Success}
+                                                           : TileStatus{QStringLiteral("Running · own window"), Theme::Tone::Accent};
+                break;
             case EmulatorController::State::Paused: status = {QStringLiteral("Paused · in Now playing"), Theme::Tone::Warning}; break;
             case EmulatorController::State::Stopping: status = {QStringLiteral("Stopping"), Theme::Tone::Neutral}; break;
             case EmulatorController::State::Idle: break;
@@ -633,6 +636,21 @@ void LibraryPage::refreshState()
         m_resume->setIconName(paused ? QStringLiteral("play") : QString());
         m_resume->setVisible(st != EmulatorController::State::Stopping);
         m_stop->setEnabled(st != EmulatorController::State::Stopping);
+        const RunnerSpec& runner = m_s.emulator.runner();
+        if (!runner.isBuiltIn()) {
+            if (st == EmulatorController::State::Running)
+                m_bannerTitle->setText(QStringLiteral("%1 is running in its own window").arg(g.title()));
+            m_bannerHeld->setTone(Theme::Tone::Accent);
+            m_bannerHeld->setText(runner.name);
+            m_bannerHeld->setVisible(true);
+            m_bannerText->setText(QStringLiteral("%1 can't embed in XSEmu, so the game has a separate window. Pause and the overlay aren't available here; "
+                                                 "Stop game ends it. Other games and warm-ups wait until it stops.").arg(runner.name));
+            m_resume->setText(QStringLiteral("Show window"));
+            m_resume->setIconName(QStringLiteral("play"));
+            m_resume->setVisible(st == EmulatorController::State::Running);
+        } else {
+            m_bannerHeld->setTone(Theme::Tone::Warning);
+        }
     }
 }
 

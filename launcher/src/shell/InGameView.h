@@ -69,6 +69,7 @@ private:
     QWidget* m_bar;
     GameCover* m_cover;
     Label* m_title;
+    Label* m_runner;
     Spinner* m_spinner;
     Badge* m_paused;
     Badge* m_place;

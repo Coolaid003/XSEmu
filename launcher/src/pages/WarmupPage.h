@@ -8,6 +8,8 @@ class ProgressBlock;
 class QComboBox;
 class QGridLayout;
 class Services;
+struct Game;
+struct RunnerSpec;
 
 // Shader warm-up (Warm-up page). Every state comes from WarmupController and the --progress-json
 // protocol: the idle card for the picked game, running with the phase named, paused at the RAM
@@ -23,6 +25,7 @@ private:
     void refresh();
     void refreshGames();
     void refreshRuns();
+    void refreshRunner(const RunnerSpec& spec, const Game& picked, bool showResult, const QString& cannot);
     void start(bool full);
 
     Services& m_s;

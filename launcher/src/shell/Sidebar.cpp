@@ -213,7 +213,9 @@ void Sidebar::refresh()
             tone = Theme::Tone::Accent;
             break;
         case EmulatorController::State::Running:
-            status = QStringLiteral("Playing");
+            status = m_s.emulator.runner().isBuiltIn() ? QStringLiteral("Playing") : QStringLiteral("Running · own window");
+            if (!m_s.emulator.runner().isBuiltIn())
+                tone = Theme::Tone::Accent;
             break;
         case EmulatorController::State::Paused:
             status = QStringLiteral("Paused");

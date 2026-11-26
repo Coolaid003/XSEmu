@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class FirstLaunchPage;
+class FloatingBar;
 class GameDetailsPage;
 class InGameView;
 class LibraryPage;
@@ -38,6 +39,7 @@ public:
     LibraryPage* libraryPage() const { return m_library; }
     SettingsPage* settingsPage() const { return m_settings; }
     GameDetailsPage* gameDetailsPage() const { return m_details; }
+    FloatingBar* floatingBar() const { return m_floating; }
     FirstLaunchPage* firstLaunchPage() const { return m_firstLaunch; }
     InGameView* inGameView() const { return m_inGame; }
 
@@ -61,6 +63,7 @@ private:
     LibraryPage* m_library;
     WarmupPage* m_warmup;
     RunnersPage* m_runners;
+    FloatingBar* m_floating;
     SettingsPage* m_settings;
     GameDetailsPage* m_details;
     FirstLaunchPage* m_firstLaunch;

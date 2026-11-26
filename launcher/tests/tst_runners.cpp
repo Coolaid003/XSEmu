@@ -104,6 +104,9 @@ void TestRunners::initTestCase()
     }
 
     // re-pin two runners at the local asset and repository before the list is first read
+    // (append, not QJsonArray{QJsonArray{...}}: MSVC takes that as a copy of the inner array)
+    QJsonArray buildSteps;
+    buildSteps.append(QJsonArray{QStringLiteral("git"), QStringLiteral("archive"), QStringLiteral("-o"), QStringLiteral("{targetDir}/runner.tar"), QStringLiteral("HEAD")});
     QJsonObject feed;
     feed.insert(QStringLiteral("kelvaroq"), QJsonObject{{QStringLiteral("tag"), QStringLiteral("v1.0")},
                                                          {QStringLiteral("asset"), QStringLiteral("fake-1.0.zip")},
@@ -117,8 +120,7 @@ void TestRunners::initTestCase()
                                                                 {QStringLiteral("executable"), QStringLiteral("native/engine")}});
     feed.insert(QStringLiteral("victory-dexnom"), QJsonObject{{QStringLiteral("commit"), m_commit.isEmpty() ? QString(40, QLatin1Char('0')) : m_commit},
                                                                {QStringLiteral("repo"), QUrl::fromLocalFile(repo).toString()},
-                                                               {QStringLiteral("buildSteps"), QJsonArray{QJsonArray{QStringLiteral("git"), QStringLiteral("archive"), QStringLiteral("-o"),
-                                                                                                                    QStringLiteral("{targetDir}/runner.tar"), QStringLiteral("HEAD")}}},
+                                                               {QStringLiteral("buildSteps"), buildSteps},
                                                                {QStringLiteral("artifacts"), QJsonObject{{QStringLiteral("runner.tar"), QStringLiteral("runner.tar")}}},
                                                                {QStringLiteral("executable"), QStringLiteral("runner.tar")}});
     const QString feedPath = m_dir.filePath(QStringLiteral("feed.json"));

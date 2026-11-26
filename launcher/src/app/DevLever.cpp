@@ -14,6 +14,7 @@
 #include "pages/GameDetailsPage.h"
 #include "pages/RunsWithPicker.h"
 #include "pages/SettingsPage.h"
+#include "shell/FloatingBar.h"
 #include "shell/LaunchErrors.h"
 #include "shell/MainWindow.h"
 #include "widgets/SearchBox.h"
@@ -160,7 +161,7 @@ EmulatorController::Stats pausedStats()
 
 // On X11 the window is grabbed from the screen, so the game's child window (another process) is in
 // the picture; QWidget::grab() only sees the launcher's own widgets.
-void grabAndQuit(MainWindow& w, const QString& path)
+void grabAndQuit(QWidget& w, const QString& path)
 {
     QPixmap shot;
     if (QGuiApplication::platformName() == QLatin1String("xcb") && w.screen()) {
@@ -402,6 +403,7 @@ QStringList DevLever::states()
         QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
         QStringLiteral("runners"), QStringLiteral("runners-install-confirm"), QStringLiteral("runners-building"),
         QStringLiteral("runners-install-error"), QStringLiteral("details-runs-with-kelvaroq"), QStringLiteral("details-runs-with-picker"),
+        QStringLiteral("warmup-runner"), QStringLiteral("library-runner-own-window"), QStringLiteral("library-runner-floating-bar"),
     };
 }
 
@@ -514,7 +516,11 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.libraryPage()->searchBox()->setText(QStringLiteral("coast"));
     else if (st == QLatin1String("library-search-none"))
         w.libraryPage()->searchBox()->setText(QStringLiteral("racing"));
-    else if (st == QLatin1String("library-paused") || st == QLatin1String("library-stop-first"))
+    else if (st == QLatin1String("library-runner-own-window") || st == QLatin1String("library-runner-floating-bar")) {
+        // a third-party runner in its own window (it is never embedded): the library banner and the floating bar
+        s.settings.setGameOverride(coast.titleId(), QStringLiteral("runner"), QStringLiteral("victory-dexnom"));
+        s.emulator.simulateForScreenshot(EmulatorController::State::Running, coast, {});
+    } else if (st == QLatin1String("library-paused") || st == QLatin1String("library-stop-first"))
         s.emulator.simulateForScreenshot(EmulatorController::State::Paused, coast, pausedStats());
     else if (st == QLatin1String("details"))
         w.showGameDetails(coast);
@@ -527,6 +533,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.showGameDetails(coast);
     else if (st.startsWith(QLatin1String("warmup"))) {
         w.showPage(Page::Warmup);
+        if (st == QLatin1String("warmup-runner"))
+            s.settings.setGameOverride(signal.titleId(), QStringLiteral("runner"), QStringLiteral("kelvaroq"));
         if (st == QLatin1String("warmup-running"))
             s.warmup.simulateForScreenshot(WarmupController::State::Running, signal, runningProgress());
         else if (st == QLatin1String("warmup-paused-ram")) {
@@ -679,6 +687,22 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         }
     }
 
+    if (st == QLatin1String("library-runner-floating-bar")) {
+        FloatingBar* bar = w.floatingBar();
+        bar->showForScreenshot();
+        if (!o.grab.isEmpty())
+            QTimer::singleShot(500, bar, [bar, path = o.grab] { grabAndQuit(*bar, path); });
+        return;
+    }
+    if (st == QLatin1String("warmup-runner")) {
+        // the real pre-cache: fake-xsemu stands in for Kelvaroq's precompile (check, then build)
+        QString error;
+        if (!s.warmup.start(false, signal, &error))
+            QTextStream(stderr) << "cannot start the pre-cache: " << error << Qt::endl;
+        if (!o.grab.isEmpty())
+            QTimer::singleShot(3000, &w, [&w, path = o.grab] { grabAndQuit(w, path); });
+        return;
+    }
     if (!o.grab.isEmpty())
         QTimer::singleShot(500, &w, [&w, path = o.grab] { grabAndQuit(w, path); });
 }

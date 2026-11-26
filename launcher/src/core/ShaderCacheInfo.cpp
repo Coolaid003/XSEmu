@@ -83,7 +83,7 @@ ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir)
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache)
 {
     for (const WarmupRun& r : recent) {
-        if (r.titleId != titleId)
+        if (r.titleId != titleId || !r.runnerId.isEmpty()) // a runner's pre-cache fills its own cache, not XSEmu's
             continue;
         switch (r.result) {
         case WarmupRun::Result::Finished: return TitleShaderState::Ready;

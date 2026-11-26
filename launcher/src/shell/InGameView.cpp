@@ -617,6 +617,7 @@ InGameView::InGameView(Services& services, QWidget* parent)
     , m_bar(new GameBar)
     , m_cover(new GameCover(QSize(16, 22), 3, false))
     , m_title(new Label({}, Label::Style::SmallStrong))
+    , m_runner(new Label({}, Label::Style::Small, Theme::Role::Text2))
     , m_spinner(new Spinner(14))
     , m_paused(new Badge({}, Theme::Tone::Warning, Badge::Kind::Pill))
     , m_place(new Badge({}, Theme::Tone::Success, Badge::Kind::Plain))
@@ -664,6 +665,12 @@ InGameView::InGameView(Services& services, QWidget* parent)
     h->addSpacing(2);
     h->addWidget(m_cover);
     h->addWidget(m_title);
+    h->addSpacing(6);
+    auto* runnerIcon = new IconView(QStringLiteral("runner"), Theme::Role::Text3, 12);
+    h->addWidget(runnerIcon);
+    m_runner->setObjectName(QStringLiteral("barRunner"));
+    m_runner->setToolTip(QStringLiteral("The runner this game runs with"));
+    h->addWidget(m_runner);
     h->addSpacing(4);
     h->addWidget(m_spinner);
     h->addWidget(m_paused);
@@ -878,6 +885,7 @@ void InGameView::refresh()
     const bool live = !exit && st != S::Idle;
 
     m_title->setText(g.title());
+    m_runner->setText(m_s.emulator.runnerFor(g).name);
     m_cover->setArt(coverArt(m_s, g));
 
     m_spinner->setVisible(live && (st == S::Booting || st == S::Stopping));
@@ -916,6 +924,7 @@ void InGameView::refresh()
 
     const bool playing = live && (st == S::Running || st == S::Paused);
     m_pause->setVisible(playing);
+    m_pause->setEnabled(m_s.emulator.canPause());
     if (st == S::Paused) {
         m_pause->setVariant(Button::Variant::Soft);
         m_pause->setText(QStringLiteral("Resume"));
@@ -928,6 +937,7 @@ void InGameView::refresh()
         m_pause->setToolTip(QStringLiteral("Pause (F1)"));
     }
     m_overlay->setVisible(playing);
+    m_overlay->setEnabled(m_s.emulator.canOverlay());
     m_overlay->setChecked(m_s.emulator.overlayOn());
     m_full->setVisible(playing);
     m_full->setIconName(QStringLiteral("fullscreen"));

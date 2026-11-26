@@ -539,6 +539,12 @@ void GameDetailsPage::refresh()
         m_secondary->setIconName(QStringLiteral("bolt"));
     }
     m_secondary->setVisible(!playingThis);
+    const RunnerSpec& runner = m_s.emulator.runnerFor(g);
+    if (!runner.isBuiltIn()) {
+        m_secondary->setText(QStringLiteral("Pre-cache with %1").arg(runner.name));
+        m_secondary->setIconName(QStringLiteral("bolt"));
+        m_secondary->setVisible(!playingThis && !runner.precache.isEmpty());
+    }
     QString stateText;
     QString cacheState;
     Theme::Tone tone = Theme::Tone::Neutral;
@@ -549,6 +555,28 @@ void GameDetailsPage::refresh()
     case TitleShaderState::LastRunIncomplete: stateText = QStringLiteral("Warm-up needed"); cacheState = QStringLiteral("Last warm-up stopped part way"); tone = Theme::Tone::Warning; cacheRole = Theme::Role::Warning; break;
     case TitleShaderState::LastRunFailed: stateText = QStringLiteral("Warm-up failed"); cacheState = QStringLiteral("Last warm-up failed"); tone = Theme::Tone::Danger; cacheRole = Theme::Role::Danger; break;
     case TitleShaderState::Unknown: stateText = QStringLiteral("Not warmed up here"); cacheState = QStringLiteral("Not warmed up from this launcher"); break;
+    }
+    if (!runner.isBuiltIn()) {
+        std::optional<WarmupRun> pre;
+        for (const WarmupRun& r : recent) {
+            if (r.titleId == id && r.runnerId == runner.id) {
+                pre = r;
+                break;
+            }
+        }
+        if (!m_s.runners.isRunnable(runner.id)) {
+            stateText = QStringLiteral("%1 not installed").arg(runner.name);
+            tone = Theme::Tone::Warning;
+        } else if (pre && pre->result == WarmupRun::Result::Finished && pre->total > 0) {
+            stateText = QStringLiteral("%1 cache ready").arg(runner.name);
+            tone = Theme::Tone::Success;
+        } else if (pre && pre->result == WarmupRun::Result::Failed) {
+            stateText = QStringLiteral("%1 pre-cache failed").arg(runner.name);
+            tone = Theme::Tone::Danger;
+        } else {
+            stateText = QStringLiteral("%1 keeps its own cache").arg(runner.name);
+            tone = Theme::Tone::Neutral;
+        }
     }
     m_state->setText(stateText);
     m_state->setTone(tone);

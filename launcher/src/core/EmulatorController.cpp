@@ -502,6 +502,7 @@ void EmulatorController::setState(State s)
 void EmulatorController::simulateForScreenshot(State state, const Game& game, const Stats& stats)
 {
     m_game = game;
+    m_runnerId = runnerFor(game).id;
     m_stats = stats;
     if (state != State::Idle && m_gate.isFree())
         m_gate.acquire(ProcessGate::Owner::Game, game.title(), [this] { simulateForScreenshot(State::Idle, m_game, {}); });
