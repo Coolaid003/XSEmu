@@ -80,6 +80,12 @@ MainWindow::MainWindow(Services& services, QWidget* parent)
     connect(m_settings, &SettingsPage::addGamesRequested, this, &MainWindow::addGameFolder);
     connect(m_details, &GameDetailsPage::back, this, [this] { showPage(Page::Library); });
     connect(m_details, &GameDetailsPage::playRequested, this, &MainWindow::play);
+    const auto warmUp = [this](const Game& game) {
+        m_s.warmup.start(false, game);
+        showPage(Page::Warmup);
+    };
+    connect(m_library, &LibraryPage::warmupRequested, this, warmUp);
+    connect(m_details, &GameDetailsPage::warmupRequested, this, warmUp);
     connect(m_firstLaunch, &FirstLaunchPage::addGamesRequested, this, &MainWindow::addGameFolder);
     connect(m_firstLaunch, &FirstLaunchPage::finished, this, [this] { showPage(Page::Library); });
     connect(m_inGame, &InGameView::backToLibrary, this, &MainWindow::leaveInGame);

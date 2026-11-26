@@ -5,6 +5,8 @@
 #include "Services.h"
 #include "core/DevFixtures.h"
 #include "core/EmulatorController.h"
+#include "core/Paths.h"
+#include "core/TitleConfig.h"
 #include "pages/FirstLaunchPage.h"
 #include "pages/SettingsPage.h"
 #include "shell/LaunchErrors.h"
@@ -14,6 +16,11 @@
 
 #include <QApplication>
 #include <QDir>
+#include <QLinearGradient>
+#include <QPainter>
+#include <QPainterPath>
+#include <QRadialGradient>
+#include <cmath>
 #include <QTemporaryDir>
 #include <QTextStream>
 #include <QTimer>
@@ -85,19 +92,162 @@ EmulatorController::Stats pausedStats()
     return st;
 }
 
+// ---- Library, First launch, Game details and launch errors (fixture art and records) ----
+
+bool isLibraryState(const QString& st)
+{
+    return st == QLatin1String("library") || st.startsWith(QLatin1String("library-")) || st.startsWith(QLatin1String("details"))
+        || st == QLatin1String("cold-cache") || st == QLatin1String("error-files-missing") || st == QLatin1String("error-not-enough-ram");
+}
+
+// Invented, abstract art for the fixture titles (no real game art): a dusk sky over the sea for
+// Coastline Drive, a night beam for The Long Quiet. Painted at runtime into the temporary cover cache.
+QImage paintArt(const QString& kind, QSize size)
+{
+    QImage img(size, QImage::Format_ARGB32_Premultiplied);
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing);
+    const qreal w = size.width();
+    const qreal h = size.height();
+    if (kind == QLatin1String("coast")) {
+        QLinearGradient sky(0, 0, 0, h);
+        sky.setColorAt(0, QColor(0x2B, 0x2D, 0x6E));
+        sky.setColorAt(0.45, QColor(0xE0, 0x6C, 0x7A));
+        sky.setColorAt(0.62, QColor(0xF6, 0xB3, 0x6B));
+        sky.setColorAt(0.63, QColor(0x1F, 0x4E, 0x79));
+        sky.setColorAt(1, QColor(0x0E, 0x22, 0x3D));
+        p.fillRect(img.rect(), sky);
+        const qreal horizon = h * 0.625;
+        const qreal r = qMin(w, h) * 0.16;
+        QRadialGradient sun(w * 0.68, horizon - r * 0.35, r * 1.8);
+        sun.setColorAt(0, QColor(0xFF, 0xE7, 0xA8));
+        sun.setColorAt(0.5, QColor(0xFF, 0xC2, 0x7A, 160));
+        sun.setColorAt(1, QColor(0xFF, 0xC2, 0x7A, 0));
+        p.setPen(Qt::NoPen);
+        p.setBrush(sun);
+        p.drawEllipse(QPointF(w * 0.68, horizon - r * 0.35), r * 1.8, r * 1.8);
+        p.setBrush(QColor(0xFF, 0xE9, 0xB5));
+        p.drawEllipse(QPointF(w * 0.68, horizon - r * 0.35), r, r);
+        p.fillRect(QRectF(0, horizon, w, h - horizon), QColor(0x1F, 0x4E, 0x79));
+        for (int i = 0; i < 14; ++i) {
+            const qreal y = horizon + 6 + i * (h - horizon) / 14.0;
+            p.fillRect(QRectF(w * 0.68 - r * (1.2 - i * 0.05), y, r * (2.4 - i * 0.1), 3), QColor(0xFF, 0xD3, 0x92, 150 - i * 9));
+        }
+        QPainterPath hills;
+        hills.moveTo(0, horizon);
+        hills.cubicTo(w * 0.15, horizon - h * 0.09, w * 0.3, horizon - h * 0.05, w * 0.42, horizon);
+        hills.closeSubpath();
+        p.setBrush(QColor(0x2A, 0x1F, 0x45));
+        p.drawPath(hills);
+        QPainterPath road;
+        road.moveTo(w * 0.05, h);
+        road.cubicTo(w * 0.25, horizon + (h - horizon) * 0.4, w * 0.35, horizon + 8, w * 0.42, horizon + 2);
+        road.lineTo(w * 0.44, horizon + 2);
+        road.cubicTo(w * 0.4, horizon + 12, w * 0.4, horizon + (h - horizon) * 0.5, w * 0.32, h);
+        road.closeSubpath();
+        p.setBrush(QColor(0x14, 0x14, 0x24));
+        p.drawPath(road);
+    } else {
+        QLinearGradient sky(0, 0, 0, h);
+        sky.setColorAt(0, QColor(0x07, 0x1B, 0x26));
+        sky.setColorAt(1, QColor(0x12, 0x4A, 0x55));
+        p.fillRect(img.rect(), sky);
+        p.setPen(Qt::NoPen);
+        for (int i = 0; i < 60; ++i)
+            p.fillRect(QRectF(std::fmod(i * 97.3, w), std::fmod(i * 53.7, h * 0.55), 2, 2), QColor(255, 255, 255, 60 + (i * 37) % 120));
+        const QPointF lamp(w * 0.62, h * 0.48);
+        QPainterPath beam;
+        beam.moveTo(lamp);
+        beam.lineTo(0, h * 0.3);
+        beam.lineTo(0, h * 0.42);
+        beam.closeSubpath();
+        p.setBrush(QColor(0xFF, 0xF1, 0xC4, 70));
+        p.drawPath(beam);
+        p.setBrush(QColor(0xE9, 0xEE, 0xF0));
+        p.drawRect(QRectF(lamp.x() - w * 0.035, lamp.y(), w * 0.07, h * 0.3));
+        p.setBrush(QColor(0xC2, 0x3B, 0x3B));
+        p.drawRect(QRectF(lamp.x() - w * 0.035, lamp.y() + h * 0.1, w * 0.07, h * 0.05));
+        p.setBrush(QColor(0xFF, 0xF1, 0xC4));
+        p.drawEllipse(lamp, w * 0.03, w * 0.03);
+        p.fillRect(QRectF(0, h * 0.78, w, h * 0.22), QColor(0x05, 0x12, 0x1A));
+    }
+    return img;
+}
+
+void seedArt(Services& s, const Game& g, const QString& kind, bool hero)
+{
+    if (!g.isValid())
+        return;
+    const QString dir = s.covers.cache().dir();
+    QDir().mkpath(dir);
+    CoverCache::Entry e;
+    e.name = g.title();
+    e.fetchedAt = QDateTime::currentDateTime();
+    e.grid = CoverCache::fileName(g.titleId(), CoverCache::Kind::Grid, QStringLiteral("png"));
+    paintArt(kind, QSize(600, 900)).save(QDir(dir).filePath(e.grid));
+    if (hero) {
+        e.hero = CoverCache::fileName(g.titleId(), CoverCache::Kind::Hero, QStringLiteral("png"));
+        paintArt(kind, QSize(1920, 620)).save(QDir(dir).filePath(e.hero));
+    }
+    s.covers.cache().put(g.titleId(), e);
+}
+
+// Three games as in the design: one played last with art and ready shaders, one with art and a
+// warm-up that stopped part way, one without art that was never warmed up.
+void seedLibrary(Services& s)
+{
+    const QDateTime now = QDateTime::currentDateTime();
+    const Game coast = findGame(s, QStringLiteral("Coastline Drive"));
+    const Game quiet = findGame(s, QStringLiteral("The Long Quiet Between Lighthouses"));
+    seedArt(s, coast, QStringLiteral("coast"), true);
+    seedArt(s, quiet, QStringLiteral("quiet"), false);
+    s.settings.addPlayTime(coast.titleId(), 41 * 3600 + 20 * 60, now.addSecs(-3 * 3600));
+    s.settings.addPlayTime(quiet.titleId(), 6 * 3600, now.addDays(-2));
+    WarmupRun cancelled;
+    cancelled.titleId = quiet.titleId();
+    cancelled.titleName = quiet.title();
+    cancelled.done = 1240;
+    cancelled.total = 3120;
+    cancelled.tookS = 10;
+    cancelled.result = WarmupRun::Result::Cancelled;
+    cancelled.finishedAt = now.addDays(-2);
+    s.settings.addRecentWarmup(cancelled);
+    WarmupRun ready;
+    ready.titleId = coast.titleId();
+    ready.titleName = coast.title();
+    ready.done = 41906;
+    ready.total = 41906;
+    ready.tookS = 14 * 60;
+    ready.result = WarmupRun::Result::Finished;
+    ready.finishedAt = now.addSecs(-4 * 3600);
+    s.settings.addRecentWarmup(ready);
+    s.settings.setLastRun(coast.titleId(), {
+        {QStringLiteral("result"), QStringLiteral("Stopped by you")},
+        {QStringLiteral("at"), now.addSecs(-3 * 3600).toUTC().toString(Qt::ISODate)},
+        {QStringLiteral("seconds"), 2 * 3600 + 14 * 60},
+        {QStringLiteral("fpsAverage"), 58.2},
+        {QStringLiteral("stalls"), 1},
+        {QStringLiteral("heldPeakBytes"), qint64(8.6 * 1024 * 1024 * 1024)},
+        {QStringLiteral("freeMinMb"), 9830},
+    });
+    TitleConfig(Paths::xclToml(coast.titleId())).set(QStringLiteral("device_type"), QStringLiteral("lockhart"));
+    s.settings.setGameOverride(coast.titleId(), QStringLiteral("overlay"), true);
+}
+
 }
 
 QStringList DevLever::states()
 {
     return {
         QStringLiteral("library"), QStringLiteral("library-empty"), QStringLiteral("library-search"),
-        QStringLiteral("library-search-none"), QStringLiteral("library-paused"),
-        QStringLiteral("details"),
+        QStringLiteral("library-search-none"), QStringLiteral("library-paused"), QStringLiteral("library-stop-first"),
+        QStringLiteral("cold-cache"), QStringLiteral("details"), QStringLiteral("details-no-art"),
         QStringLiteral("warmup-idle"), QStringLiteral("warmup-running"), QStringLiteral("warmup-paused-ram"),
         QStringLiteral("warmup-failed"), QStringLiteral("warmup-finished"), QStringLiteral("warmup-blocked"),
         QStringLiteral("settings"), QStringLiteral("settings-shaders"), QStringLiteral("settings-folders"),
         QStringLiteral("settings-graphics"),
         QStringLiteral("first-launch"), QStringLiteral("first-launch-network"), QStringLiteral("first-launch-folders"),
+        QStringLiteral("first-launch-folders-found"),
         QStringLiteral("error-files-missing"), QStringLiteral("error-not-enough-ram"), QStringLiteral("error-crash"),
         QStringLiteral("error-device-removed"),
         QStringLiteral("in-game-booting"), QStringLiteral("in-game-paused"),
@@ -173,26 +323,38 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
     s.settings.setDefaultDeviceType(QStringLiteral("lockhart"));
     s.settings.setOffline(true);
     const bool firstLaunch = o.state.startsWith(QLatin1String("first-launch"));
-    s.settings.setGameFolders(o.state == QLatin1String("library-empty") || o.state == QLatin1String("first-launch")
-                                  || o.state == QLatin1String("first-launch-network")
-                                  ? QStringList()
-                                  : QStringList{root(QStringLiteral("games"))});
-    s.library.rescanNow();
+    const bool libraryState = isLibraryState(o.state) && o.state != QLatin1String("library-empty");
+    const QString games = root(QStringLiteral("games"));
+    if (libraryState) {
+        s.settings.setGameFolders({QDir(games).filePath(QStringLiteral("Coastline Drive")), QDir(games).filePath(QStringLiteral("Archive")),
+                                   QDir(games).filePath(QStringLiteral("SignalGarden"))});
+        s.library.rescanNow();
+        seedLibrary(s);
+    } else {
+        s.settings.setGameFolders(o.state == QLatin1String("library-empty") || o.state == QLatin1String("first-launch")
+                                      || o.state == QLatin1String("first-launch-network") || o.state == QLatin1String("first-launch-folders")
+                                      ? QStringList()
+                                      : QStringList{games});
+        s.library.rescanNow();
+    }
     s.settings.setFirstLaunchDone(!firstLaunch);
-    if (!firstLaunch && o.state != QLatin1String("library-empty"))
+    if (!firstLaunch && !isLibraryState(o.state))
         seedWarmups(s);
 
     const Game signal = findGame(s, QStringLiteral("Signal Garden"));
     const Game coast = findGame(s, QStringLiteral("Coastline Drive"));
     const QString& st = o.state;
 
+    const Game quiet = findGame(s, QStringLiteral("The Long Quiet Between Lighthouses"));
     if (st == QLatin1String("library-search"))
         w.libraryPage()->searchBox()->setText(QStringLiteral("coast"));
     else if (st == QLatin1String("library-search-none"))
         w.libraryPage()->searchBox()->setText(QStringLiteral("racing"));
-    else if (st == QLatin1String("library-paused"))
-        s.emulator.simulateForScreenshot(EmulatorController::State::Paused, signal, pausedStats());
+    else if (st == QLatin1String("library-paused") || st == QLatin1String("library-stop-first"))
+        s.emulator.simulateForScreenshot(EmulatorController::State::Paused, coast, pausedStats());
     else if (st == QLatin1String("details"))
+        w.showGameDetails(coast);
+    else if (st == QLatin1String("details-no-art"))
         w.showGameDetails(signal);
     else if (st.startsWith(QLatin1String("warmup"))) {
         w.showPage(Page::Warmup);
@@ -237,18 +399,24 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
     w.resize(o.size);
     w.show();
 
+    if (st == QLatin1String("library-stop-first"))
+        w.play(quiet); // the real launch check: Busy while Coastline Drive is paused
+    else if (st == QLatin1String("cold-cache"))
+        w.libraryPage()->requestPlay(quiet); // the real prompt: its last warm-up stopped part way
+
     if (st.startsWith(QLatin1String("error"))) {
         if (st == QLatin1String("error-files-missing")) {
-            Game missing = findGame(s, QStringLiteral("Tide Pools"));
-            EmulatorController::LaunchCheck check;
-            check.problem = EmulatorController::LaunchCheck::Problem::GameFilesMissing;
-            LaunchErrors::showLaunchProblem(&w, s, missing, check, [] {});
+            // the game as the library knew it, on a drive that is no longer there; the check is real
+            Game gone = quiet;
+            gone.folder = root(QStringLiteral("unplugged/Archive/Quiet"));
+            gone.configPath = QDir(gone.folder).filePath(QStringLiteral("MicrosoftGame.config"));
+            LaunchErrors::showLaunchProblem(&w, s, gone, s.emulator.checkLaunch(gone), [] {});
         } else if (st == QLatin1String("error-not-enough-ram")) {
+            // fixture numbers: the need is the real one (1 GB floor + the launch need setting), free RAM is invented
             EmulatorController::LaunchCheck check;
             check.problem = EmulatorController::LaunchCheck::Problem::NotEnoughRam;
-            check.needMb = 6 * 1024 + EmulatorController::kRamFloorMb;
-            check.freeMb = 4300;
-            check.reason = QStringLiteral("%1 needs about 7.0 GB of free RAM to start, and XSEmu keeps 1 GB free while it runs.").arg(coast.title());
+            check.needMb = s.emulator.launchNeedMb();
+            check.freeMb = 812;
             LaunchErrors::showLaunchProblem(&w, s, coast, check, [] {});
         } else {
             EmulatorController::ExitInfo info;
