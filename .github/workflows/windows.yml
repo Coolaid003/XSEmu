@@ -23,6 +23,12 @@ jobs:
         run: rustup toolchain install 1.99.0-x86_64-pc-windows-msvc --profile minimal
       - name: Build the runtime and test title
         run: cargo +1.99.0-x86_64-pc-windows-msvc build --locked --workspace
+      - name: Upload XSEmu.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: XSEmu-debug
+          path: target/debug/XSEmu.exe
+          if-no-files-found: error
       - name: Test APIs and software-adapter graphics
         run: cargo +1.99.0-x86_64-pc-windows-msvc test --locked -p xcl --lib --test disasm_e2e --test rpf_e2e -- --test-threads=4 --show-output
       - name: Test title selection

@@ -3,10 +3,10 @@ to the root arguments packed in order (constant = 4 B, root descriptor = 8 B, no
 Every scalar load from the table (s_load from the register pair holding s0/s1) must start
 at a descriptor boundary or inside the constants.
 
-usage: python check_layout.py <dir with the .dxbc files of bvhb_shaders.py> (needs target/debug/xcl.exe)"""
+usage: python check_layout.py <dir with the .dxbc files of bvhb_shaders.py> (needs target/debug/XSEmu.exe)"""
 import os, re, struct, subprocess, sys
 
-XCL = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'target', 'debug', 'xcl.exe')
+XCL = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'target', 'debug', 'XSEmu.exe')
 D = sys.argv[1]
 
 

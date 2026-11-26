@@ -74,7 +74,7 @@ next steps:
 | Feature | State | What it does | Verified by |
 |---|---|---|---|
 | **Video** | ✅ | the game's Bink 2 console DLL decodes its movies (720p / 1080p) on the CPU; the game's own YUV → RGB display shaders (`PS_Bink…` in its pack) translate like any other. Bink's GPU-assisted mode needs no Bink-specific support: its compute shaders ship with the game and go through the recompiler too (no game seen using it yet) | a game movie decodes frame by frame, picture checked |
-| **Tools** | ✅ | `xcl inspect`, `xcl run`, `xcl disasm` (RDNA2, console shader containers), `xcl shaders` (pack statistics, recompile / compile runs), `xcl rpf` | – |
+| **Tools** | ✅ | `XSEmu inspect`, `XSEmu run`, `XSEmu disasm` (RDNA2, console shader containers), `XSEmu shaders` (pack statistics, recompile / compile runs), `XSEmu rpf` | – |
 
 ## Controls
 
@@ -91,12 +91,12 @@ A **gamepad is recommended**: console games are made for one, and their menus an
 ## Building and usage
 
 Windows 10/11 x64, Rust (`stable-x86_64-pc-windows-msvc`), the Windows SDK (DXC: `dxcompiler.dll`
-+ `dxil.dll`, looked up in `Windows Kits\10\bin\<version>\x64`, next to `xcl.exe` or in
++ `dxil.dll`, looked up in `Windows Kits\10\bin\<version>\x64`, next to `XSEmu.exe` or in
 `%XCL_DXC_DIR%`), a D3D12 GPU with Shader Model 6.6 and mesh shaders, and the system XGameRuntime
 (`System32\xgameruntime.dll`, part of Windows / Gaming Services). On **Windows 10** (22H2
 KB5029331+), inbox `D3D12Core.dll` stops at SM 6.5; place the Microsoft D3D12 Agility SDK
 (`D3D12Core.dll`, plus `d3d12SDKLayers.dll` if using `XCL_D3D12_DEBUG=1`) in `D3D12\` next to
-`xcl.exe`, next to `xcl.exe`, in `%LOCALAPPDATA%\XCL\D3D12\`, or point `%XCL_D3D12_DIR%` at it
+`XSEmu.exe`, next to `XSEmu.exe`, in `%LOCALAPPDATA%\XCL\D3D12\`, or point `%XCL_D3D12_DIR%` at it
 (for `cargo test`, use `%LOCALAPPDATA%\XCL\D3D12\` or `%XCL_D3D12_DIR%`).
 
 - **GPU:** developed on AMD RDNA4. The console's geometry and NGG programs run as a compute pass plus a
@@ -107,16 +107,16 @@ KB5029331+), inbox `D3D12Core.dll` stops at SM 6.5; place the Microsoft D3D12 Ag
   can still differ there. Test results on other GPUs: [#42](https://github.com/ivall/xcl/issues/42).
 
 ```powershell
-cargo build --release --workspace          # target\release\xcl.exe
+cargo build --release --workspace          # target\release\XSEmu.exe
 
-xcl inspect D:\Game\game.exe               # the game's imports and what XCL has for them
-xcl run D:\Game [-- game arguments]        # run
-xcl disasm <shader.bin> [--hex]            # RDNA2 disassembler (console containers too)
-xcl shaders D:\data\shaders.rpf --top 50   # pack statistics; --recomp / --compile N
-xcl rpf D:\data\shaders.rpf --extract NAME --out folder
+XSEmu inspect D:\Game\game.exe               # the game's imports and what XCL has for them
+XSEmu run D:\Game [-- game arguments]        # run
+XSEmu disasm <shader.bin> [--hex]            # RDNA2 disassembler (console containers too)
+XSEmu shaders D:\data\shaders.rpf --top 50   # pack statistics; --recomp / --compile N
+XSEmu rpf D:\data\shaders.rpf --extract NAME --out folder
 ```
 
-- **Without a command line** (xcl.exe opened from Explorer) XCL shows a small menu: *Choose a
+- **Without a command line** (XSEmu.exe opened from Explorer) XCL shows a small menu: *Choose a
   game…* (pick its exe or `MicrosoftGame.config`) or *Run again* (the last one). On an error the
   window stays open until Enter.
 - XCL works on **unpacked** game files you own; it contains nothing for decrypting or

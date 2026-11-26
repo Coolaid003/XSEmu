@@ -138,9 +138,10 @@ pub fn read_game_config(root: &Path) -> (Vec<String>, Option<String>) {
     (xml_attrs(&xml, "Executable", "Name"), xml_attr(&xml, "Identity", "Name"))
 }
 
-/// `xcl.exe` itself (by name, path or identical bytes) must never be picked as the game.
+/// The emulator itself (`XSEmu.exe`, or `xcl.exe` of older installs, by name, path or identical
+/// bytes) must never be picked as the game.
 fn is_xcl_copy(p: &Path) -> bool {
-    if p.file_name().map(|n| n.to_string_lossy().eq_ignore_ascii_case("xcl.exe")).unwrap_or(false) {
+    if p.file_name().map(|n| ["XSEmu.exe", "xcl.exe"].iter().any(|own| n.to_string_lossy().eq_ignore_ascii_case(own))).unwrap_or(false) {
         return true;
     }
     let Ok(me) = std::env::current_exe() else { return false };
@@ -201,7 +202,7 @@ fn pick_exe(root: &Path) -> Result<PathBuf, String> {
         0 => Err(format!(
             "no game .exe file in {}{}",
             root.display(),
-            if skipped_self { " (only xcl.exe – that is XCL itself; do not copy it into the game folder)" } else { "" }
+            if skipped_self { " (only XSEmu.exe or xcl.exe – that is XCL itself; do not copy it into the game folder)" } else { "" }
         )),
         _ => Err(format!(
             "several .exe files ({}) – point to the game exe directly or set 'exe' in xcl.toml",
@@ -285,21 +286,23 @@ fn quote(a: &str) -> String {
     s
 }
 
+/// `run` cannot start the title: said on the console and, with `--control-pipe`, to the
+/// launcher (`exit` with reason `error`).
+fn fail(msg: String) -> i32 {
+    eprintln!("xcl: {msg}");
+    crate::control::exit(2, "error", &msg);
+    2
+}
+
 pub fn run(target: &Path, args: &[String]) -> i32 {
     let (root, explicit_exe, title) = match resolve_location(target) {
         Ok(x) => x,
-        Err(e) => {
-            eprintln!("xcl: {e}");
-            return 2;
-        }
+        Err(e) => return fail(e),
     };
     let data_dir = data_root().join(&title);
     let mut config = match Config::load_or_create(&data_dir.join("xcl.toml")) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("xcl: error in xcl.toml: {e}");
-            return 2;
-        }
+        Err(e) => return fail(format!("error in xcl.toml: {e}")),
     };
     // the exe given on the command line, else the one `xcl.toml` names (written on every run,
     // relative to the package root), else the folder's own pick
@@ -311,10 +314,7 @@ pub fn run(target: &Path, args: &[String]) -> i32 {
     } else {
         match pick_exe(&root) {
             Ok(exe) => exe,
-            Err(error) => {
-                eprintln!("xcl: {error}");
-                return 2;
-            }
+            Err(error) => return fail(error),
         }
     };
     for d in ["logs", "cache", "overlay", "saves", "pls", "temp"] {
@@ -327,8 +327,7 @@ pub fn run(target: &Path, args: &[String]) -> i32 {
     let boot = Boot { title: title.clone(), exe_path: exe.clone(), game_root: root.clone(), data_dir: data_dir.clone(), config };
     let boot_path = data_dir.join("cache").join("boot.json");
     if let Err(e) = std::fs::write(&boot_path, serde_json::to_string_pretty(&boot).unwrap()) {
-        eprintln!("xcl: writing {}: {e}", boot_path.display());
-        return 2;
+        return fail(format!("writing {}: {e}", boot_path.display()));
     }
     // the previous run's log and report stay as *.prev.*: a failure that a retry does not
     // repeat is still there to read
@@ -360,8 +359,7 @@ pub fn run(target: &Path, args: &[String]) -> i32 {
         if std::env::var_os("XCL_SKIP_CPU_CHECK").is_some() {
             println!("  WARNING: this CPU lacks {} (XCL_SKIP_CPU_CHECK set, continuing)", missing.join(", "));
         } else {
-            eprintln!("xcl: {}", format_missing_cpu_message(&missing));
-            return 2;
+            return fail(format_missing_cpu_message(&missing));
         }
     }
 
@@ -372,10 +370,7 @@ pub fn run(target: &Path, args: &[String]) -> i32 {
     }
     let code = match spawn_host(&cmdline, &root, &boot_path) {
         Ok(c) => c,
-        Err(e) => {
-            eprintln!("xcl: failed to start the game process: {e}");
-            return 2;
-        }
+        Err(e) => return fail(format!("failed to start the game process: {e}")),
     };
     summarize(&boot, code, &environment);
     code as i32
@@ -626,10 +621,12 @@ mod tests {
         let d = TempDir::new("self");
         let me = std::env::current_exe().unwrap();
         std::fs::copy(&me, d.0.join("xcl.exe")).unwrap();
+        std::fs::copy(&me, d.0.join("XSEmu.exe")).unwrap();
         std::fs::copy(&me, d.0.join("renamed_copy.exe")).unwrap(); // byte-identical copy of XCL
         let e = resolve_target(&d.0).unwrap_err();
         assert!(e.contains("xcl.exe") && e.contains("XCL itself"), "{e}");
         assert!(resolve_target(&d.0.join("xcl.exe")).unwrap_err().contains("XCL itself"));
+        assert!(resolve_target(&d.0.join("XSEmu.exe")).unwrap_err().contains("XCL itself"));
         // a real game exe next to it wins
         std::fs::write(d.0.join("game.exe"), b"MZ not really a game").unwrap();
         let (_, exe, _) = resolve_target(&d.0).unwrap();

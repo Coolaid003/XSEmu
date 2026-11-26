@@ -1,4 +1,4 @@
-//! xcl.exe – command line front-end and (in host mode) the process the game runs in.
+//! XSEmu.exe – command line front-end and (in host mode) the process the game runs in.
 
 use std::ffi::c_void;
 use std::path::PathBuf;
@@ -18,43 +18,47 @@ unsafe extern "system" fn xcl_tls_callback(_h: *mut c_void, reason: u32, _r: *mu
 static XCL_TLS_CALLBACK: unsafe extern "system" fn(*mut c_void, u32, *mut c_void) = xcl_tls_callback;
 
 const HELP: &str = "\
-XCL – Xbox Series X|S → Windows compatibility layer
+XSEmu – Xbox Series X|S emulator (based on XCL, a Windows compatibility layer)
 
 Usage:
-  xcl run <game folder | file.exe> [-- game arguments]
+  XSEmu run [--host-hwnd <hex>] [--control-pipe <name>] <game folder | file.exe> [-- game arguments]
       Runs the game. The game folder is only read; writes, game saves and logs go to
       %LOCALAPPDATA%\\XCL\\<title>\\ (or %XCL_DATA_ROOT%\\<title>\\).
-  xcl inspect <file.exe|file.dll> [--json]
+      --host-hwnd: the game window is a child of that window (a launcher's), 16:9 inside it.
+      --control-pipe: JSON lines with the launcher on \\\\.\\pipe\\<name> (docs/launcher-protocol.md).
+  XSEmu inspect <file.exe|file.dll> [--json]
       Analysis without running: imports and what XCL has for them (HLE / Windows / stub).
-  xcl disasm <file> [--offset N] [--length N] [--all] [--hex] [--fssm FILE]
+  XSEmu disasm <file> [--offset N] [--length N] [--all] [--hex] [--fssm FILE]
       Disassembler for console GPU code (RDNA2) – e.g. for shaders saved in <data>\\shaders\\.
       Console containers (XDAT/XBCH/FSSM) are unpacked; --fssm saves the unpacked FSSM.
-  xcl shaders <file | folder | package.rpf> [--top N] [--json] [--recomp] [--compile N]
+  XSEmu shaders <file | folder | package.rpf> [--top N] [--json] [--recomp] [--compile N]
       Shader corpus statistics: formats, stages, RDNA2 instruction histogram (priorities
       for the recompiler). RPF9 packages are scanned for shader records.
       --recomp: translates every RDNA2 program → HLSL and shows what is missing;
       --compile N: additionally compiles N complete translations with DXC.
-  xcl rpf <package.rpf> [--top N] [--find NAME] [--extract NAME --out DIR]
+  XSEmu rpf <package.rpf> [--top N] [--find NAME] [--extract NAME --out DIR]
       Lists or extracts readable inline records. Archives larger than 1 GB use a
       bounded-memory header probe; --probe requests it explicitly and --full overrides it.
       Use --probe only for header summaries, without --find, --extract, --out or --full.
-  xcl warm-up [--full]
+  XSEmu warm-up [--full] [--progress-json]
       Builds the pipelines earlier runs made, so a game needs fewer driver compiles while it
       loads: first those an earlier run bound, then every compute pipeline and the driver's
       blob of every translated compute program (giants over 1 MB of DXIL left out), then the
       rest largest first for 20 minutes (XCL_WARMUP_BUDGET_S), leaving out those no run of the
       last 3 made. --full: everything, giants and stale ones too, with no time limit, going on
       where an earlier --full pass stopped.
-  xcl warm-up --mesh-only [--recent-used N]
+      --progress-json: progress as JSON lines on stdout, {\"cmd\":\"cancel\"} or EOF on stdin
+      cancels and keeps what is built (docs/launcher-protocol.md).
+  XSEmu warm-up --mesh-only [--recent-used N]
       Builds only missing driver blobs for the mesh pipelines kept in the manifest.
-  xcl warm-up --giants-only --floor-mb N
+  XSEmu warm-up --giants-only --floor-mb N
       Builds, one at a time, the driver blob of each giant compute program (over 1 MB of DXIL,
       no blob kept yet) that the normal 6 GB floor leaves no room for now, keeping N MB
       available instead (N at least 1024). Nothing else should run meanwhile.
-  xcl --version
+  XSEmu --version
 ";
 
-/// Other xcl.exe and game processes running now, as "name pid".
+/// Other emulator processes (XSEmu.exe, and xcl.exe of older installs) and game processes running now, as "name pid".
 fn other_xcl_processes() -> Vec<String> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS};
@@ -71,7 +75,7 @@ fn other_xcl_processes() -> Vec<String> {
         while ok {
             let len = e.szExeFile.iter().position(|&c| c == 0).unwrap_or(e.szExeFile.len());
             let name = String::from_utf16_lossy(&e.szExeFile[..len]);
-            if e.th32ProcessID != me && (name.eq_ignore_ascii_case("xcl.exe") || name.eq_ignore_ascii_case("game_scarlett_master.exe")) {
+            if e.th32ProcessID != me && ["XSEmu.exe", "xcl.exe", "game_scarlett_master.exe"].iter().any(|n| name.eq_ignore_ascii_case(n)) {
                 found.push(format!("{name} {}", e.th32ProcessID));
             }
             ok = Process32NextW(snap, &mut e) != 0;
@@ -84,7 +88,7 @@ fn other_xcl_processes() -> Vec<String> {
 fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         return 3;
     }
     match xcl::hle::d3d12x::real::warm_up_mesh(recent_used) {
@@ -96,7 +100,7 @@ fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
             (w.failed + w.too_big != 0) as i32
         }
         Err(e) => {
-            eprintln!("xcl warm-up --mesh-only: {e}");
+            eprintln!("XSEmu warm-up --mesh-only: {e}");
             2
         }
     }
@@ -106,7 +110,7 @@ fn warm_up_mesh(recent_used: Option<std::num::NonZeroU32>) -> i32 {
 fn warm_up_giants(floor_mb: u64) -> i32 {
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         return 3;
     }
     let started = std::time::Instant::now();
@@ -124,7 +128,7 @@ fn warm_up_giants(floor_mb: u64) -> i32 {
             giants.iter().any(|g| !g.outcome.starts_with("built") && !g.outcome.starts_with("fits")) as i32
         }
         Err(e) => {
-            eprintln!("xcl warm-up: no D3D12 device: {e}");
+            eprintln!("XSEmu warm-up: no D3D12 device: {e}");
             2
         }
     }
@@ -165,7 +169,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
     let out = args.progress_json.then(JsonOut::take_stdout);
     let others = other_xcl_processes();
     if !others.is_empty() {
-        eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        eprintln!("XSEmu warm-up: refusing to start – another XSEmu process is running ({}); one XSEmu process tree at a time: stop it or wait for it to end", others.join(", "));
         if let Some(out) = &out {
             out.emit(&Event::Error { message: format!("another XSEmu process is running ({})", others.join(", ")) });
         }
@@ -174,7 +178,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
     if out.is_some() {
         let _ = std::thread::Builder::new().name("xcl-warm-up-stdin".into()).spawn(|| {
             let why = xcl::warm_up_json::wait_for_cancel(std::io::stdin().lock());
-            eprintln!("xcl warm-up: cancel ({why:?}): no more builds start, those running finish");
+            eprintln!("XSEmu warm-up: cancel ({why:?}): no more builds start, those running finish");
             xcl::hle::d3d12x::real::cancel_warm_up();
         });
     }
@@ -288,7 +292,7 @@ fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
             code
         }
         Err(e) => {
-            eprintln!("xcl warm-up: no D3D12 device: {e}");
+            eprintln!("XSEmu warm-up: no D3D12 device: {e}");
             if let Some(out) = &out {
                 out.emit(&Event::Error { message: format!("no D3D12 device: {e}") });
             }
@@ -308,13 +312,16 @@ fn main() {
 
     let args: Vec<String> = std::env::args().skip(1).collect();
     let code = match args.first().map(String::as_str) {
-        Some("run") if args.len() >= 2 => {
-            let rest: Vec<String> = match args.iter().position(|a| a == "--") {
-                Some(i) => args[i + 1..].to_vec(),
-                None => args[2..].to_vec(),
-            };
-            xcl::launcher::run(&PathBuf::from(&args[1]), &rest)
-        }
+        Some("run") if args.len() >= 2 => match xcl::hosting::parse_run_args(&args[1..]) {
+            Ok(run) => {
+                run.forward();
+                xcl::launcher::run(&PathBuf::from(&run.target), &run.game_args)
+            }
+            Err(e) => {
+                eprintln!("XSEmu run: {e}");
+                2
+            }
+        },
         Some("inspect") if args.len() >= 2 => {
             let json = args.iter().any(|a| a == "--json");
             xcl::inspect::run(&PathBuf::from(&args[1]), json)
@@ -330,7 +337,7 @@ fn main() {
                     warm_up_mesh(n.parse().ok())
                 }
                 _ => {
-                    eprintln!("xcl warm-up --mesh-only accepts only an optional --recent-used N (N >= 1)");
+                    eprintln!("XSEmu warm-up --mesh-only accepts only an optional --recent-used N (N >= 1)");
                     2
                 }
             }
@@ -340,14 +347,14 @@ fn main() {
             match floor {
                 Some(mb) if mb >= 1024 => warm_up_giants(mb),
                 _ => {
-                    eprintln!("xcl warm-up --giants-only needs --floor-mb N with N at least 1024");
+                    eprintln!("XSEmu warm-up --giants-only needs --floor-mb N with N at least 1024");
                     2
                 }
             }
         }
         Some("warm-up") => warm_up(xcl::warm_up_json::warm_up_args(&args[1..])),
         Some("--version") | Some("-V") => {
-            println!("xcl {}", env!("CARGO_PKG_VERSION"));
+            println!("XSEmu {}", env!("CARGO_PKG_VERSION"));
             0
         }
         None if started_by_double_click() => run_picked_game(),
@@ -363,7 +370,7 @@ fn main() {
     std::process::exit(code);
 }
 
-/// xcl.exe opened from Explorer: the console is its own (from a terminal, the shell shares it).
+/// XSEmu.exe opened from Explorer: the console is its own (from a terminal, the shell shares it).
 fn started_by_double_click() -> bool {
     let mut ids = [0u32; 4];
     unsafe { windows_sys::Win32::System::Console::GetConsoleProcessList(ids.as_mut_ptr(), ids.len() as u32) == 1 }
@@ -390,10 +397,10 @@ fn run_picked_game() -> i32 {
     let Some(target) = target else { return 0 };
     let _ = std::fs::create_dir_all(xcl::launcher::data_root());
     let _ = std::fs::write(&last_file, target.to_string_lossy().as_bytes());
-    println!("xcl run \"{}\"", target.display());
+    println!("XSEmu run \"{}\"", target.display());
     let code = xcl::launcher::run(&target, &[]);
     if code != 0 {
-        println!("\nXCL ended with code {code}. Press Enter to close.");
+        println!("\nXSEmu ended with code {code}. Press Enter to close.");
         let _ = std::io::stdin().read_line(&mut String::new());
     }
     code
@@ -403,7 +410,7 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-/// `name` of system DLL `dll`, looked up when the menu needs it: xcl.exe does not import the
+/// `name` of system DLL `dll`, looked up when the menu needs it: XSEmu.exe does not import the
 /// dialog libraries (the game runs in this executable, and must not get them).
 unsafe fn system_proc(dll: &str, name: &str) -> Option<usize> {
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -416,7 +423,7 @@ unsafe fn system_proc(dll: &str, name: &str) -> Option<usize> {
 
 /// While the menu is open: COM for the file dialog, and the common controls 6 (the task
 /// dialog, the current look) through an activation context of its own – not a manifest of
-/// xcl.exe, which would apply to the game too.
+/// XSEmu.exe, which would apply to the game too.
 struct Ui {
     actctx: Option<(windows_sys::Win32::Foundation::HANDLE, usize)>,
 }
@@ -479,9 +486,9 @@ fn menu(last: Option<&std::path::Path>) -> Choice {
     const AGAIN: i32 = 101;
     type TaskDialogIndirect = unsafe extern "system" fn(*const TASKDIALOGCONFIG, *mut i32, *mut i32, *mut i32) -> i32;
     let Some(f) = (unsafe { system_proc("comctl32.dll", "TaskDialogIndirect") }) else { return Choice::NoMenu };
-    let title = wide("XCL");
+    let title = wide("XSEmu");
     let heading = wide("Run an Xbox Series game");
-    let content = wide("XCL runs the game from its unpacked files. Choose the game's exe or its MicrosoftGame.config.");
+    let content = wide("XSEmu runs the game from its unpacked files. Choose the game's exe or its MicrosoftGame.config.");
     let again = last.map(|p| wide(&format!("Run again\n{}", p.display())));
     let choose = wide("Choose a game…\nThe game's exe or MicrosoftGame.config");
     let mut buttons = Vec::new();
@@ -517,7 +524,7 @@ fn pick_game_file() -> Option<PathBuf> {
     let f = unsafe { system_proc("comdlg32.dll", "GetOpenFileNameW") }?;
     // pairs of (description, pattern), each ending in NUL, the list in one more
     let filter: Vec<u16> = "Xbox game (*.exe, MicrosoftGame.config)\0*.exe;MicrosoftGame.config\0All files\0*.*\0\0".encode_utf16().collect();
-    let title = wide("XCL – choose a game");
+    let title = wide("XSEmu – choose a game");
     let mut file = vec![0u16; 32768];
     let mut ofn: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     ofn.lStructSize = std::mem::size_of::<OPENFILENAMEW>() as u32;

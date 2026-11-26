@@ -119,6 +119,7 @@ unsafe extern "system" fn unhandled_filter(info: *const EXCEPTION_POINTERS) -> i
             modules::describe_address(addr)
         );
         crate::xlog_error!("{msg}");
+        crate::control::exit_now(rec.ExceptionCode as u32, "crash", &format!("exception {:#010x} in {}", rec.ExceptionCode as u32, modules::describe_address(addr)));
         if rec.ExceptionCode as u32 == 0xC000_0005 && rec.NumberParameters >= 2 {
             let b = behind(rec.ExceptionInformation[1]);
             if !b.is_empty() {
@@ -149,6 +150,7 @@ static ENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::ne
 /// trace: the buffered log lines went with the process.
 unsafe extern "system" fn hk_nt_terminate_process(h: isize, status: i32) -> i32 {
     if h == 0 || h == -1 {
+        crate::control::note_exit_status(status as u32);
         // (a full dump being written at a crash is finished first)
         drop(FULL_DUMP.lock());
         watch_report();
