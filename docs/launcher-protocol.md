@@ -63,15 +63,19 @@ Emulator → launcher (stdout):
 
 | Message | Meaning |
 |---|---|
-| `{"ev":"warmup_start","total":41906,"full":false,"threads":16}` | Once the target list is known. |
-| `{"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"giants_max":3,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false}` | At most once a second, plus at the end. The same numbers as the existing progress window and console line. `paused_for_ram` is true while admission is waiting for memory (the RAM floor). |
+| `{"ev":"warmup_start","total":41906,"full":false,"threads":16}` | Once the target list is known. `total`: the kept pipelines this pass builds (after `--full` resume and the stale filter); the giants and compute blobs are found when their phases start. |
+| `{"ev":"warmup_progress","done":27292,"total":41906,"keys_per_s":243.0,"eta_s":60,"ram_free_mb":12288,"giants_compiling":2,"giants_max":3,"in_flight":5,"failed":0,"phase":"bound","paused_for_ram":false}` | At most once a second, plus at the end. The same numbers as the existing progress window and console line. `done`/`total` count the current `phase` and start again at 0 of the next phase's total; `phase` is, in order, `starting`, `giants`, `bound`, `compute`, `compute_blobs`, `rest`. `keys_per_s` is the phase's average since it started and `eta_s` the rest of the phase at that rate, left out while the rate is 0. `failed` counts all phases so far. `paused_for_ram` is true while admission is waiting for memory (the RAM floor). |
 | `{"ev":"warmup_done","built":41890,"failed":16,"too_big":0,"took_s":812.4,"complete":true,"cancelled":false,"code":0}` | Last line. `complete` false when a budget or cancel stopped it part way. |
 | `{"ev":"error","message":"another XSEmu process is running (XSEmu.exe 1234)"}` | Refused or failed before starting (exit code 3 for the one-process refusal, 2 for no D3D12 device). |
 
-Launcher → emulator (stdin): `{"cmd":"cancel"}`. The warm-up stops starting new compiles, lets the ones in
-flight finish or abandons them, keeps everything already built (blobs and the `--full` resume record), prints
+Launcher → emulator (stdin): `{"cmd":"cancel"}`. The warm-up stops starting new compiles (one still waiting for
+its memory slot gives up), lets the ones in flight finish, keeps everything already built (blobs and the `--full` resume record), prints
 `warmup_done` with `cancelled` true and exits with code 4. Running it again goes on from there. EOF on stdin
-counts as cancel, so a launcher crash never leaves a warm-up running unattended.
+counts as cancel, so a launcher crash never leaves a warm-up running unattended. `cancelled` is true only when the
+cancel left builds unstarted; a cancel that arrives after the last build started ends as a normal finish.
+
+`--progress-json` applies to `warm-up [--full]` only; `warm-up --mesh-only` and `warm-up --giants-only` keep their
+console output.
 
 ## One process at a time
 
