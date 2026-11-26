@@ -187,10 +187,13 @@ public:
         auto* actions = new QHBoxLayout;
         actions->setSpacing(8);
         actions->addStretch(1);
+        m_makeDefault = new Button(QStringLiteral("Make default"), Button::Variant::Ghost, Button::Size::Small);
+        m_makeDefault->setObjectName(QStringLiteral("default-") + spec.id);
+        m_makeDefault->setToolTip(QStringLiteral("Games without their own choice run with the default runner"));
         m_uninstall = new Button(QStringLiteral("Uninstall"), Button::Variant::Ghost, Button::Size::Small);
         m_cancel = new Button(QStringLiteral("Cancel"), Button::Variant::Secondary, Button::Size::Small);
         m_install = new Button(QStringLiteral("Install"), Button::Variant::Primary, Button::Size::Small, QStringLiteral("download"));
-        for (Button* b : {m_uninstall, m_cancel, m_install})
+        for (Button* b : {m_makeDefault, m_uninstall, m_cancel, m_install})
             actions->addWidget(b);
         m_install->setObjectName(QStringLiteral("install-") + spec.id);
         right->addLayout(actions);
@@ -226,6 +229,7 @@ public:
         connect(m_install, &Button::clicked, this, [this] { RunnerUi::confirmInstall(window(), m_s, m_spec.id); });
         connect(m_cancel, &Button::clicked, this, [this] { m_s.runners.cancel(); });
         connect(m_uninstall, &Button::clicked, this, [this] { m_s.runners.uninstall(m_spec.id); });
+        connect(m_makeDefault, &Button::clicked, this, [this] { m_s.settings.setDefaultRunner(m_spec.id); });
         refresh();
     }
 
@@ -239,6 +243,7 @@ public:
         m_detail->setText(RunnerUi::statusDetail(m_s, m_spec, st));
         m_detail->setVisible(st.state != S::Failed);
         m_uninstall->setVisible(st.state == S::Installed || st.state == S::UpdateAvailable);
+        m_makeDefault->setVisible(m_s.runners.isRunnable(m_spec.id) && m_s.settings.defaultRunner() != m_spec.id);
         m_cancel->setVisible(st.state == S::Installing);
         m_install->setVisible(st.state == S::NotInstalled || st.state == S::UpdateAvailable || st.state == S::Failed);
         m_install->setEnabled(m_s.runners.busyId().isEmpty());
@@ -288,6 +293,7 @@ private:
     Badge* m_status;
     Badge* m_default;
     Label* m_detail;
+    Button* m_makeDefault;
     Button* m_uninstall;
     Button* m_cancel;
     Button* m_install;
