@@ -1,0 +1,238 @@
+#include "AppSettings.h"
+
+#include "Paths.h"
+
+#include <QDir>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+
+namespace {
+
+QString resultName(WarmupRun::Result r)
+{
+    switch (r) {
+    case WarmupRun::Result::Finished: return QStringLiteral("finished");
+    case WarmupRun::Result::Cancelled: return QStringLiteral("cancelled");
+    case WarmupRun::Result::StoppedPartWay: return QStringLiteral("stopped");
+    case WarmupRun::Result::Failed: return QStringLiteral("failed");
+    }
+    return QStringLiteral("failed");
+}
+
+WarmupRun::Result resultFrom(const QString& s)
+{
+    if (s == QLatin1String("finished")) return WarmupRun::Result::Finished;
+    if (s == QLatin1String("cancelled")) return WarmupRun::Result::Cancelled;
+    if (s == QLatin1String("stopped")) return WarmupRun::Result::StoppedPartWay;
+    return WarmupRun::Result::Failed;
+}
+
+}
+
+QVariantMap WarmupRun::toMap() const
+{
+    return {
+        {QStringLiteral("titleId"), titleId},
+        {QStringLiteral("titleName"), titleName},
+        {QStringLiteral("done"), done},
+        {QStringLiteral("total"), total},
+        {QStringLiteral("failed"), failed},
+        {QStringLiteral("tookS"), tookS},
+        {QStringLiteral("result"), resultName(result)},
+        {QStringLiteral("exitCode"), exitCode},
+        {QStringLiteral("full"), full},
+        {QStringLiteral("stoppedForRam"), stoppedForRam},
+        {QStringLiteral("message"), message},
+        {QStringLiteral("finishedAt"), finishedAt.toUTC().toString(Qt::ISODate)},
+    };
+}
+
+WarmupRun WarmupRun::fromMap(const QVariantMap& m)
+{
+    WarmupRun r;
+    r.titleId = m.value(QStringLiteral("titleId")).toString();
+    r.titleName = m.value(QStringLiteral("titleName")).toString();
+    r.done = m.value(QStringLiteral("done")).toLongLong();
+    r.total = m.value(QStringLiteral("total")).toLongLong();
+    r.failed = m.value(QStringLiteral("failed")).toLongLong();
+    r.tookS = m.value(QStringLiteral("tookS")).toDouble();
+    r.result = resultFrom(m.value(QStringLiteral("result")).toString());
+    r.exitCode = m.value(QStringLiteral("exitCode")).toInt();
+    r.full = m.value(QStringLiteral("full")).toBool();
+    r.stoppedForRam = m.value(QStringLiteral("stoppedForRam")).toBool();
+    r.message = m.value(QStringLiteral("message")).toString();
+    r.finishedAt = QDateTime::fromString(m.value(QStringLiteral("finishedAt")).toString(), Qt::ISODate);
+    return r;
+}
+
+AppSettings::AppSettings(QObject* parent)
+    : AppSettings(Paths::settingsFile(), parent)
+{
+}
+
+AppSettings::AppSettings(const QString& iniPath, QObject* parent)
+    : QObject(parent)
+{
+    QDir().mkpath(QFileInfo(iniPath).absolutePath());
+    m_settings = std::make_unique<QSettings>(iniPath, QSettings::IniFormat);
+}
+
+AppSettings::~AppSettings() = default;
+
+QString AppSettings::fileName() const
+{
+    return m_settings->fileName();
+}
+
+void AppSettings::write(const char* key, const QVariant& value)
+{
+    const QString k = QLatin1String(key);
+    if (m_settings->contains(k) && m_settings->value(k) == value)
+        return;
+    m_settings->setValue(k, value);
+    m_settings->sync();
+    emit changed(k);
+}
+
+QVariant AppSettings::read(const char* key, const QVariant& fallback) const
+{
+    return m_settings->value(QLatin1String(key), fallback);
+}
+
+QVariantMap AppSettings::readMap(const char* key) const
+{
+    const QByteArray json = read(key).toString().toUtf8();
+    return QJsonDocument::fromJson(json).object().toVariantMap();
+}
+
+QString AppSettings::toString(ThemeMode mode)
+{
+    switch (mode) {
+    case ThemeMode::Light: return QStringLiteral("light");
+    case ThemeMode::Dark: return QStringLiteral("dark");
+    case ThemeMode::System: break;
+    }
+    return QStringLiteral("system");
+}
+
+AppSettings::ThemeMode AppSettings::themeFromString(const QString& s)
+{
+    if (s == QLatin1String("light")) return ThemeMode::Light;
+    if (s == QLatin1String("dark")) return ThemeMode::Dark;
+    return ThemeMode::System;
+}
+
+AppSettings::ThemeMode AppSettings::theme() const { return themeFromString(read(Key::Theme).toString()); }
+void AppSettings::setTheme(ThemeMode mode) { write(Key::Theme, toString(mode)); }
+
+QStringList AppSettings::gameFolders() const { return read(Key::GameFolders).toStringList(); }
+void AppSettings::setGameFolders(const QStringList& folders) { write(Key::GameFolders, folders); }
+
+bool AppSettings::firstLaunchDone() const { return read(Key::FirstLaunchDone, false).toBool(); }
+void AppSettings::setFirstLaunchDone(bool done) { write(Key::FirstLaunchDone, done); }
+
+QString AppSettings::defaultDeviceType() const { return read(Key::DefaultDeviceType, QStringLiteral("lockhart")).toString(); }
+void AppSettings::setDefaultDeviceType(const QString& deviceType) { write(Key::DefaultDeviceType, deviceType); }
+
+bool AppSettings::offline() const { return read(Key::Offline, true).toBool(); }
+void AppSettings::setOffline(bool offline) { write(Key::Offline, offline); }
+
+bool AppSettings::overlayDefault() const { return read(Key::OverlayDefault, false).toBool(); }
+void AppSettings::setOverlayDefault(bool on) { write(Key::OverlayDefault, on); }
+
+QString AppSettings::steamGridDbKey() const { return read(Key::SteamGridDbKey).toString().trimmed(); }
+void AppSettings::setSteamGridDbKey(const QString& key) { write(Key::SteamGridDbKey, key.trimmed()); }
+bool AppSettings::artLookups() const { return read(Key::ArtLookups, true).toBool(); }
+void AppSettings::setArtLookups(bool on) { write(Key::ArtLookups, on); }
+
+int AppSettings::giantCompileCap() const { return read(Key::GiantCompileCap, kDefaultGiantCompileCap).toInt(); }
+void AppSettings::setGiantCompileCap(int cap) { write(Key::GiantCompileCap, cap); }
+
+bool AppSettings::gameBarAutoHide() const { return read(Key::GameBarAutoHide, true).toBool(); }
+void AppSettings::setGameBarAutoHide(bool on) { write(Key::GameBarAutoHide, on); }
+
+QString AppSettings::emulatorPathOverride() const { return read(Key::EmulatorPath).toString(); }
+void AppSettings::setEmulatorPathOverride(const QString& path) { write(Key::EmulatorPath, path); }
+
+QString AppSettings::emulatorPath() const
+{
+    const QString env = qEnvironmentVariable("XSEMU_EMULATOR").trimmed();
+    if (!env.isEmpty())
+        return env;
+    const QString o = emulatorPathOverride();
+    return o.isEmpty() ? Paths::defaultEmulatorPath() : o;
+}
+
+int AppSettings::launchNeedMb() const { return read(Key::LaunchNeedMb, kDefaultLaunchNeedMb).toInt(); }
+void AppSettings::setLaunchNeedMb(int mb) { write(Key::LaunchNeedMb, mb); }
+
+QVariantMap AppSettings::gameOverrides(const QString& titleId) const
+{
+    return readMap(Key::GameOverrides).value(titleId).toMap();
+}
+
+void AppSettings::setGameOverride(const QString& titleId, const QString& key, const QVariant& value)
+{
+    QVariantMap all = readMap(Key::GameOverrides);
+    QVariantMap one = all.value(titleId).toMap();
+    one.insert(key, value);
+    all.insert(titleId, one);
+    write(Key::GameOverrides, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
+}
+
+void AppSettings::clearGameOverride(const QString& titleId, const QString& key)
+{
+    QVariantMap all = readMap(Key::GameOverrides);
+    QVariantMap one = all.value(titleId).toMap();
+    one.remove(key);
+    if (one.isEmpty())
+        all.remove(titleId);
+    else
+        all.insert(titleId, one);
+    write(Key::GameOverrides, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
+}
+
+QList<WarmupRun> AppSettings::recentWarmups() const
+{
+    QList<WarmupRun> out;
+    const QJsonArray arr = QJsonDocument::fromJson(read(Key::RecentWarmups).toString().toUtf8()).array();
+    for (const QJsonValue& v : arr)
+        out.append(WarmupRun::fromMap(v.toObject().toVariantMap()));
+    return out;
+}
+
+void AppSettings::addRecentWarmup(const WarmupRun& run)
+{
+    QJsonArray arr = QJsonDocument::fromJson(read(Key::RecentWarmups).toString().toUtf8()).array();
+    arr.prepend(QJsonObject::fromVariantMap(run.toMap()));
+    while (arr.size() > kRecentWarmupLimit)
+        arr.removeLast();
+    write(Key::RecentWarmups, QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
+}
+
+void AppSettings::clearRecentWarmups()
+{
+    write(Key::RecentWarmups, QStringLiteral("[]"));
+}
+
+qint64 AppSettings::playSeconds(const QString& titleId) const
+{
+    return readMap(Key::PlayStats).value(titleId).toMap().value(QStringLiteral("seconds")).toLongLong();
+}
+
+QDateTime AppSettings::lastPlayed(const QString& titleId) const
+{
+    return QDateTime::fromString(readMap(Key::PlayStats).value(titleId).toMap().value(QStringLiteral("last")).toString(), Qt::ISODate);
+}
+
+void AppSettings::addPlayTime(const QString& titleId, qint64 seconds, const QDateTime& endedAt)
+{
+    QVariantMap all = readMap(Key::PlayStats);
+    QVariantMap one = all.value(titleId).toMap();
+    one.insert(QStringLiteral("seconds"), one.value(QStringLiteral("seconds")).toLongLong() + qMax<qint64>(0, seconds));
+    one.insert(QStringLiteral("last"), endedAt.toUTC().toString(Qt::ISODate));
+    all.insert(titleId, one);
+    write(Key::PlayStats, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
+}

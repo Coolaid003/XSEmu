@@ -1,0 +1,41 @@
+# XCL – title configuration. Created automatically; you can edit it.
+# device_type: "anaconda" (Series X) or "lockhart" (Series S)
+
+device_type = "lockhart"
+console_type_raw = 6
+gamertag = "Player1"
+user_id = 2533274790395905
+console_id = "F4000001.58434C01.58434C02.58434C03.A5"
+sandbox_id = "RETAIL"
+title_memory_mb = 0
+title_memory = "auto"
+pls_mb = 0
+uma_mb = 0
+log_level = "info"
+log_to_stderr = true
+exe = "SignalGarden.exe"
+package_identifier = ""
+title_id = ""
+graphics = "d3d12"
+d3d12_adapter = "auto"
+d3d12_debug = false
+present = "auto"
+display_mode = "auto"
+raytracing = "auto"
+window_width = 1280
+window_height = 720
+window_pos = "auto"
+xbox_live_tokens = false
+keyboard_mouse = true
+mouse_sensitivity = 1.0
+
+[mounts]
+"D:" = "{game}"
+"G:" = "{game}"
+"GAME:" = "{game}"
+"S:" = "{data}\\pls"
+"T:" = "{data}\\temp"
+
+[aliases]
+
+[stub_returns]

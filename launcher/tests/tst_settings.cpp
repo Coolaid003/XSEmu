@@ -1,0 +1,176 @@
+#include "AppSettings.h"
+#include "EmulatorController.h"
+#include "Format.h"
+#include "Paths.h"
+#include "ProcessGate.h"
+#include "WarmupController.h"
+
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QTest>
+
+class TestSettings : public QObject {
+    Q_OBJECT
+private slots:
+    void defaultsFollowTheHouseRules();
+    void changesAreSignalledAndPersist();
+    void recentWarmupsAndPlayTime();
+    void paths();
+    void gate();
+    void runCommandLine();
+    void warmupClassification();
+    void formats();
+};
+
+void TestSettings::defaultsFollowTheHouseRules()
+{
+    QTemporaryDir dir;
+    AppSettings s(dir.filePath(QStringLiteral("s.ini")));
+    QCOMPARE(s.defaultDeviceType(), QStringLiteral("lockhart"));
+    QVERIFY(s.offline());
+    QVERIFY(!s.firstLaunchDone());
+    QCOMPARE(s.theme(), AppSettings::ThemeMode::System);
+    QCOMPARE(s.giantCompileCap(), 3);
+    QCOMPARE(s.launchNeedMb(), 6 * 1024);
+    QVERIFY(s.artLookups());
+    QVERIFY(s.steamGridDbKey().isEmpty());
+}
+
+void TestSettings::changesAreSignalledAndPersist()
+{
+    QTemporaryDir dir;
+    const QString ini = dir.filePath(QStringLiteral("s.ini"));
+    {
+        AppSettings s(ini);
+        QSignalSpy spy(&s, &AppSettings::changed);
+        s.setOffline(false);
+        s.setOffline(false);
+        QCOMPARE(spy.count(), 1);
+        QCOMPARE(spy.first().first().toString(), QString::fromLatin1(AppSettings::Key::Offline));
+        s.setGameFolders({QStringLiteral("/a"), QStringLiteral("/b")});
+        s.setTheme(AppSettings::ThemeMode::Dark);
+        s.setGameOverride(QStringLiteral("T"), QStringLiteral("overlay"), true);
+    }
+    AppSettings s(ini);
+    QVERIFY(!s.offline());
+    QCOMPARE(s.gameFolders(), (QStringList{QStringLiteral("/a"), QStringLiteral("/b")}));
+    QCOMPARE(s.theme(), AppSettings::ThemeMode::Dark);
+    QCOMPARE(s.gameOverrides(QStringLiteral("T")).value(QStringLiteral("overlay")).toBool(), true);
+    s.clearGameOverride(QStringLiteral("T"), QStringLiteral("overlay"));
+    QVERIFY(s.gameOverrides(QStringLiteral("T")).isEmpty());
+}
+
+void TestSettings::recentWarmupsAndPlayTime()
+{
+    QTemporaryDir dir;
+    AppSettings s(dir.filePath(QStringLiteral("s.ini")));
+    for (int i = 0; i < AppSettings::kRecentWarmupLimit + 5; ++i) {
+        WarmupRun r;
+        r.titleId = QStringLiteral("T%1").arg(i);
+        r.done = i;
+        r.result = WarmupRun::Result::Cancelled;
+        r.finishedAt = QDateTime::currentDateTime();
+        s.addRecentWarmup(r);
+    }
+    const QList<WarmupRun> runs = s.recentWarmups();
+    QCOMPARE(runs.size(), AppSettings::kRecentWarmupLimit);
+    QCOMPARE(runs.first().titleId, QStringLiteral("T24"));
+    QCOMPARE(runs.first().result, WarmupRun::Result::Cancelled);
+    const QDateTime end = QDateTime::currentDateTime();
+    s.addPlayTime(QStringLiteral("G"), 100, end);
+    s.addPlayTime(QStringLiteral("G"), 50, end);
+    QCOMPARE(s.playSeconds(QStringLiteral("G")), 150);
+    QCOMPARE(s.lastPlayed(QStringLiteral("G")).toSecsSinceEpoch(), end.toSecsSinceEpoch());
+}
+
+void TestSettings::paths()
+{
+    QTemporaryDir dir;
+    qputenv("XCL_DATA_ROOT", dir.path().toUtf8());
+    qputenv("XCL_DXIL_CACHE", dir.filePath(QStringLiteral("dxil")).toUtf8());
+    QCOMPARE(Paths::dataRoot(), dir.path());
+    QCOMPARE(Paths::xclToml(QStringLiteral("A.B")), dir.filePath(QStringLiteral("A.B/xcl.toml")));
+    QCOMPARE(Paths::logsDir(QStringLiteral("A.B")), dir.filePath(QStringLiteral("A.B/logs")));
+    QCOMPARE(Paths::cacheDir(QStringLiteral("A.B")), dir.filePath(QStringLiteral("A.B/cache")));
+    QCOMPARE(Paths::pipelineManifestDir(), dir.filePath(QStringLiteral("dxil/pipelines")));
+    qunsetenv("XCL_DATA_ROOT");
+    qunsetenv("XCL_DXIL_CACHE");
+    QVERIFY(Paths::dataRoot().endsWith(QStringLiteral("/XCL")));
+}
+
+void TestSettings::gate()
+{
+    ProcessGate gate;
+    int stops = 0;
+    QVERIFY(gate.isFree());
+    QVERIFY(gate.blockedReason(ProcessGate::Action::StartWarmup).isEmpty());
+    QVERIFY(gate.acquire(ProcessGate::Owner::Game, QStringLiteral("Signal Garden"), [&] { ++stops; }));
+    QVERIFY(!gate.acquire(ProcessGate::Owner::Warmup, QStringLiteral("x"), [] {}));
+    gate.setPaused(true);
+    QVERIFY(gate.blockedReason(ProcessGate::Action::StartWarmup).startsWith(QStringLiteral("Signal Garden is paused.")));
+    QCOMPARE(gate.stopActionLabel(), QStringLiteral("Stop game"));
+    gate.stopOwner();
+    QCOMPARE(stops, 1);
+    gate.release(ProcessGate::Owner::Warmup);
+    QVERIFY(!gate.isFree());
+    gate.release(ProcessGate::Owner::Game);
+    QVERIFY(gate.isFree());
+}
+
+void TestSettings::runCommandLine()
+{
+    QCOMPARE(EmulatorController::runArguments(QStringLiteral("/games/A"), 0x1a2b3c, QStringLiteral("xsemu-1-1")),
+             (QStringList{QStringLiteral("run"), QStringLiteral("--host-hwnd"), QStringLiteral("1a2b3c"), QStringLiteral("--control-pipe"),
+                          QStringLiteral("xsemu-1-1"), QDir::toNativeSeparators(QStringLiteral("/games/A"))}));
+    QCOMPARE(EmulatorController::runArguments(QStringLiteral("/g"), 0, QString()), (QStringList{QStringLiteral("run"), QDir::toNativeSeparators(QStringLiteral("/g"))}));
+    QProcessEnvironment base;
+    base.insert(QStringLiteral("XCL_NETWORK"), QStringLiteral("1"));
+    const QProcessEnvironment off = EmulatorController::runEnvironment(base, true);
+    QCOMPARE(off.value(QStringLiteral("XCL_NETWORK")), QStringLiteral("0"));
+    QCOMPARE(off.value(QStringLiteral("XCL_STORE")), QStringLiteral("offline-error"));
+    const QProcessEnvironment on = EmulatorController::runEnvironment(base, false);
+    QVERIFY(!on.contains(QStringLiteral("XCL_NETWORK")));
+    QCOMPARE(on.value(QStringLiteral("XCL_STORE")), QStringLiteral("offline-error"));
+    QCOMPARE(WarmupController::warmupArguments(true), (QStringList{QStringLiteral("warm-up"), QStringLiteral("--full"), QStringLiteral("--progress-json")}));
+}
+
+void TestSettings::warmupClassification()
+{
+    WarmupController::Progress last;
+    last.targets = 100;
+    Protocol::WarmupDone done{98, 2, 0, 12.5, true, false, 0};
+    WarmupRun r = WarmupController::classify(0, false, done, last, {}, false);
+    QCOMPARE(r.result, WarmupRun::Result::Finished);
+    QCOMPARE(r.done, 100);
+    QCOMPARE(r.failed, 2);
+    done = {40, 0, 0, 5, false, true, 4};
+    QCOMPARE(WarmupController::classify(4, false, done, last, {}, true).result, WarmupRun::Result::Cancelled);
+    done = {40, 0, 0, 5, false, false, 0};
+    last.pausedForRam = true;
+    r = WarmupController::classify(0, false, done, last, {}, false);
+    QCOMPARE(r.result, WarmupRun::Result::StoppedPartWay);
+    QVERIFY(r.stoppedForRam);
+    r = WarmupController::classify(3, false, std::nullopt, last, QStringLiteral("another XSEmu process is running"), false);
+    QCOMPARE(r.result, WarmupRun::Result::Failed);
+    QCOMPARE(r.exitCode, 3);
+    QCOMPARE(r.message, QStringLiteral("another XSEmu process is running"));
+    QCOMPARE(WarmupController::classify(9, true, std::nullopt, last, {}, true).result, WarmupRun::Result::Cancelled);
+    QCOMPARE(WarmupController::phaseIndex(QStringLiteral("compute_blobs")), 4);
+}
+
+void TestSettings::formats()
+{
+    QCOMPARE(Format::count(41906), QStringLiteral("41,906"));
+    QCOMPARE(Format::duration(60), QStringLiteral("1 min 00 s"));
+    QCOMPARE(Format::shortDuration(192), QStringLiteral("3m 12s"));
+    QCOMPARE(Format::shortDuration(22), QStringLiteral("22s"));
+    QCOMPARE(Format::gigabytesFromMb(12288), QStringLiteral("12.0 GB"));
+    QCOMPARE(Format::exitCode(3), QStringLiteral("3"));
+    QCOMPARE(Format::exitCode(int(0xC0000005u)), QStringLiteral("0xC0000005"));
+    const QDateTime now = QDateTime::currentDateTime();
+    QCOMPARE(Format::ago(now.addSecs(-30), now), QStringLiteral("Just now"));
+    QCOMPARE(Format::ago(now.addDays(-1), now), QStringLiteral("Yesterday"));
+}
+
+QTEST_GUILESS_MAIN(TestSettings)
+#include "tst_settings.moc"
