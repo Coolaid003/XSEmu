@@ -54,6 +54,7 @@ add_library(xsemu_core STATIC
     src/core/RunnerManager.cpp src/core/RunnerManager.h
     src/core/Protocol.cpp src/core/Protocol.h
     src/core/ShaderCacheInfo.cpp src/core/ShaderCacheInfo.h
+    src/core/SettingsProfile.cpp src/core/SettingsProfile.h
     src/core/ShaderCacheMonitor.cpp src/core/ShaderCacheMonitor.h
     src/core/TitleConfig.cpp src/core/TitleConfig.h
     src/core/WarmupController.cpp src/core/WarmupController.h

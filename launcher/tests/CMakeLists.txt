@@ -19,6 +19,7 @@ xsemu_test(tst_coverart)
 xsemu_test(tst_shadercache)
 xsemu_test(tst_settings)
 xsemu_test(tst_runners)
+xsemu_test(tst_settingsprofile)
 
 # page-switch timings on a generated PC-shaped shader cache and library
 xsemu_test(tst_perf)
