@@ -311,7 +311,16 @@ void TestRunnerState::changeLocationWaitsForItsRuns()
     QVERIFY(anyContains(shown(dialog), QStringLiteral("stop the game first")));
     QVERIFY(!dialog->findChild<QAbstractButton*>(QStringLiteral("locationConfirm"))->isEnabled());
     QMetaObject::invokeMethod(dialog, "dismiss");
+    // and Uninstall waits too: refused, and the card's button is off with the reason
+    QVERIFY(!s.runners.uninstall(kId, &error));
+    QCOMPARE(error, QStringLiteral("VIctory (DexNom) is running Signal Garden; stop the game first."));
+    QCOMPARE(s.runners.status(kId).state, RunnerManager::State::Installed);
+    auto* uninstall = card->findChild<QAbstractButton*>(QStringLiteral("uninstall-") + kId);
+    QVERIFY(uninstall && uninstall->isVisible());
+    QVERIFY(!uninstall->isEnabled());
+    QCOMPARE(uninstall->toolTip(), error);
     s.emulator.simulateForScreenshot(EmulatorController::State::Idle, g, {});
+    QVERIFY(uninstall->isEnabled());
 
     // its pre-cache running
     WarmupController::Progress p;
@@ -319,6 +328,9 @@ void TestRunnerState::changeLocationWaitsForItsRuns()
     s.warmup.simulateForScreenshot(WarmupController::State::Running, g, p);
     QVERIFY(!s.runners.relocate(kId, elsewhere, RunnerManager::Relocation::Move, &error));
     QCOMPARE(error, QStringLiteral("VIctory (DexNom) is pre-caching Signal Garden; cancel the pre-cache first."));
+    QVERIFY(!s.runners.uninstall(kId, &error));
+    QCOMPARE(error, QStringLiteral("VIctory (DexNom) is pre-caching Signal Garden; cancel the pre-cache first."));
+    QVERIFY(!uninstall->isEnabled());
     s.warmup.simulateForScreenshot(WarmupController::State::Idle, g, {});
 
     // free again: Move from the dialog, and every surface reads Installed at the new place

@@ -33,6 +33,7 @@ QString pickerLine(Services& s, const RunnerSpec& spec)
     case S::Installed: return QStringLiteral("Installed \u00B7 %1 \u00B7 its own shader cache").arg(shows);
     case S::UpdateAvailable: return QStringLiteral("Installed, update available \u00B7 %1").arg(shows);
     case S::Installing: return QStringLiteral("Installing now \u00B7 %1").arg(shows);
+    case S::Uninstalling: return QStringLiteral("Uninstalling now");
     case S::Moving: return QStringLiteral("Moving to a new folder \u00B7 %1").arg(shows);
     case S::NotInstalled:
         return spec.install == RunnerSpec::Install::BuildFromSource ? QStringLiteral("Not installed \u00B7 builds from source on this PC")

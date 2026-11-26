@@ -96,6 +96,8 @@ QString RunnerManager::busyReason(const QString& id) const
 {
     const RunnerSpec* spec = Runners::find(id);
     const QString name = spec ? spec->name : id;
+    if (m_removing.contains(id))
+        return QStringLiteral("%1 is being uninstalled; wait for it to finish.").arg(name);
     if (m_move) {
         const RunnerSpec* moving = Runners::find(m_move->id);
         return QStringLiteral("%1 is being moved; wait for it to finish.").arg(moving ? moving->name : m_move->id);
@@ -306,6 +308,11 @@ RunnerManager::Status RunnerManager::status(const QString& id) const
         s.progress = m_task->progress();
         return s;
     }
+    if (m_removing.contains(id)) {
+        s.state = State::Uninstalling;
+        s.progress.detail = QDir::toNativeSeparators(Paths::runnerDir(id));
+        return s;
+    }
     if (m_move && m_move->id == id) {
         s.state = State::Moving;
         s.progress.step = QStringLiteral("Moving");
@@ -363,7 +370,7 @@ bool RunnerManager::install(const QString& id, QString* error)
         const RunnerSpec* busy = Runners::find(m_taskId);
         return refuse(QStringLiteral("%1 is installing; wait for it or cancel it first.").arg(busy ? busy->name : m_taskId));
     }
-    if (m_move)
+    if (m_move || m_removing.contains(id))
         return refuse(busyReason(id));
     m_errors.remove(id);
     m_taskId = id;
@@ -412,19 +419,40 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
             *error = QStringLiteral("XSEmu comes with the launcher and cannot be uninstalled here.");
         return false;
     }
-    if ((m_taskId == id && m_task) || (m_move && m_move->id == id)) {
+    if (const QString busy = busyReason(id); !busy.isEmpty()) {
         if (error)
-            *error = busyReason(id);
+            *error = busy;
         return false;
     }
     m_errors.remove(id);
     m_sizes.remove(id);
-    const bool ok = QDir(Paths::runnerDir(id)).removeRecursively();
-    if (!ok && error)
-        *error = QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(spec->name);
+    m_removing.insert(id);
     emit changed(id);
     emit stateChanged(id);
-    return ok;
+    // a built runner's folder holds its whole build: delete it off the UI thread. The install record
+    // goes last, so a file in use leaves the runner installed rather than half deleted and unlisted.
+    const QPointer<RunnerManager> self = this;
+    QThreadPool::globalInstance()->start([self, id, dir = Paths::runnerDir(id), name = spec->name] {
+        bool ok = true;
+        QDir d(dir);
+        for (const QFileInfo& fi : d.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System)) {
+            if (fi.fileName() == QLatin1String("runner.json"))
+                continue;
+            ok = (fi.isDir() && !fi.isSymLink() ? QDir(fi.absoluteFilePath()).removeRecursively() : QFile::remove(fi.absoluteFilePath())) && ok;
+        }
+        ok = ok && d.removeRecursively();
+        const QString why = ok ? QString() : QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(name);
+        QMetaObject::invokeMethod(qApp, [self, id, ok, why] {
+            if (!self)
+                return;
+            self->m_removing.remove(id);
+            self->m_sizes.remove(id);
+            emit self->changed(id);
+            emit self->stateChanged(id);
+            emit self->uninstalled(id, ok, why);
+        });
+    });
+    return true;
 }
 
 void RunnerManager::simulateForScreenshot(const QString& id, const Status& status)

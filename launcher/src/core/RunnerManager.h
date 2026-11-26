@@ -6,6 +6,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 
 #include <functional>
 #include <optional>
@@ -24,7 +25,7 @@ class RunnerInstall;
 class RunnerManager : public QObject {
     Q_OBJECT
 public:
-    enum class State { BuiltIn, Unavailable, NotInstalled, Installing, Moving, Installed, UpdateAvailable, Failed };
+    enum class State { BuiltIn, Unavailable, NotInstalled, Installing, Moving, Uninstalling, Installed, UpdateAvailable, Failed };
 
     struct Progress {
         QString step;      // "Downloading", "Checking the download", "Unpacking", "Building", "Moving"...
@@ -61,13 +62,15 @@ public:
     // Installed or installable now: what the recommendation may pick.
     bool isInstallable(const QString& id) const;
     QString busyId() const; // the runner being installed, or empty
-    // Why the runner's files can't be moved now (installing or building, being moved, running a game
-    // or a pre-cache), or empty.
+    // Why the runner's files can't be moved or deleted now (installing or building, being moved or
+    // uninstalled, running a game or a pre-cache), or empty.
     QString busyReason(const QString& id) const;
 
     // Install, or update to the curated pin. Returns false with *error when it cannot start now.
     bool install(const QString& id, QString* error = nullptr);
     void cancel();
+    // Delete the runner's folder on a worker thread (state Uninstalling meanwhile; uninstalled()
+    // follows). Refused with *error while busyReason() says why, a running game or pre-cache included.
     bool uninstall(const QString& id, QString* error = nullptr);
 
     // The folder that holds the runner's own folder (Paths::runnerLocation).
@@ -108,6 +111,8 @@ signals:
     void installFinished(const QString& id, bool ok, const QString& error);
     // A relocate() ended; note or error says what to tell the user (empty when there is nothing).
     void relocated(const QString& id, bool ok, const QString& message);
+    // An uninstall() ended; error says what is left when files were in use.
+    void uninstalled(const QString& id, bool ok, const QString& error);
 
 private:
     void applyLocations();
@@ -136,4 +141,5 @@ private:
         QString oldDir;   // the runner's folder before
     };
     std::optional<Rebuild> m_rebuild;
+    QSet<QString> m_removing; // being uninstalled
 };

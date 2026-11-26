@@ -63,6 +63,8 @@ private slots:
     void refusesWhileBusy();
     void runnersFolderKeepsInstalledRunners();
     void freeSpaceWarning();
+    void uninstallDeletesOffTheUiThread();
+    void uninstallRefusedWhileInUse();
 
 private:
     void ensureBuilt(RunnerManager& m, const QString& id);
@@ -252,7 +254,10 @@ void TestRunners::installsReleaseAsset()
     rec.close();
     QCOMPARE(m.status(id).state, RunnerManager::State::UpdateAvailable);
 
+    QSignalSpy gone(&m, &RunnerManager::uninstalled);
     QVERIFY(m.uninstall(id, &error));
+    QVERIFY(gone.wait(10000));
+    QVERIFY(gone.first().at(1).toBool());
     QCOMPARE(m.status(id).state, RunnerManager::State::NotInstalled);
 }
 
@@ -497,7 +502,9 @@ void TestRunners::rebuildThere()
     QCOMPARE(m.status(id).executable, QDir(elsewhere).filePath(id + QStringLiteral("/bin/runner.tar")));
     QTRY_VERIFY_WITH_TIMEOUT(!QFileInfo::exists(oldDir), 10000);
     QCOMPARE(settings.runnerLocations().value(id), QDir::cleanPath(elsewhere));
+    QSignalSpy gone(&m, &RunnerManager::uninstalled);
     QVERIFY(m.uninstall(id));
+    QVERIFY(gone.wait(10000));
     QVERIFY(m.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move));
     resetLocations();
 }
@@ -639,6 +646,63 @@ void TestRunners::freeSpaceWarning()
     QVERIFY(c.text.contains(QStringLiteral("unknown")));
     DiskSpace::setFreeBytesFunction(nullptr);
     QVERIFY(DiskSpace::freeBytes(m_dir.filePath(QStringLiteral("not/made/yet"))) > 0); // the real drive, from the nearest folder that exists
+}
+
+void TestRunners::uninstallDeletesOffTheUiThread()
+{
+    if (!m_haveGit)
+        QSKIP("git is not installed");
+    RunnerManager m;
+    const QString id = QStringLiteral("victory-dexnom");
+    ensureBuilt(m, id);
+    const QString dir = Runners::find(id)->dataDir();
+    QVERIFY(QFileInfo::exists(QDir(dir).filePath(QStringLiteral("t"))));
+    QSignalSpy gone(&m, &RunnerManager::uninstalled);
+    QString error;
+    QVERIFY2(m.uninstall(id, &error), qPrintable(error));
+    // the delete runs on a worker; until it lands the runner is Uninstalling and nothing else may start
+    QCOMPARE(m.status(id).state, RunnerManager::State::Uninstalling);
+    QVERIFY(!m.isRunnable(id));
+    QVERIFY(!m.install(id, &error));
+    QVERIFY2(error.contains(QStringLiteral("being uninstalled")), qPrintable(error));
+    QVERIFY(!m.uninstall(id, &error));
+    QVERIFY(!m.relocate(id, m_dir.filePath(QStringLiteral("H")), RunnerManager::Relocation::Move, &error));
+    QVERIFY(gone.wait(10000));
+    QCOMPARE(gone.first().at(0).toString(), id);
+    QVERIFY2(gone.first().at(1).toBool(), qPrintable(gone.first().at(2).toString()));
+    QCOMPARE(m.status(id).state, RunnerManager::State::NotInstalled);
+    QVERIFY(!QFileInfo::exists(dir));
+    QVERIFY(m.busyReason(id).isEmpty());
+}
+
+void TestRunners::uninstallRefusedWhileInUse()
+{
+    RunnerManager m;
+    const QString id = QStringLiteral("kelvaroq");
+    const RunnerSpec* k = Runners::find(id);
+    QVERIFY(QDir().mkpath(QDir(k->installDir()).filePath(QStringLiteral("native"))));
+    QFile exe(QDir(k->installDir()).filePath(k->executable));
+    QVERIFY(exe.open(QIODevice::WriteOnly));
+    exe.write("engine");
+    exe.close();
+    QFile rec(QDir(k->dataDir()).filePath(QStringLiteral("runner.json")));
+    QVERIFY(rec.open(QIODevice::WriteOnly));
+    rec.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), id}, {QStringLiteral("version"), k->pinnedVersion()}, {QStringLiteral("executable"), k->executable}}).toJson());
+    rec.close();
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+
+    m.setInUseCheck([id](const QString& which) { return which == id ? QStringLiteral("Kelvaroq is running Signal Garden; stop the game first.") : QString(); });
+    QString error;
+    QVERIFY(!m.uninstall(id, &error));
+    QCOMPARE(error, QStringLiteral("Kelvaroq is running Signal Garden; stop the game first."));
+    QCOMPARE(m.status(id).state, RunnerManager::State::Installed);
+    QVERIFY(QFileInfo::exists(rec.fileName()));
+
+    m.setInUseCheck({});
+    QSignalSpy gone(&m, &RunnerManager::uninstalled);
+    QVERIFY(m.uninstall(id, &error));
+    QVERIFY(gone.wait(10000));
+    QCOMPARE(m.status(id).state, RunnerManager::State::NotInstalled);
 }
 
 #include "tst_runners.moc"

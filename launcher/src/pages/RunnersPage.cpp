@@ -189,13 +189,13 @@ public:
         m_location = new Button(QStringLiteral("Change location..."), Button::Variant::Link, Button::Size::Tiny, QStringLiteral("folder"));
         m_location->setObjectName(QStringLiteral("location-") + spec.id);
         right->addWidget(m_location, 0, Qt::AlignRight);
-        m_moveNote = new Label({}, Label::Style::Caption, Theme::Role::Danger);
-        m_moveNote->setObjectName(QStringLiteral("moveNote-") + spec.id);
-        m_moveNote->setAlignment(Qt::AlignRight);
-        m_moveNote->setWordWrap(true);
-        m_moveNote->setFixedWidth(240);
-        m_moveNote->hide();
-        right->addWidget(m_moveNote, 0, Qt::AlignRight);
+        m_note = new Label({}, Label::Style::Caption, Theme::Role::Danger);
+        m_note->setObjectName(QStringLiteral("runnerNote-") + spec.id);
+        m_note->setAlignment(Qt::AlignRight);
+        m_note->setWordWrap(true);
+        m_note->setFixedWidth(240);
+        m_note->hide();
+        right->addWidget(m_note, 0, Qt::AlignRight);
         right->addStretch(1);
         auto* actions = new QHBoxLayout;
         actions->setSpacing(8);
@@ -204,6 +204,7 @@ public:
         m_makeDefault->setObjectName(QStringLiteral("default-") + spec.id);
         m_makeDefault->setToolTip(QStringLiteral("Games without their own choice run with the default runner"));
         m_uninstall = new Button(QStringLiteral("Uninstall"), Button::Variant::Ghost, Button::Size::Small);
+        m_uninstall->setObjectName(QStringLiteral("uninstall-") + spec.id);
         m_cancel = new Button(QStringLiteral("Cancel"), Button::Variant::Secondary, Button::Size::Small);
         m_install = new Button(QStringLiteral("Install"), Button::Variant::Primary, Button::Size::Small, QStringLiteral("download"));
         for (Button* b : {m_makeDefault, m_uninstall, m_cancel, m_install})
@@ -254,14 +255,18 @@ public:
         connect(m_cancel, &Button::clicked, this, [this] { m_s.runners.cancel(); });
         connect(m_location, &Button::clicked, this, [this] { RunnerUi::changeLocation(window(), m_s, m_spec.id); });
         connect(&m_s.runners, &RunnerManager::relocated, this, [this](const QString& id, bool ok, const QString& message) {
-            if (id != m_spec.id)
-                return;
-            m_moveNote->setText(message);
-            m_moveNote->setRole(ok ? Theme::Role::Text3 : Theme::Role::Danger);
-            m_moveNote->setVisible(!message.isEmpty());
+            if (id == m_spec.id)
+                showNote(ok, message);
+        });
+        connect(&m_s.runners, &RunnerManager::uninstalled, this, [this](const QString& id, bool ok, const QString& error) {
+            if (id == m_spec.id)
+                showNote(ok, error);
         });
         connect(m_log, &Button::clicked, this, [this] { QDesktopServices::openUrl(QUrl::fromLocalFile(m_s.runners.installLogPath(m_spec.id))); });
-        connect(m_uninstall, &Button::clicked, this, [this] { m_s.runners.uninstall(m_spec.id); });
+        connect(m_uninstall, &Button::clicked, this, [this] {
+            QString error;
+            showNote(m_s.runners.uninstall(m_spec.id, &error), error);
+        });
         connect(m_makeDefault, &Button::clicked, this, [this] { m_s.settings.setDefaultRunner(m_spec.id); });
         refresh();
     }
@@ -276,6 +281,9 @@ public:
         m_detail->setText(RunnerUi::statusDetail(m_s, m_spec, st));
         m_detail->setVisible(st.state != S::Failed);
         m_uninstall->setVisible(st.state == S::Installed || st.state == S::UpdateAvailable);
+        const QString busy = m_s.runners.busyReason(m_spec.id);
+        m_uninstall->setEnabled(busy.isEmpty());
+        m_uninstall->setToolTip(busy);
         m_makeDefault->setVisible(m_s.runners.isRunnable(m_spec.id) && m_s.settings.defaultRunner() != m_spec.id);
         m_cancel->setVisible(st.state == S::Installing);
         m_location->setVisible(!m_spec.isBuiltIn()
@@ -328,6 +336,14 @@ public:
     }
 
 private:
+    // what the last move or uninstall left to say; an error in danger
+    void showNote(bool ok, const QString& message)
+    {
+        m_note->setText(message);
+        m_note->setRole(ok ? Theme::Role::Text3 : Theme::Role::Danger);
+        m_note->setVisible(!message.isEmpty());
+    }
+
     Services& m_s;
     const RunnerSpec& m_spec;
     Badge* m_recommended;
@@ -339,7 +355,7 @@ private:
     Button* m_cancel;
     Button* m_install;
     Button* m_location;
-    Label* m_moveNote;
+    Label* m_note;
     Card* m_steps;
     QList<StepRow> m_rows;
     QList<Bar*> m_bars;
@@ -394,6 +410,13 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
             c->refresh();
         Q_UNUSED(id);
     });
+    // a game or a pre-cache starting or ending changes what a runner may do (Uninstall waits for it)
+    const auto refreshCards = [this] {
+        for (RunnerCard* c : std::as_const(m_cards))
+            c->refresh();
+    };
+    connect(&m_s.emulator, &EmulatorController::stateChanged, this, refreshCards);
+    connect(&m_s.warmup, &WarmupController::stateChanged, this, refreshCards);
     connect(&m_s.settings, &AppSettings::changed, this, [this] {
         for (RunnerCard* c : std::as_const(m_cards))
             c->refresh();
