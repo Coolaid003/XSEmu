@@ -855,8 +855,8 @@ void InGameView::updateAutoHide()
     const QPoint c = QCursor::pos();
     const QRect win = window()->geometry();
     const int reach = m_barHidden ? 6 : Metrics::GameBar + 8;
-    const bool near = win.contains(c) && c.y() - win.top() < reach;
-    if (near) {
+    const bool nearTop = win.contains(c) && c.y() - win.top() < reach;
+    if (nearTop) {
         m_away.restart();
         if (m_barHidden) {
             m_barHidden = false;
