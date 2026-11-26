@@ -14,6 +14,7 @@
 #include "widgets/Text.h"
 
 #include <QDir>
+#include <algorithm>
 #include <QHBoxLayout>
 #include <QPainter>
 #include <QVBoxLayout>
@@ -138,7 +139,7 @@ public:
         if (Badge* b = RunnerUi::vendorBadge(spec))
             title->addWidget(b);
         m_recommended = new Badge(QStringLiteral("Recommended for your GPU"), Theme::Tone::Accent);
-        m_recommended->setDotVisible(false);
+        m_recommended->setIcon(QStringLiteral("check"));
         title->addWidget(m_recommended);
         title->addStretch(1);
         mid->addLayout(title);
@@ -354,11 +355,21 @@ void RunnersPage::reorder()
     m_busy = m_s.runners.busyId();
     for (RunnerCard* c : std::as_const(m_cards))
         m_list->removeWidget(c);
-    // the install in progress first, then the curated order
-    if (m_cards.contains(m_busy))
-        m_list->addWidget(m_cards.value(m_busy));
-    for (const RunnerSpec& r : Runners::curated()) {
-        if (r.id != m_busy)
-            m_list->addWidget(m_cards.value(r.id));
-    }
+    // XSEmu, the install in progress, the runner recommended for this PC, installed ones, then the rest
+    const QString recommended = RunnerUi::recommendation(m_s).runnerId;
+    QList<const RunnerSpec*> order;
+    for (const RunnerSpec& r : Runners::curated())
+        order << &r;
+    auto rank = [&](const RunnerSpec* r) {
+        if (r->isBuiltIn())
+            return 0;
+        if (r->id == m_busy)
+            return 1;
+        if (r->id == recommended)
+            return 2;
+        return m_s.runners.isRunnable(r->id) ? 3 : 4;
+    };
+    std::stable_sort(order.begin(), order.end(), [&](const RunnerSpec* a, const RunnerSpec* b) { return rank(a) < rank(b); });
+    for (const RunnerSpec* r : order)
+        m_list->addWidget(m_cards.value(r->id));
 }

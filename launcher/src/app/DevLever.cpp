@@ -6,6 +6,9 @@
 #include "core/DevFixtures.h"
 #include "core/EmulatorController.h"
 #include "core/Paths.h"
+#include "core/Runner.h"
+#include "core/RunnerManager.h"
+#include "pages/RunnerUi.h"
 #include "core/TitleConfig.h"
 #include "pages/FirstLaunchPage.h"
 #include "pages/SettingsPage.h"
@@ -19,6 +22,8 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QDir>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLinearGradient>
 #include <QPainter>
 #include <QPainterPath>
@@ -88,6 +93,30 @@ WarmupController::Progress runningProgress()
 }
 
 // A small shader cache and one crash dump in the temporary fixture folders, so Settings has numbers.
+// Runner installs as RunnerInstall leaves them, with fake-xsemu copied in as each runner's program
+// (it acts as the runner its file name names), so playing with a runner in a fixture state is real.
+void seedRunner(const QString& id, const QString& version, qint64 agoS)
+{
+    const RunnerSpec* spec = Runners::find(id);
+    const QString exe = QDir(spec->installDir()).filePath(spec->executable);
+    QDir().mkpath(QFileInfo(exe).absolutePath());
+    QFile::remove(exe);
+    QFile::copy(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("fake-xsemu")), exe);
+    QFile f(QDir(spec->dataDir()).filePath(QStringLiteral("runner.json")));
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        f.write(QJsonDocument(QJsonObject{{QStringLiteral("id"), id},
+                                          {QStringLiteral("version"), version},
+                                          {QStringLiteral("executable"), spec->executable},
+                                          {QStringLiteral("installedAt"), QDateTime::currentDateTimeUtc().addSecs(-agoS).toString(Qt::ISODate)}})
+                    .toJson());
+}
+
+void seedRunners()
+{
+    seedRunner(QStringLiteral("kelvaroq"), Runners::find(QStringLiteral("kelvaroq"))->pinnedVersion(), 26 * 3600);
+    seedRunner(QStringLiteral("victory-dexnom"), QStringLiteral("2e01ab4"), 9 * 24 * 3600);
+}
+
 void seedShaderCache()
 {
     QDir dxil(root(QStringLiteral("dxil")));
@@ -369,6 +398,8 @@ QStringList DevLever::states()
         QStringLiteral("in-game-paused"), QStringLiteral("in-game-fitted"), QStringLiteral("in-game-fullscreen-hint"),
         QStringLiteral("in-game-fullscreen"), QStringLiteral("in-game-crashed"), QStringLiteral("in-game-device-removed"),
         QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
+        QStringLiteral("runners"), QStringLiteral("runners-install-confirm"), QStringLiteral("runners-building"),
+        QStringLiteral("runners-install-error"),
     };
 }
 
@@ -432,6 +463,15 @@ bool DevLever::prepare(QString* error)
     qputenv("XSEMU_LAUNCHER_DATA", root(QStringLiteral("launcher")).toUtf8());
     qputenv("XCL_DATA_ROOT", root(QStringLiteral("xcl")).toUtf8());
     qputenv("XCL_DXIL_CACHE", root(QStringLiteral("dxil")).toUtf8());
+    qputenv("XSEMU_RUNNERS_DIR", root(QStringLiteral("runners")).toUtf8());
+    if (qEnvironmentVariableIsEmpty("XSEMU_GPU"))
+        qputenv("XSEMU_GPU", "10de:NVIDIA GeForce RTX 4070");
+    QFile feed(root(QStringLiteral("runner-feed.json")));
+    if (feed.open(QIODevice::WriteOnly))
+        feed.write(R"({"victory-7900xtx": {"keep": true}, "victory-dexnom": {"keep": true}, "kelvaroq": {"keep": true}})");
+    feed.close();
+    qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
+    seedRunners();
     return true;
 }
 
@@ -554,6 +594,29 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
             w.settingsPage()->showSection(SettingsPage::Section::Logs);
         } else if (st == QLatin1String("settings-about"))
             w.settingsPage()->showSection(SettingsPage::Section::About);
+    } else if (st.startsWith(QLatin1String("runners"))) {
+        w.showPage(Page::Runners);
+        const QString xtx = QStringLiteral("victory-7900xtx");
+        if (st == QLatin1String("runners-building")) {
+            RunnerManager::Status b;
+            b.state = RunnerManager::State::Installing;
+            b.pinnedVersion = Runners::find(xtx)->pinnedVersion();
+            b.progress.step = QStringLiteral("Building");
+            b.progress.stepIndex = 3;
+            b.progress.stepCount = 4;
+            b.progress.phase = 1;
+            b.progress.done = 212;
+            b.progress.total = 389;
+            b.progress.detail = QStringLiteral("Compiling naga v24.0.0");
+            b.progress.startedAt = QDateTime::currentDateTime().addSecs(-252);
+            s.runners.simulateForScreenshot(xtx, b);
+        } else if (st == QLatin1String("runners-install-error")) {
+            RunnerManager::Status f;
+            f.state = RunnerManager::State::Failed;
+            f.pinnedVersion = Runners::find(xtx)->pinnedVersion();
+            f.error = QStringLiteral("The build stopped: cargo exited with code 101 (linker link.exe not found). Nothing was installed.");
+            s.runners.simulateForScreenshot(xtx, f);
+        }
     } else if (st == QLatin1String("first-launch-network"))
         w.firstLaunchPage()->setStep(1);
     else if (st == QLatin1String("first-launch-folders") || st == QLatin1String("first-launch-folders-found"))
@@ -566,6 +629,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         return;
     }
 
+    if (st == QLatin1String("runners-install-confirm"))
+        QTimer::singleShot(0, &w, [&w, &s] { RunnerUi::confirmInstall(&w, s, QStringLiteral("victory-7900xtx")); });
     if (st == QLatin1String("settings-shaders-clear")) {
         if (auto* clear = w.settingsPage()->sectionPage(SettingsPage::Section::Shaders)->findChild<QAbstractButton*>(QStringLiteral("clearShaderCache")))
             QTimer::singleShot(300, clear, &QAbstractButton::click);

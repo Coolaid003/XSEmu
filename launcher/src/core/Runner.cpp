@@ -133,6 +133,7 @@ QList<RunnerSpec> build()
     v1.recommendMinRamBytes = 64ULL * 1024 * 1024 * 1024;
     v1.summary = QStringLiteral("VIctory fork with code paths for Radeon GPUs.");
     v1.licence = QStringLiteral("GPL-3.0");
+    v1.note = QStringLiteral("Needs 64 GB of RAM.");
     v1.windowsOnly = true;
     v1.install = RunnerSpec::Install::BuildFromSource;
     v1.commit = QStringLiteral("c9c932cbcc38defd8f1683d62dd298187f565031");
@@ -163,6 +164,7 @@ QList<RunnerSpec> build()
     v2.recommendWhy = QStringLiteral("VIctory (DexNom) is tested on a Radeon RX 7900 XTX");
     v2.recommendMinRamBytes = 0;
     v2.summary = QStringLiteral("VIctory fork tested on a Radeon RX 7900 XTX.");
+    v2.note.clear();
     v2.commit = QStringLiteral("64bd58f5fb794216894bc0e33e03a3a64d19c347");
     // the BCPack format tables the build embeds, fetched from where its own setup script fetches them
     v2.fetches = {{QStringLiteral("https://raw.githubusercontent.com/Marvisak/VIctory/2849477415a46f5a079c85cf3e64a3dff32f713c/crates/victory-formats/src/bcpack-tables.bin"),
@@ -223,6 +225,7 @@ QList<RunnerSpec> build()
 //   "launchArgs": [...], "precache": [{"args": [...], "parser": "...", "check": true, "closeStdin": true}],
 //   "cacheDir": "..."}, "victory-dexnom": {"commit": "...", "repo": "file:///...", "buildSteps": [[...]],
 //   "artifacts": {"built": "in-bin"}}}
+// {"keep": true} keeps the curated pin and only lifts the Windows-only limit.
 static void applyFeed(QList<RunnerSpec>& list)
 {
     const QString path = qEnvironmentVariable("XSEMU_RUNNER_FEED");
@@ -242,6 +245,9 @@ static void applyFeed(QList<RunnerSpec>& list)
         const QJsonObject o = feed.value(r.id).toObject();
         if (o.isEmpty() || r.isBuiltIn())
             continue;
+        r.windowsOnly = false;
+        if (o.value(QLatin1String("keep")).toBool())
+            continue; // the curated pin as it is, on any OS: a stand-in program plays the runner
         if (o.contains(QLatin1String("commit"))) {
             r.install = RunnerSpec::Install::BuildFromSource;
             r.commit = o.value(QLatin1String("commit")).toString();
@@ -266,7 +272,6 @@ static void applyFeed(QList<RunnerSpec>& list)
             }
         }
         r.cacheDir = o.value(QLatin1String("cacheDir")).toString(r.cacheDir);
-        r.windowsOnly = false;
         r.fileSha256.clear();
         r.copyFiles.clear();
         r.fetches.clear();

@@ -10,13 +10,16 @@
 class Badge : public QWidget {
     Q_OBJECT
 public:
-    enum class Kind { Pill, Plain, Chip }; // Chip: sunken 24 px, medium text-2 (sidebar footer)
+    // Chip: sunken 24 px, medium text-2 (sidebar footer). Outline: bordered 22 px, the part before " \u00B7 "
+    // in semibold text and the rest in text-2 (a runner's GPU vendor).
+    enum class Kind { Pill, Plain, Chip, Outline };
 
     explicit Badge(const QString& text = {}, Theme::Tone tone = Theme::Tone::Neutral, Kind kind = Kind::Pill, QWidget* parent = nullptr);
 
     void setText(const QString& text);
     void setTone(Theme::Tone tone);
     void setDotVisible(bool on);
+    void setIcon(const QString& name); // drawn instead of the dot
     QString text() const { return m_text; }
     Theme::Tone tone() const { return m_tone; }
 
@@ -33,4 +36,5 @@ private:
     Theme::Tone m_tone;
     Kind m_kind;
     bool m_dot = true;
+    QString m_icon;
 };

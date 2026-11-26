@@ -45,8 +45,8 @@ Badge* vendorBadge(const RunnerSpec& spec)
 {
     if (spec.badge.isEmpty())
         return nullptr;
-    auto* b = new Badge(spec.badge, Theme::Tone::Neutral, Badge::Kind::Plain);
-    b->setDotVisible(false);
+    auto* b = new Badge(spec.badge, Theme::Tone::Neutral, Badge::Kind::Outline);
+    b->setIcon(QStringLiteral("chip"));
     return b;
 }
 
@@ -140,7 +140,8 @@ void confirmInstall(QWidget* window, Services& s, const QString& runnerId)
     rows << qMakePair(QStringLiteral("Installs to"), QDir::toNativeSeparators(spec->dataDir()));
     for (int i = 0; i < rows.size(); ++i) {
         g->addWidget(new Label(rows[i].first, Label::Style::Small, Theme::Role::Text3), i, 0);
-        auto* v = new Label(rows[i].second, Label::Style::Mono, Theme::Role::Text);
+        const bool code = i != 2 && rows[i].first != QLatin1String("Build time");
+        auto* v = new Label(rows[i].second, code ? Label::Style::Mono : Label::Style::Small, Theme::Role::Text);
         v->setTextInteractionFlags(Qt::TextSelectableByMouse);
         g->addWidget(v, i, 1, Qt::AlignRight);
     }
