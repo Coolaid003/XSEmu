@@ -43,11 +43,21 @@ jobs:
         run: cmake -S launcher -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DXSEMU_LAUNCHER_TESTS=ON -DXSEMU_FAKE_EMULATOR=ON
       - name: Build
         run: cmake --build build
+      - name: Install and deploy Qt
+        run: cmake --install build --prefix dist
+      - name: Upload XSEmuLauncher
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: XSEmuLauncher-windows
+          path: dist/
+          if-no-files-found: error
       - name: Test
+        id: test
+        continue-on-error: true
         working-directory: build
         run: ctest --output-on-failure --timeout 120
       - name: Run each test directly when ctest failed
-        if: failure()
+        if: steps.test.outcome == 'failure'
         working-directory: build
         shell: pwsh
         env:
@@ -60,14 +70,6 @@ jobs:
             '{0}: exit 0x{1:X8}' -f $_.Name, $code
             if ($code -ne 0 -and (Test-Path $log)) { Get-Content $log -Tail 60 }
           }
-      - name: Install and deploy Qt
-        run: cmake --install build --prefix dist
-      - name: Upload XSEmuLauncher
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: XSEmuLauncher-windows
-          path: dist/
-          if-no-files-found: error
 
   ubuntu:
     runs-on: ubuntu-24.04
