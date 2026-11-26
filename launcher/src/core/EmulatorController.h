@@ -64,10 +64,11 @@ public:
     };
 
     struct LaunchCheck {
-        enum class Problem { None, EmulatorMissing, RunnerNotInstalled, GameFilesMissing, Busy, OtherEmulatorRunning, NotEnoughRam };
+        enum class Problem { None, EmulatorMissing, EmulatorTooOld, RunnerNotInstalled, GameFilesMissing, Busy, OtherEmulatorRunning, NotEnoughRam };
         Problem problem = Problem::None;
         QString reason;          // a human sentence, empty when ok
         QStringList processes;   // OtherEmulatorRunning: "name pid"
+        QString marker;          // OtherEmulatorRunning: the busy marker file, when it exists
         qint64 needMb = 0;       // NotEnoughRam: launch need + floor
         qint64 freeMb = 0;
         bool ok() const { return problem == Problem::None; }

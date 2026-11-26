@@ -14,11 +14,11 @@
 #include <cstdio>
 #include <memory>
 
-static int usage()
+static int usage(FILE* to = stderr)
 {
-    std::fprintf(stderr, "usage: fake-xsemu run [--host-hwnd <hex>] [--control-pipe <name>] <game folder> [-- args]\n"
-                         "       fake-xsemu warm-up [--full] [--progress-json]\n");
-    return 2;
+    std::fprintf(to, "usage: fake-xsemu run [--host-hwnd <hex>] [--control-pipe <name>] <game folder> [-- args]\n"
+                     "       fake-xsemu warm-up [--full] [--progress-json]\n");
+    return to == stderr ? 2 : 0;
 }
 
 int main(int argc, char** argv)
@@ -35,6 +35,8 @@ int main(int argc, char** argv)
         std::printf("XSEmu 0.0.0-fake\n");
         return 0;
     }
+    if (args.first() == QLatin1String("--help"))
+        return usage(stdout);
 
     if (args.first() == QLatin1String("warm-up")) {
         QCoreApplication app(argc, argv);

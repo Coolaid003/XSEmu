@@ -14,11 +14,14 @@ Services::Services(QObject* parent)
     Theme::instance().setMode(Theme::Mode(int(settings.theme())));
     LaunchConfig::followShaderCacheDir(settings);
     library.setFolders(settings.gameFolders());
+    gate.setBusyMarker(settings.busyMarker());
     connect(&settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::Theme))
             Theme::instance().setMode(Theme::Mode(int(settings.theme())));
         else if (key == QLatin1String(AppSettings::Key::GameFolders))
             library.setFolders(settings.gameFolders());
+        else if (key == QLatin1String(AppSettings::Key::BusyMarker))
+            gate.setBusyMarker(settings.busyMarker());
     });
 }
 

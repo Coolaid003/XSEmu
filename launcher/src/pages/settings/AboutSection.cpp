@@ -2,6 +2,7 @@
 #include "SettingsKit.h"
 
 #include "app/Services.h"
+#include "core/EmulatorBuild.h"
 #include "core/Paths.h"
 #include "widgets/Button.h"
 #include "widgets/Icon.h"
@@ -10,14 +11,15 @@
 #include <QClipboard>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QHBoxLayout>
-#include <QProcess>
 #include <QUrl>
 #include <QVBoxLayout>
 
-// The launcher's version (XSEMU_VERSION), XSEmu.exe's own answer to --version, and the credits and
+// The launcher's version (XSEMU_VERSION), the emulator's path, its answer to --version and whether the
+// launcher may start it (or why not: too old, busy), and the credits and
 // licences: XCL by the xcl-dev contributors (GPL-2.0), the launcher (GPL-2.0), Qt (LGPL-3.0, linked
 // dynamically), cover art from SteamGridDB with the user's own key.
 QWidget* SettingsSections::about(Services& s)
@@ -42,24 +44,44 @@ QWidget* SettingsSections::about(Services& s)
 
     sec.caps(QStringLiteral("Version"));
     auto* copy = new Button(QStringLiteral("Copy version"), Button::Variant::Secondary, Button::Size::Small);
-    SettingsKit::Row* emu = sec.row(QStringLiteral("XSEmu.exe"), QStringLiteral("Asking XSEmu..."), copy);
-    copy->setEnabled(false);
-    const QString exe = s.settings.emulatorPath();
-    if (!QFileInfo(exe).isExecutable()) {
-        emu->setHelp(QStringLiteral("Not found at %1").arg(QDir::toNativeSeparators(exe)));
-    } else {
-        auto* p = new QProcess(emu);
-        QObject::connect(p, &QProcess::finished, emu, [p, emu, copy](int code, QProcess::ExitStatus status) {
-            const QString out = QString::fromUtf8(p->readAllStandardOutput()).trimmed();
-            const bool ok = status == QProcess::NormalExit && code == 0 && !out.isEmpty();
-            emu->setHelp(ok ? out : QStringLiteral("XSEmu didn't report a version."));
-            copy->setEnabled(ok);
-            copy->setProperty("version", out);
-            p->deleteLater();
-        });
-        QObject::connect(p, &QProcess::errorOccurred, emu, [emu](QProcess::ProcessError) { emu->setHelp(QStringLiteral("XSEmu didn't report a version.")); });
-        p->start(exe, {QStringLiteral("--version")});
-    }
+    auto* choose = new Button(QStringLiteral("Choose..."), Button::Variant::Secondary, Button::Size::Small);
+    choose->setObjectName(QStringLiteral("chooseEmulator"));
+    SettingsKit::Row* emu = sec.row(QStringLiteral("Emulator"), {}, choose);
+    emu->setObjectName(QStringLiteral("emulatorRow"));
+    emu->addControl(copy);
+    emu->helpLabel()->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    // the path, its --version answer and whether the launcher may start it; never asked while another
+    // emulator (or the busy marker) holds the PC
+    auto refresh = [&s, emu, copy] {
+        const QString exe = s.settings.emulatorPath();
+        const ProcessGate::External other = s.gate.external();
+        const EmulatorBuild answer = other.busy() || !s.gate.isFree() ? EmulatorBuild::cached(exe) : EmulatorBuild::probe(exe);
+        QStringList lines{QDir::toNativeSeparators(exe)};
+        if (!QFileInfo(exe).isExecutable())
+            lines << QStringLiteral("Not found.");
+        else if (!answer.found)
+            lines << QStringLiteral("Version not asked yet: the emulator is busy.");
+        else
+            lines << (answer.version.isEmpty() ? QStringLiteral("No version reported.") : answer.version)
+                  << (answer.capable ? QStringLiteral("Ready for the launcher.") : QStringLiteral("This XSEmu build is too old for the launcher: Play and Warm-up stay off."));
+        if (other.busy())
+            lines << other.reason();
+        emu->setHelp(lines.join(QLatin1Char('\n')));
+        copy->setEnabled(!answer.version.isEmpty());
+        copy->setProperty("version", answer.version);
+    };
+    refresh();
+    QObject::connect(&s.gate, &ProcessGate::changed, emu, refresh);
+    QObject::connect(&s.settings, &AppSettings::changed, emu, [refresh](const QString& key) {
+        if (key == QLatin1String(AppSettings::Key::EmulatorPath) || key == QLatin1String(AppSettings::Key::BusyMarker))
+            refresh();
+    });
+    QObject::connect(choose, &Button::clicked, choose, [&s, choose] {
+        const QString picked = QFileDialog::getOpenFileName(choose->window(), QStringLiteral("Choose the emulator"), QFileInfo(s.settings.emulatorPath()).absolutePath(),
+                                                            QStringLiteral("XSEmu (XSEmu.exe xcl.exe);;Programs (*.exe);;All files (*)"));
+        if (!picked.isEmpty())
+            s.settings.setEmulatorPathOverride(picked);
+    });
     QObject::connect(copy, &Button::clicked, copy, [copy] {
         QGuiApplication::clipboard()->setText(QStringLiteral("%1, launcher %2").arg(copy->property("version").toString(), QStringLiteral(XSEMU_VERSION)));
     });

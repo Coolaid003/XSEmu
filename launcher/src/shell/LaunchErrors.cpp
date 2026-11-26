@@ -469,6 +469,18 @@ void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& g
         d->open();
         return;
     }
+    case P::EmulatorTooOld: {
+        auto* d = new Dialog(window, 500);
+        begin(d, QStringLiteral("warning"), Theme::Tone::Danger, QStringLiteral("This XSEmu build is too old for the launcher"));
+        d->body()->addWidget(paragraph(check.reason));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(pathBox(s.settings.emulatorPath()));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(paragraph(QStringLiteral("The launcher didn't start it. Put a current XSEmu.exe next to the launcher, or choose one in Settings, About."), Theme::Role::Text3, Label::Style::Small));
+        d->addButton(closeButton(d, QStringLiteral("Close")));
+        d->open();
+        return;
+    }
     case P::RunnerNotInstalled: {
         const RunnerSpec& runner = s.emulator.runnerFor(game);
         auto* d = new Dialog(window, 500);
@@ -484,14 +496,19 @@ void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& g
     }
     case P::OtherEmulatorRunning: {
         auto* d = new Dialog(window, 500);
-        begin(d, QStringLiteral("warning"), Theme::Tone::Warning, QStringLiteral("Another XSEmu is running"));
+        begin(d, QStringLiteral("warning"), Theme::Tone::Warning, QStringLiteral("Emulator busy"));
         d->body()->addWidget(paragraph(check.reason));
-        if (!check.processes.isEmpty()) {
+        QStringList holders = check.processes;
+        if (!check.marker.isEmpty())
+            holders << QDir::toNativeSeparators(check.marker);
+        if (!holders.isEmpty()) {
             d->body()->addSpacing(12);
-            d->body()->addWidget(pathBox(check.processes.join(QLatin1Char('\n'))));
+            d->body()->addWidget(pathBox(holders.join(QLatin1Char('\n'))));
         }
         d->body()->addSpacing(12);
-        d->body()->addWidget(paragraph(QStringLiteral("Only one XSEmu process runs at a time. Close it, then try again."), Theme::Role::Text3, Label::Style::Small));
+        d->body()->addWidget(paragraph(check.processes.isEmpty() ? QStringLiteral("Play and Warm-up wait until the file is gone.")
+                                                                 : QStringLiteral("Only one emulator process runs at a time. Let it finish or close it, then try again."),
+                                       Theme::Role::Text3, Label::Style::Small));
         d->addButton(closeButton(d, QStringLiteral("Close")));
         d->addButton(actionButton(d, QStringLiteral("Try again"), retry));
         d->open();

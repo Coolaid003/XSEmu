@@ -1,5 +1,6 @@
 #include "WarmupController.h"
 
+#include "EmulatorBuild.h"
 #include "HardwareInfo.h"
 #include "Paths.h"
 #include "ProcessGate.h"
@@ -88,6 +89,8 @@ QString WarmupController::checkStart(const Game& forGame) const
 {
     if (!m_gate.isFree())
         return m_gate.blockedReason(ProcessGate::Action::StartWarmup);
+    if (const ProcessGate::External other = m_gate.external(); other.busy())
+        return other.reason();
     const RunnerSpec& spec = runnerFor(forGame);
     if (!spec.isBuiltIn()) {
         if (!m_runners || !m_runners->isRunnable(spec.id))
@@ -99,10 +102,7 @@ QString WarmupController::checkStart(const Game& forGame) const
     const QString emulator = m_settings.emulatorPath();
     if (!QFileInfo(emulator).isExecutable())
         return QStringLiteral("XSEmu was not found at %1.").arg(QDir::toNativeSeparators(emulator));
-    const QStringList others = runningEmulatorProcesses(QCoreApplication::applicationPid());
-    if (!others.isEmpty())
-        return QStringLiteral("Another XSEmu process is running (%1). Only one runs at a time.").arg(others.join(QStringLiteral(", ")));
-    return {};
+    return EmulatorBuild::probe(emulator).problem();
 }
 
 bool WarmupController::start(bool full, const Game& forGame, QString* error)

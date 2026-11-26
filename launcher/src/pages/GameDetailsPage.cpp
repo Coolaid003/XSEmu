@@ -578,7 +578,20 @@ void GameDetailsPage::refresh()
             tone = Theme::Tone::Neutral;
         }
     }
+    // an older emulator build, or another emulator (or job) holding the PC: Play and Warm-up wait, saying why
+    using P = EmulatorController::LaunchCheck::Problem;
+    const EmulatorController::LaunchCheck check = playingThis ? EmulatorController::LaunchCheck{} : m_s.emulator.checkLaunch(g);
+    const bool held = check.problem == P::OtherEmulatorRunning || check.problem == P::EmulatorTooOld;
+    for (Button* b : {m_primary, m_secondary}) {
+        b->setEnabled(!held);
+        b->setToolTip(held ? check.reason : QString());
+    }
+    if (held) {
+        stateText = check.problem == P::EmulatorTooOld ? QStringLiteral("XSEmu build too old") : QStringLiteral("Emulator busy");
+        tone = check.problem == P::EmulatorTooOld ? Theme::Tone::Danger : Theme::Tone::Warning;
+    }
     m_state->setText(stateText);
+    m_state->setToolTip(held ? check.reason : QString());
     m_state->setTone(tone);
 
     // GAME

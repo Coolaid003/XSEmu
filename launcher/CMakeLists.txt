@@ -46,6 +46,7 @@ add_library(xsemu_core STATIC
     src/core/Library.cpp src/core/Library.h
     src/core/Paths.cpp src/core/Paths.h
     src/core/ProcessGate.cpp src/core/ProcessGate.h
+    src/core/EmulatorBuild.cpp src/core/EmulatorBuild.h
     src/core/ProcessTree.cpp src/core/ProcessTree.h
     src/core/ProgressParsers.cpp src/core/ProgressParsers.h
     src/core/Runner.cpp src/core/Runner.h

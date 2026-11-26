@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
+#include <QTimer>
 
 #include <functional>
 
@@ -32,6 +34,20 @@ public:
     void release(Owner owner);
     void setPaused(bool paused);
 
+    // Something outside this launcher holds the PC's one emulator slot: an XSEmu.exe, xcl.exe or
+    // game_scarlett_master.exe running (not counting the launcher itself), or the busy marker file
+    // existing. external() looks now; a timer looks every 2 s and emits changed() when it differs.
+    struct External {
+        QStringList processes; // "xcl.exe 1234"
+        QString marker;        // the busy marker file, when it exists
+        bool busy() const { return !processes.isEmpty() || !marker.isEmpty(); }
+        QString reason() const; // "Emulator busy: ..." or empty
+    };
+    External external() const;
+    // The file whose existence means "busy" (AppSettings::busyMarker()); empty: none.
+    void setBusyMarker(const QString& path);
+    QString busyMarker() const { return m_marker; }
+
     // A human sentence for why the action is blocked now, or empty when it is allowed.
     QString blockedReason(Action action) const;
     // The label of the action that clears the block ("Stop game", "Cancel warm-up"), or empty.
@@ -49,4 +65,7 @@ private:
     QString m_title;
     bool m_paused = false;
     std::function<void()> m_stop;
+    QString m_marker;
+    QString m_lastExternal;
+    QTimer m_poll;
 };

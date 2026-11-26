@@ -1,6 +1,7 @@
 // EmulatorController and WarmupController against fake-xsemu: real processes, real pipe, real JSON.
 #include "AppSettings.h"
 #include "DevFixtures.h"
+#include "EmulatorBuild.h"
 #include "EmulatorController.h"
 #include "Library.h"
 #include "Paths.h"
@@ -13,7 +14,9 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QSignalSpy>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -33,6 +36,9 @@ private slots:
     void gameCrash();
     void gameFilesMissing();
     void oneProcessAtATime();
+    void emulatorTooOldIsNeverStarted();
+    void busyMarkerBlocksPlayAndWarmup();
+    void runningEmulatorProcessBlocks();
 
 private:
     Game fixtureGame(const QString& title) const;
@@ -304,6 +310,107 @@ void TestControllers::oneProcessAtATime()
     QVERIFY(exited.wait(10000));
     QVERIFY(m_gate->isFree());
     QVERIFY(w.checkStart().isEmpty());
+}
+
+void TestControllers::emulatorTooOldIsNeverStarted()
+{
+    QVERIFY(EmulatorBuild::speaksProtocol(QStringLiteral("XSEmu 0.9.0"), QStringLiteral("run [--control-pipe <name>] ... warm-up [--progress-json]")));
+    QVERIFY(!EmulatorBuild::speaksProtocol(QStringLiteral("xcl 0.1.0"), QStringLiteral("--control-pipe --progress-json")));
+    QVERIFY(!EmulatorBuild::speaksProtocol(QStringLiteral("XSEmu 0.8.0"), QStringLiteral("run <game folder>")));
+    const EmulatorBuild fake = EmulatorBuild::probe(QStringLiteral(XSEMU_FAKE_EMULATOR_PATH));
+    QVERIFY2(fake.capable, qPrintable(fake.version));
+#ifdef Q_OS_WIN
+    QSKIP("the old emulator stand-in is a shell script");
+#else
+    // an older xcl: answers --version and --help, and would start the game for anything else
+    const QString started = m_dir->filePath(QStringLiteral("started"));
+    const QString old = m_dir->filePath(QStringLiteral("xcl.exe"));
+    QFile script(old);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write(QStringLiteral("#!/bin/sh\ncase \"$1\" in\n--version) echo 'xcl 0.1.0' ;;\n--help) echo 'usage: xcl run <game folder>' ;;\n*) touch '%1' ;;\nesac\n").arg(started).toUtf8());
+    script.close();
+    script.setPermissions(script.permissions() | QFileDevice::ExeOwner);
+    const QByteArray saved = qgetenv("XSEMU_EMULATOR");
+    qputenv("XSEMU_EMULATOR", old.toUtf8());
+
+    const EmulatorBuild build = EmulatorBuild::probe(old);
+    QVERIFY(build.found);
+    QCOMPARE(build.version, QStringLiteral("xcl 0.1.0"));
+    QVERIFY(!build.capable);
+    EmulatorController emu(*m_settings, *m_gate);
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    const auto check = emu.checkLaunch(game);
+    QCOMPARE(check.problem, EmulatorController::LaunchCheck::Problem::EmulatorTooOld);
+    QVERIFY2(check.reason.contains(QStringLiteral("too old")), qPrintable(check.reason));
+    QString error;
+    QVERIFY(!emu.start(game, 0, &error));
+    WarmupController w(*m_settings, *m_gate);
+    QVERIFY2(w.checkStart(game).contains(QStringLiteral("too old")), qPrintable(w.checkStart(game)));
+    QVERIFY(!w.start(false, game, &error));
+    QTest::qWait(200);
+    QVERIFY(!QFile::exists(started));
+    QVERIFY(m_gate->isFree());
+    qputenv("XSEMU_EMULATOR", saved);
+#endif
+}
+
+void TestControllers::busyMarkerBlocksPlayAndWarmup()
+{
+    const QString marker = m_dir->filePath(QStringLiteral("game-pending"));
+    m_settings->setBusyMarker(marker);
+    QCOMPARE(m_settings->busyMarker(), marker);
+    qputenv("XSEMU_BUSY_MARKER", "/elsewhere/marker");
+    QCOMPARE(m_settings->busyMarker(), QStringLiteral("/elsewhere/marker"));
+    qunsetenv("XSEMU_BUSY_MARKER");
+    m_gate->setBusyMarker(m_settings->busyMarker());
+
+    EmulatorController emu(*m_settings, *m_gate);
+    WarmupController w(*m_settings, *m_gate);
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    QVERIFY(emu.checkLaunch(game).ok());
+    QSignalSpy changed(m_gate.get(), &ProcessGate::changed);
+    QFile f(marker);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.close();
+    QVERIFY(changed.wait(3000));
+    const auto check = emu.checkLaunch(game);
+    QCOMPARE(check.problem, EmulatorController::LaunchCheck::Problem::OtherEmulatorRunning);
+    QCOMPARE(check.marker, marker);
+    QVERIFY2(check.reason.startsWith(QStringLiteral("Emulator busy")), qPrintable(check.reason));
+    QVERIFY(w.checkStart(game).startsWith(QStringLiteral("Emulator busy")));
+    QString error;
+    QVERIFY(!emu.start(game, 0, &error));
+    QVERIFY(!w.start(false, game, &error));
+    QVERIFY(m_gate->isFree());
+    QVERIFY(QFile::remove(marker));
+    QVERIFY(changed.wait(3000));
+    QVERIFY(emu.checkLaunch(game).ok());
+    QVERIFY(w.checkStart(game).isEmpty());
+}
+
+void TestControllers::runningEmulatorProcessBlocks()
+{
+#ifdef Q_OS_WIN
+    QSKIP("needs a long-running stand-in named xcl.exe");
+#else
+    const QString sleep = QStandardPaths::findExecutable(QStringLiteral("sleep"));
+    if (sleep.isEmpty())
+        QSKIP("no sleep binary");
+    const QString xcl = m_dir->filePath(QStringLiteral("xcl.exe"));
+    QVERIFY(QFile::copy(sleep, xcl));
+    QSignalSpy changed(m_gate.get(), &ProcessGate::changed);
+    QProcess p;
+    p.start(xcl, {QStringLiteral("30")});
+    QVERIFY(p.waitForStarted());
+    EmulatorController emu(*m_settings, *m_gate);
+    const auto check = emu.checkLaunch(fixtureGame(QStringLiteral("Signal Garden")));
+    QCOMPARE(check.problem, EmulatorController::LaunchCheck::Problem::OtherEmulatorRunning);
+    QVERIFY2(check.processes.contains(QStringLiteral("xcl.exe %1").arg(p.processId())), qPrintable(check.processes.join(QLatin1Char(','))));
+    QVERIFY(changed.wait(3000));
+    p.kill();
+    p.waitForFinished();
+    QVERIFY(emu.checkLaunch(fixtureGame(QStringLiteral("Signal Garden"))).ok());
+#endif
 }
 
 QTEST_GUILESS_MAIN(TestControllers)

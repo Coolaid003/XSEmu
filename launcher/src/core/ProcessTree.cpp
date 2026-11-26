@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -171,7 +172,20 @@ QStringList runningEmulatorProcesses(qint64 excludePid)
     }
     CloseHandle(snap);
 #else
-    Q_UNUSED(excludePid);
+    const QDir proc(QStringLiteral("/proc"));
+    for (const QString& entry : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        bool isPid = false;
+        const qint64 pid = entry.toLongLong(&isPid);
+        if (!isPid || pid == excludePid)
+            continue;
+        QFile cmdline(proc.filePath(entry + QStringLiteral("/cmdline")));
+        if (!cmdline.open(QIODevice::ReadOnly))
+            continue;
+        const QString name = QFileInfo(QString::fromLocal8Bit(cmdline.readAll().split('\0').value(0))).fileName();
+        for (const char* known : {"XSEmu.exe", "xcl.exe", "game_scarlett_master.exe"})
+            if (name.compare(QLatin1String(known), Qt::CaseInsensitive) == 0)
+                out << QStringLiteral("%1 %2").arg(name).arg(pid);
+    }
 #endif
     return out;
 }

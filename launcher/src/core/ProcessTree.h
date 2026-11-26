@@ -32,6 +32,6 @@ private:
 #endif
 };
 
-// Other XSEmu trees on this machine (Windows ToolHelp: XSEmu.exe, xcl.exe, game_scarlett_master.exe),
-// as "name pid" strings. Always empty on other systems.
+// Other XSEmu trees on this machine (XSEmu.exe, xcl.exe, game_scarlett_master.exe; Windows ToolHelp,
+// elsewhere argv[0] in /proc), as "name pid" strings.
 QStringList runningEmulatorProcesses(qint64 excludePid = 0);

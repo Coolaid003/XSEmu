@@ -1,8 +1,51 @@
 #include "ProcessGate.h"
 
+#include "ProcessTree.h"
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFileInfo>
+
 ProcessGate::ProcessGate(QObject* parent)
     : QObject(parent)
 {
+    m_lastExternal = external().reason();
+    m_poll.setInterval(2000);
+    connect(&m_poll, &QTimer::timeout, this, [this] {
+        const QString now = external().reason();
+        if (now == m_lastExternal)
+            return;
+        m_lastExternal = now;
+        emit changed();
+    });
+    m_poll.start();
+}
+
+QString ProcessGate::External::reason() const
+{
+    if (!processes.isEmpty())
+        return QStringLiteral("Emulator busy: %1 is running. Only one emulator runs at a time.").arg(processes.join(QStringLiteral(", ")));
+    if (!marker.isEmpty())
+        return QStringLiteral("Emulator busy: %1 exists, so another job holds the emulator.").arg(QDir::toNativeSeparators(marker));
+    return {};
+}
+
+ProcessGate::External ProcessGate::external() const
+{
+    External e;
+    e.processes = runningEmulatorProcesses(QCoreApplication::applicationPid());
+    if (!m_marker.isEmpty() && QFileInfo::exists(m_marker))
+        e.marker = m_marker;
+    return e;
+}
+
+void ProcessGate::setBusyMarker(const QString& path)
+{
+    if (path == m_marker)
+        return;
+    m_marker = path;
+    m_lastExternal = external().reason();
+    emit changed();
 }
 
 bool ProcessGate::acquire(Owner owner, const QString& title, std::function<void()> stop)

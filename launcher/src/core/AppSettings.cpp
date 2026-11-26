@@ -203,6 +203,14 @@ QString AppSettings::emulatorPath() const
     return o.isEmpty() ? Paths::defaultEmulatorPath() : o;
 }
 
+QString AppSettings::busyMarker() const
+{
+    const QString env = qEnvironmentVariable("XSEMU_BUSY_MARKER").trimmed();
+    return env.isEmpty() ? read(Key::BusyMarker).toString().trimmed() : env;
+}
+
+void AppSettings::setBusyMarker(const QString& path) { write(Key::BusyMarker, path); }
+
 int AppSettings::launchNeedMb() const { return read(Key::LaunchNeedMb, kDefaultLaunchNeedMb).toInt(); }
 void AppSettings::setLaunchNeedMb(int mb) { write(Key::LaunchNeedMb, mb); }
 

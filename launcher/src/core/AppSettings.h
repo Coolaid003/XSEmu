@@ -63,6 +63,7 @@ public:
         static constexpr const char* ShaderCacheDir = "shaders/cacheDir";
         static constexpr const char* XclDefaultsPrefix = "xcl/"; // + an xcl.toml key
         static constexpr const char* EmulatorPath = "emulator/path";
+        static constexpr const char* BusyMarker = "emulator/busyMarker";
         static constexpr const char* LaunchNeedMb = "memory/launchNeedMb";
         static constexpr const char* GameOverrides = "games/overrides";
         static constexpr const char* RecentWarmups = "warmup/recentRuns";
@@ -146,6 +147,10 @@ public:
     void setEmulatorPathOverride(const QString& path);
     // The executable used: env XSEMU_EMULATOR, else the override, else Paths::defaultEmulatorPath().
     QString emulatorPath() const;
+    // A file whose existence means another job holds the emulator (Play and Warm-up wait): env
+    // XSEMU_BUSY_MARKER, else the setting; empty: none.
+    QString busyMarker() const;
+    void setBusyMarker(const QString& path);
 
     // Free RAM a game launch asks for on top of the 1 GB floor.
     int launchNeedMb() const;

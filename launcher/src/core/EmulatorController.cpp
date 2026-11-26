@@ -1,6 +1,7 @@
 #include "EmulatorController.h"
 
 #include "AppSettings.h"
+#include "EmulatorBuild.h"
 #include "HardwareInfo.h"
 #include "Paths.h"
 #include "ProcessGate.h"
@@ -81,6 +82,13 @@ EmulatorController::LaunchCheck EmulatorController::checkLaunch(const Game& game
         c.reason = m_gate.blockedReason(ProcessGate::Action::LaunchGame);
         return c;
     }
+    if (const ProcessGate::External other = m_gate.external(); other.busy()) {
+        c.problem = LaunchCheck::Problem::OtherEmulatorRunning;
+        c.processes = other.processes;
+        c.marker = other.marker;
+        c.reason = other.reason();
+        return c;
+    }
     const RunnerSpec& spec = runnerFor(game);
     const QString emulator = m_settings.emulatorPath();
     if (!spec.isBuiltIn()) {
@@ -93,6 +101,10 @@ EmulatorController::LaunchCheck EmulatorController::checkLaunch(const Game& game
         c.problem = LaunchCheck::Problem::EmulatorMissing;
         c.reason = QStringLiteral("XSEmu was not found at %1.").arg(QDir::toNativeSeparators(emulator));
         return c;
+    } else if (const EmulatorBuild build = EmulatorBuild::probe(emulator); !build.capable) {
+        c.problem = LaunchCheck::Problem::EmulatorTooOld;
+        c.reason = build.problem();
+        return c;
     }
     if (!QFileInfo(game.folder).isDir() || GameManifestMissing(game)) {
         c.problem = LaunchCheck::Problem::GameFilesMissing;
@@ -104,13 +116,6 @@ EmulatorController::LaunchCheck EmulatorController::checkLaunch(const Game& game
         c.reason = game.executables.isEmpty()
             ? QStringLiteral("MicrosoftGame.config names no executable.")
             : QStringLiteral("MicrosoftGame.config names %1, but there is no such file in the game folder.").arg(game.executables.join(QStringLiteral(", ")));
-        return c;
-    }
-    const QStringList others = runningEmulatorProcesses(QCoreApplication::applicationPid());
-    if (!others.isEmpty()) {
-        c.problem = LaunchCheck::Problem::OtherEmulatorRunning;
-        c.processes = others;
-        c.reason = QStringLiteral("Another XSEmu process is running (%1). Only one runs at a time.").arg(others.join(QStringLiteral(", ")));
         return c;
     }
     const quint64 avail = HardwareInfo::availableRam();
