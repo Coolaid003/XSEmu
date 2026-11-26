@@ -39,6 +39,7 @@ WarmupController::WarmupController(AppSettings& settings, ProcessGate& gate, QOb
     , m_settings(settings)
     , m_gate(gate)
 {
+    qRegisterMetaType<WarmupRun>();
 }
 
 WarmupController::~WarmupController()

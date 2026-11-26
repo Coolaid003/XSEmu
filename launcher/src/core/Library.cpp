@@ -172,7 +172,7 @@ Game Library::readGame(const QString& folder)
     g.executables = GameManifest::attrs(xml, QStringLiteral("Executable"), QStringLiteral("Name"));
     const QDir root(canonical);
     for (const QString& e : g.executables) {
-        if (QFileInfo(root.filePath(e)).isFile()) {
+        if (QFileInfo(root.filePath(QString(e).replace(QLatin1Char('\\'), QLatin1Char('/')))).isFile()) {
             g.exe = e;
             g.exeExists = true;
             break;

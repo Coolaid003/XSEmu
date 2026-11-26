@@ -18,8 +18,8 @@ quint64 meminfoKb(const char* field)
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
         return 0;
     const QByteArray want = QByteArray(field) + ':';
-    while (!f.atEnd()) {
-        const QByteArray line = f.readLine();
+    // procfs reports a size of 0, so read it whole instead of testing atEnd()
+    for (const QByteArray& line : f.readAll().split('\n')) {
         if (line.startsWith(want)) {
             const QList<QByteArray> parts = line.mid(want.size()).simplified().split(' ');
             return parts.isEmpty() ? 0 : parts.first().toULongLong();

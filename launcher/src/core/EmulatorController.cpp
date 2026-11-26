@@ -353,7 +353,7 @@ void EmulatorController::onFinished(int exitCode, int exitStatus)
         info.kind = ExitInfo::Kind::Crash;
     }
 
-    if (info.playedSeconds > 0)
+    if (m_playClock.isValid())
         m_settings.addPlayTime(m_game.titleId(), info.playedSeconds, info.at);
 
     if (m_socket) {

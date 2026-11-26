@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QList>
+#include <QMetaType>
 #include <QObject>
 #include <QSettings>
 #include <QStringList>
@@ -29,6 +30,8 @@ struct WarmupRun {
     QVariantMap toMap() const;
     static WarmupRun fromMap(const QVariantMap& m);
 };
+
+Q_DECLARE_METATYPE(WarmupRun)
 
 // Launcher preferences (QSettings ini at Paths::settingsFile()). Every setter writes at once and
 // emits changed(key) with one of the AppSettings::Key constants, so a page can follow one setting:
