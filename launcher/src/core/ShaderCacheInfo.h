@@ -30,14 +30,26 @@ struct ShaderCacheInfo {
     qint64 totalBytes = -1;        // every file in the cache folder
 
     // What has been parsed of pipelines.bin so far, so a later read parses only the appended tail.
-    // It starts over when the file shrinks, its first bytes change or the path changes.
+    // The emulator also rewrites the file (Store::rewrite drops broken and repeated entries from the
+    // middle, through a temporary file and a rename) and may append past the old end before the next
+    // read. So a read resumes only when the path, the file's creation time and its first bytes are
+    // unchanged, it has not shrunk, and the last entry parsed is still at its offset with the same
+    // length and bytes; otherwise it parses from the start.
     struct Manifest {
         QString path;
+        QDateTime born;
         QByteArray head;
-        qint64 offset = 0;
+        qint64 offset = 0;      // the end of the last complete entry
         qint64 entries = 0;
         QSet<quint64> keys;
+        qint64 lastStart = -1;  // the last complete entry: where its length prefix starts,
+        quint32 lastLen = 0;    // its length
+        quint64 lastHash = 0;   // and fnv64 of its bytes
+        qint64 badAt = -1;      // where a length prefix longer than any entry stopped the last read
     };
+    // An entry is one encoded pipeline record; its shaders live in their own files, so a real entry
+    // is a few KB. A longer length prefix means the parse is not on an entry boundary.
+    static constexpr quint32 kMaxManifestEntry = 16u << 20;
     // Parses the new part of the manifest at `path` in chunks; false when the file is missing.
     static bool readManifest(const QString& path, Manifest& m, const std::atomic<bool>* cancel = nullptr);
 

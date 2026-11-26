@@ -15,6 +15,7 @@ private slots:
     void missingIsUnknown();
     void readsManifestRunsAndBlobs();
     void incrementalParseMatchesFullParse();
+    void rewrittenManifestIsParsedAgain();
     void monitorKeepsASnapshot();
     void titleState();
     void clearKeepsWhatIsNotTheCaches();
@@ -123,6 +124,77 @@ void TestShaderCache::incrementalParseMatchesFullParse()
     QCOMPARE(m.entries, qint64(3));
     QVERIFY(!ShaderCacheInfo::readManifest(dir.filePath(QStringLiteral("gone.bin")), m));
     QCOMPARE(m.entries, qint64(0));
+}
+
+static void replaceFile(const QString& path, const QByteArray& data, bool rename)
+{
+    if (!rename) {
+        writeFile(path, data); // in place: same file, same creation time
+        return;
+    }
+    // as Store::rewrite does it: a temporary file renamed over the manifest
+    const QString tmp = path + QStringLiteral(".1234.tmp");
+    writeFile(tmp, data);
+    QFile::remove(path);
+    QVERIFY(QFile::rename(tmp, path));
+}
+
+void TestShaderCache::rewrittenManifestIsParsedAgain()
+{
+    for (const bool rename : {false, true}) {
+        QTemporaryDir dir;
+        const QString path = dir.filePath(QStringLiteral("pipelines.bin"));
+        QByteArray all;
+        QList<QByteArray> list;
+        for (int i = 0; i < 400; ++i) {
+            // small binary ids and zeros: read off the entry boundaries they still look like short
+            // entries, so only the resume check can tell
+            QByteArray body(17 + i % 13 * 101, '\0');
+            body[0] = char(i & 0xFF);
+            body[1] = char(i >> 8);
+            list << entry(body);
+            all += list.last();
+        }
+        writeFile(path, all);
+        ShaderCacheInfo::Manifest m;
+        QVERIFY(ShaderCacheInfo::readManifest(path, m));
+        QCOMPARE(m.entries, qint64(400));
+
+        // the emulator drops a broken entry from the middle, then a warm-up appends past the old end
+        QByteArray rewritten;
+        for (int i = 0; i < list.size(); ++i) {
+            if (i != 37)
+                rewritten += list[i];
+        }
+        for (int i = 400; rewritten.size() <= all.size() + 5000; ++i)
+            rewritten += entry(QByteArray(1, char(i & 0xFF)) + QByteArray(1, char(i >> 8)) + QByteArray(3 + i % 9 * 77, '\0'));
+        replaceFile(path, rewritten, rename);
+        QVERIFY(ShaderCacheInfo::readManifest(path, m));
+        ShaderCacheInfo::Manifest full;
+        QVERIFY(ShaderCacheInfo::readManifest(path, full));
+        QCOMPARE(m.entries, full.entries);
+        QCOMPARE(m.keys, full.keys);
+        QCOMPARE(m.offset, full.offset);
+        QCOMPARE(m.offset, qint64(rewritten.size()));
+    }
+
+    // a length prefix longer than any entry stops the parse there instead of buffering the rest of the
+    // file, and a later read neither parses from the start again nor counts anything twice
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("pipelines.bin"));
+    const QByteArray good = entries(0, 20);
+    QByteArray bad = good;
+    const quint32 huge = ShaderCacheInfo::kMaxManifestEntry + 1;
+    bad.append(char(huge & 0xFF)).append(char((huge >> 8) & 0xFF)).append(char((huge >> 16) & 0xFF)).append(char(huge >> 24));
+    bad += QByteArray(9 << 20, 'g');
+    writeFile(path, bad);
+    ShaderCacheInfo::Manifest m;
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    QCOMPARE(m.entries, qint64(20));
+    QCOMPARE(m.offset, qint64(good.size()));
+    QCOMPARE(m.badAt, qint64(good.size()));
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    QCOMPARE(m.entries, qint64(20));
 }
 
 void TestShaderCache::monitorKeepsASnapshot()

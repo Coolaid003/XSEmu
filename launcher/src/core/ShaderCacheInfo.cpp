@@ -24,33 +24,65 @@ bool ShaderCacheInfo::readManifest(const QString& path, Manifest& m, const std::
         m = Manifest{};
         return false;
     }
+    const auto lengthAt = [](const char* data) {
+        const auto* p = reinterpret_cast<const unsigned char*>(data);
+        return quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+    };
     const qint64 size = file.size();
+    const QDateTime born = QFileInfo(file).birthTime();
     const QByteArray head = file.read(64);
-    if (m.path != path || size < m.offset || !head.startsWith(m.head))
-        m = Manifest{path, {}, 0, 0, {}};
+    bool resume = m.path == path && m.born == born && size >= m.offset && head.startsWith(m.head);
+    if (resume && m.lastStart >= 0) {
+        const QByteArray last = file.seek(m.lastStart) ? file.read(4 + qint64(m.lastLen)) : QByteArray();
+        resume = last.size() == 4 + qint64(m.lastLen) && lengthAt(last.constData()) == m.lastLen && fnv64(last.constData() + 4, m.lastLen) == m.lastHash;
+    }
+    const Manifest fresh{path, born, head, 0, 0, {}, -1, 0, 0, -1};
+    if (!resume)
+        m = fresh;
     m.head = head;
-    if (!file.seek(m.offset))
-        return true;
-    constexpr qint64 chunk = 4 << 20;
-    QByteArray buf;
-    qint64 at = m.offset;
-    while (!file.atEnd()) {
-        if (cancel && cancel->load())
-            break;
-        buf += file.read(chunk);
-        qsizetype pos = 0;
-        while (pos + 4 <= buf.size()) {
-            const auto* p = reinterpret_cast<const unsigned char*>(buf.constData() + pos);
-            const quint32 len = quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
-            if (pos + 4 + qsizetype(len) > buf.size())
-                break;
-            m.keys.insert(fnv64(buf.constData() + pos + 4, len) | 1ULL);
-            ++m.entries;
-            pos += 4 + qsizetype(len);
+
+    // false when a length prefix is longer than any entry: the parse is off the entry boundaries
+    const auto parse = [&] {
+        if (!file.seek(m.offset))
+            return true;
+        constexpr qint64 chunk = 4 << 20;
+        QByteArray buf; // a partial entry and at most one chunk: entries are capped
+        qint64 at = m.offset;
+        while (!file.atEnd()) {
+            if (cancel && cancel->load())
+                return true;
+            buf += file.read(chunk);
+            qsizetype pos = 0;
+            while (pos + 4 <= buf.size()) {
+                const quint32 len = lengthAt(buf.constData() + pos);
+                if (len > kMaxManifestEntry) {
+                    m.badAt = at + pos;
+                    m.offset = at + pos;
+                    return false;
+                }
+                if (pos + 4 + qsizetype(len) > buf.size())
+                    break; // the entry continues in the next chunk, or is a torn last entry
+                const quint64 hash = fnv64(buf.constData() + pos + 4, len);
+                m.keys.insert(hash | 1ULL);
+                ++m.entries;
+                m.lastStart = at + pos;
+                m.lastLen = len;
+                m.lastHash = hash;
+                pos += 4 + qsizetype(len);
+            }
+            buf.remove(0, pos);
+            at += pos;
+            m.offset = at;
         }
-        buf.remove(0, pos);
-        at += pos;
-        m.offset = at;
+        return true;
+    };
+    // a bad length where the last read already stopped is the file's own damage; anywhere else after a
+    // resume it means the resume point was stale, so parse from the start, where the emulator's own
+    // rule applies: the entries end at the first bad length
+    const qint64 knownBad = m.badAt;
+    if (!parse() && resume && m.badAt != knownBad) {
+        m = fresh;
+        parse();
     }
     return true;
 }
