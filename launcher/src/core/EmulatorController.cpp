@@ -8,7 +8,6 @@
 #include "ProcessTree.h"
 #include "LaunchConfig.h"
 #include "NativeWindow.h"
-#include "TitleConfig.h"
 #include "RunnerManager.h"
 
 #include <QCoreApplication>
@@ -252,9 +251,7 @@ bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, Q
 {
     const QString program = m_runners->status(spec.id).executable;
     const QString exe = QDir(game.folder).filePath(game.exe);
-    // the console the game is set to run as (its xcl.toml device_type, else the launcher default)
-    const QString device = TitleConfig(Paths::xclToml(game.titleId())).value(QStringLiteral("device_type"), m_settings.defaultDeviceType()).toString();
-    const auto tokens = spec.tokens(game.folder, exe, game.titleId(), device, 0);
+    const auto tokens = spec.tokens(game.folder, exe, game.titleId(), LaunchConfig::deviceType(m_settings, game.titleId()), 0);
     auto* p = new ProcessTree(this);
     m_process = p;
     p->setProcessEnvironment(spec.processEnvironment(tokens));

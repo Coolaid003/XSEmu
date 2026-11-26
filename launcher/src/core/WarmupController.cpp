@@ -8,7 +8,7 @@
 #include "ProgressParsers.h"
 #include "Runner.h"
 #include "RunnerManager.h"
-#include "TitleConfig.h"
+#include "LaunchConfig.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -302,8 +302,7 @@ void WarmupController::startRunnerStep()
 {
     const RunnerSpec::PrecacheStep& step = m_spec->precache.at(m_step);
     const QString program = m_runners->status(m_spec->id).executable;
-    const QString device = TitleConfig(Paths::xclToml(m_game.titleId())).value(QStringLiteral("device_type"), m_settings.defaultDeviceType()).toString();
-    const auto tokens = m_spec->tokens(m_game.folder, QDir(m_game.folder).filePath(m_game.exe), m_game.titleId(), device, 0);
+    const auto tokens = m_spec->tokens(m_game.folder, QDir(m_game.folder).filePath(m_game.exe), m_game.titleId(), LaunchConfig::deviceType(m_settings, m_game.titleId()), 0);
     m_progress.step = m_step + 1;
     m_progress.phase = step.label;
     m_progress.done = 0;

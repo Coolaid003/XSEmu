@@ -30,6 +30,10 @@ QVariant typed(const QString& tomlKey, const QVariant& value);
 // The values to write into the title's xcl.toml before it starts (tested).
 QVariantMap titleValues(const AppSettings& settings, const QString& titleId);
 
+// The console a game runs as: its per-game override, else the launcher default ("lockhart" or
+// "anaconda"). Third-party runners get it as a token; xcl.toml is XSEmu's and is not read for it.
+QString deviceType(const AppSettings& settings, const QString& titleId);
+
 // Writes titleValues() into the title's xcl.toml where they differ, and creates the crash dump folder
 // when crash dumps are on. False when xcl.toml cannot be written.
 bool prepareTitle(const AppSettings& settings, const QString& titleId);

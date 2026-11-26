@@ -78,6 +78,11 @@ QVariantMap titleValues(const AppSettings& settings, const QString& titleId)
     return out;
 }
 
+QString deviceType(const AppSettings& settings, const QString& titleId)
+{
+    return titleValues(settings, titleId).value(QStringLiteral("device_type")).toString();
+}
+
 bool prepareTitle(const AppSettings& settings, const QString& titleId)
 {
     if (settings.crashDumps())

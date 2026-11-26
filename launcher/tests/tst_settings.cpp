@@ -5,6 +5,7 @@
 #include "TitleConfig.h"
 #include "Paths.h"
 #include "ProcessGate.h"
+#include "Runner.h"
 #include "WarmupController.h"
 
 #include <QSignalSpy>
@@ -207,6 +208,20 @@ void TestSettings::titleConfigAtLaunch()
     QVERIFY(LaunchConfig::prepareTitle(s, id));
     QCOMPARE(cfg.values().value(QStringLiteral("device_type")).toString(), QStringLiteral("lockhart"));
     QCOMPARE(cfg.values().value(QStringLiteral("log_level")).toString(), QStringLiteral("debug"));
+
+    // a runner gets the console from the same store: a Series X override with no xcl.toml at all,
+    // and after Use defaults the default, whatever a stale xcl.toml still says
+    const QString other = QStringLiteral("Runner.Only");
+    QVERIFY(!QFileInfo::exists(Paths::xclToml(other)));
+    s.setGameOverride(other, QStringLiteral("device_type"), QStringLiteral("anaconda"));
+    QCOMPARE(LaunchConfig::deviceType(s, other), QStringLiteral("anaconda"));
+    const RunnerSpec& kelvaroq = *Runners::find(QStringLiteral("kelvaroq"));
+    const QStringList args = RunnerSpec::expand(kelvaroq.launchArgs, kelvaroq.tokens(dir.path(), dir.filePath(QStringLiteral("game.exe")), other, LaunchConfig::deviceType(s, other), 0));
+    QVERIFY2(args.contains(QStringLiteral("series-x")), qPrintable(args.join(QLatin1Char(' '))));
+    QVERIFY(!QFileInfo::exists(Paths::xclToml(other)));
+    TitleConfig(Paths::xclToml(other)).set(QStringLiteral("device_type"), QStringLiteral("anaconda"));
+    s.clearGameOverride(other, QStringLiteral("device_type"));
+    QCOMPARE(LaunchConfig::deviceType(s, other), QStringLiteral("lockhart"));
 }
 
 void TestSettings::warmupClassification()

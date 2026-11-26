@@ -777,7 +777,10 @@ void GameDetailsPage::refreshOverrides()
     m_overrides->setTrailing(trailing);
 
     const bool playingThis = m_s.emulator.isActive() && m_s.emulator.game().titleId() == id;
+    const RunnerSpec& runner = m_s.emulator.runnerFor(m_game);
     m_overridesNote->setText(playingThis ? QStringLiteral("Changes apply the next time %1 starts.").arg(m_game.title())
-                                         : QStringLiteral("Console, display mode, raytracing, keyboard and mouse and log level are written to %1 when the game starts.")
-                                               .arg(QDir::toNativeSeparators(tomlPath)));
+                                         : runner.isBuiltIn()
+                                         ? QStringLiteral("Console, display mode, raytracing, keyboard and mouse and log level are written to %1 when the game starts.")
+                                               .arg(QDir::toNativeSeparators(tomlPath))
+                                         : QStringLiteral("%1 gets the console when the game starts; the other choices apply when it runs with XSEmu.").arg(runner.name));
 }
