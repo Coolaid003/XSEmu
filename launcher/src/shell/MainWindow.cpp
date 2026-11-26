@@ -161,6 +161,7 @@ void MainWindow::showPage(Page page)
     if (m_inGameMode)
         leaveInGame();
     syncMode();
+    m_s.shaderCache.refreshIfStale();
 }
 
 void MainWindow::showGameDetails(const Game& game)

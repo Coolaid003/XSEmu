@@ -75,20 +75,28 @@ QWidget* SettingsSections::graphics(Services& s)
     sec.row(QStringLiteral("Show the game image"), QStringLiteral("Off runs the game without showing its frames, for testing."), present);
 
     sec.caps(QStringLiteral("GPU"));
-    const HardwareInfo hw = HardwareInfo::read();
-    const QString vram = hw.dedicatedVramBytes > 0 ? QStringLiteral(" · %1 VRAM").arg(Format::gigabytes(qint64(hw.dedicatedVramBytes), 0)) : QString();
-    auto* gpu = SettingsKit::status(hw.gpuNameOrUnknown() + vram, Theme::Role::Text);
+    auto* gpu = SettingsKit::status({}, Theme::Role::Text);
     gpu->setWordWrap(true);
-    sec.row(QStringLiteral("Graphics card"), QStringLiteral("What Windows reports for this PC. RAM: %1.").arg(Format::gigabytes(qint64(hw.totalRamBytes), 0)), gpu);
-    QList<QPair<QString, QVariant>> adapters{{QStringLiteral("Auto (high-performance GPU)"), QStringLiteral("auto")}};
-    if (!hw.gpuName.isEmpty())
-        adapters.append({hw.gpuName, hw.gpuName});
-    adapters.append({QStringLiteral("WARP (software, very slow)"), QStringLiteral("warp")});
+    SettingsKit::Row* gpuRow = sec.row(QStringLiteral("Graphics card"), {}, gpu);
+    QList<QPair<QString, QVariant>> adapters{{QStringLiteral("Auto (high-performance GPU)"), QStringLiteral("auto")},
+                                             {QStringLiteral("WARP (software, very slow)"), QStringLiteral("warp")}};
     const QVariant storedAdapter = s.settings.xclDefault(QStringLiteral("d3d12_adapter"));
     if (storedAdapter.isValid() && std::none_of(adapters.cbegin(), adapters.cend(), [&](const auto& a) { return a.second == storedAdapter; }))
         adapters.append({storedAdapter.toString(), storedAdapter});
     auto* adapter = xclDropdown(s, QStringLiteral("d3d12_adapter"), adapters, sec.page, 260);
     SettingsKit::Row* adapterRow = sec.row(QStringLiteral("D3D12 adapter"), QStringLiteral("The GPU XSEmu renders on."), adapter);
+    // the hardware is read in the background when the launcher starts; fill it in when it lands
+    const auto showHardware = [&s, gpu, gpuRow, adapter] {
+        const HardwareInfo& hw = s.hardware.info();
+        const QString vram = hw.dedicatedVramBytes > 0 ? QStringLiteral(" · %1 VRAM").arg(Format::gigabytes(qint64(hw.dedicatedVramBytes), 0)) : QString();
+        gpu->setText(s.hardware.ready() ? hw.gpuNameOrUnknown() + vram : s.hardware.gpuLabel());
+        gpuRow->setHelp(hw.totalRamBytes > 0 ? QStringLiteral("What Windows reports for this PC. RAM: %1.").arg(Format::gigabytes(qint64(hw.totalRamBytes), 0))
+                                             : QStringLiteral("What Windows reports for this PC."));
+        if (!hw.gpuName.isEmpty() && adapter->findData(hw.gpuName) < 0)
+            adapter->insertItem(1, hw.gpuName, hw.gpuName);
+    };
+    showHardware();
+    QObject::connect(&s.hardware, &HardwareMonitor::changed, sec.page, showHardware);
     if (const QString env = envOverride("XCL_ADAPTER"); !env.isEmpty())
         adapterRow->setUnavailable(env);
     auto* rt = xclDropdown(s, QStringLiteral("raytracing"),

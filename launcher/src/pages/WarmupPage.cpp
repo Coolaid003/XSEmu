@@ -248,6 +248,7 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
         refreshRuns();
     });
     connect(&m_s.gate, &ProcessGate::changed, this, &WarmupPage::refresh);
+    connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &WarmupPage::refresh);
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &WarmupPage::refresh);
     connect(&m_s.library, &Library::gamesChanged, this, [this] {
         refreshGames();
@@ -285,7 +286,7 @@ void WarmupPage::refreshGames()
         cover.fill(Qt::transparent);
         QPainter p(&cover);
         p.setRenderHint(QPainter::Antialiasing);
-        CoverThumb::paint(p, QRectF(0, 0, 14, 20), QPixmap(m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid)), g.title(), 2);
+        CoverThumb::paint(p, QRectF(0, 0, 14, 20), m_s.art(g.titleId(), CoverCache::Kind::Grid), g.title(), 2);
         p.end();
         m_game->addItem(QIcon(cover), g.title(), g.titleId());
     }
@@ -491,7 +492,7 @@ void WarmupPage::refresh()
     }
 
     // idle: what a warm-up would do for the picked game
-    const ShaderCacheInfo cache = ShaderCacheInfo::readDefault();
+    const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
     const QList<WarmupRun> recent = m_s.settings.recentWarmups();
     m_block->setState(ProgressBlock::State::Idle);
     m_block->setFraction(0);
@@ -701,7 +702,7 @@ void WarmupPage::refreshRuns()
         nh->setContentsMargins(0, 0, 0, 0);
         nh->setSpacing(10);
         auto* thumb = new CoverThumb(QSize(22, 30));
-        thumb->setCover(titleId.isEmpty() ? QPixmap() : QPixmap(m_s.covers.artPath(titleId, CoverCache::Kind::Grid)), titleName);
+        thumb->setCover(titleId.isEmpty() ? QPixmap() : m_s.art(titleId, CoverCache::Kind::Grid), titleName);
         nh->addWidget(thumb);
         nh->addWidget(new Label(titleName.isEmpty() ? QStringLiteral("All games") : titleName, Label::Style::BodyMedium), 1);
         m_runs->addWidget(nameCell, row, 0);

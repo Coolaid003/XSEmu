@@ -1,7 +1,10 @@
 #include "HardwareInfo.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QPointer>
+#include <QThreadPool>
 #include <QTextStream>
 
 #ifdef Q_OS_WIN
@@ -106,4 +109,20 @@ HardwareInfo HardwareInfo::read()
         hw.gpuName = stand.section(QLatin1Char(':'), 1);
     }
     return hw;
+}
+
+HardwareMonitor::HardwareMonitor(QObject* parent)
+    : QObject(parent)
+{
+    const QPointer<HardwareMonitor> self = this;
+    QThreadPool::globalInstance()->start([self] {
+        const HardwareInfo hw = HardwareInfo::read();
+        QMetaObject::invokeMethod(qApp, [self, hw] {
+            if (!self)
+                return;
+            self->m_info = hw;
+            self->m_ready = true;
+            emit self->changed();
+        });
+    });
 }

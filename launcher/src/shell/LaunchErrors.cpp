@@ -223,8 +223,7 @@ void showStopFirst(QWidget* window, Services& s, const Game& game, std::function
     auto* row = new QHBoxLayout;
     row->setSpacing(10);
     auto* thumb = new CoverThumb(QSize(24, 36));
-    const QString art = s.covers.artPath(held.titleId(), CoverCache::Kind::Grid);
-    thumb->setCover(art.isEmpty() ? QPixmap() : QPixmap(art), held.title());
+    thumb->setCover(s.art(held.titleId(), CoverCache::Kind::Grid), held.title());
     row->addWidget(thumb);
     row->addWidget(new Label(owner, Label::Style::Small, Theme::Role::Text), 1);
     const qint64 session = s.emulator.sessionSeconds();
@@ -367,7 +366,7 @@ bool LaunchErrors::shadersCold(Services& s, const Game& game)
 {
     if (!s.emulator.runnerFor(game).isBuiltIn())
         return false; // a third-party runner keeps its own cache; its pre-cache is optional
-    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), ShaderCacheInfo::readDefault())) {
+    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot())) {
     case TitleShaderState::NeverWarmed:
     case TitleShaderState::LastRunIncomplete:
     case TitleShaderState::LastRunFailed:
@@ -390,7 +389,7 @@ void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, s
         warmUp();
         return;
     }
-    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), ShaderCacheInfo::readDefault());
+    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot());
     const std::optional<WarmupRun> last = lastWarmup(s, game);
     auto* d = new Dialog(window, 460);
     begin(d, QStringLiteral("bolt"), Theme::Tone::Warning, QStringLiteral("Warm up %1 first?").arg(game.title()));

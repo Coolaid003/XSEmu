@@ -3,12 +3,14 @@
 #include "Paths.h"
 #include "RunnerInstall.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QThreadPool>
 
 namespace {
 
@@ -112,6 +114,7 @@ bool RunnerManager::install(const QString& id, QString* error)
         m_task->deleteLater();
         m_task.clear();
         m_taskId.clear();
+        m_sizes.remove(id);
         emit changed(id);
         emit installFinished(id, ok, why);
     });
@@ -140,6 +143,7 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
         return false;
     }
     m_errors.remove(id);
+    m_sizes.remove(id);
     const bool ok = QDir(Paths::runnerDir(id)).removeRecursively();
     if (!ok && error)
         *error = QStringLiteral("Some files of %1 are in use; stop it and try again.").arg(spec->name);
@@ -153,18 +157,31 @@ void RunnerManager::simulateForScreenshot(const QString& id, const Status& statu
     emit changed(id);
 }
 
-qint64 RunnerManager::installedBytes(const QString& id) const
+qint64 RunnerManager::installedBytes(const QString& id)
 {
     const RunnerSpec* spec = Runners::find(id);
     if (!spec || spec->isBuiltIn())
         return 0;
-    qint64 total = 0;
-    QDirIterator it(spec->installDir(), QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-    }
-    return total;
+    if (const auto it = m_sizes.constFind(id); it != m_sizes.constEnd())
+        return *it;
+    m_sizes.insert(id, -1);
+    const QString dir = spec->installDir();
+    const QPointer<RunnerManager> self = this;
+    QThreadPool::globalInstance()->start([self, id, dir] {
+        qint64 total = 0;
+        QDirIterator it(dir, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            total += it.fileInfo().size();
+        }
+        QMetaObject::invokeMethod(qApp, [self, id, total] {
+            if (!self || self->m_sizes.value(id, 0) != -1)
+                return;
+            self->m_sizes.insert(id, total);
+            emit self->changed(id);
+        });
+    });
+    return -1;
 }
 
 QDateTime RunnerManager::installedAt(const QString& id) const
@@ -180,18 +197,4 @@ QString RunnerManager::cachePath(const QString& id) const
     if (spec->isBuiltIn())
         return Paths::dxilCacheDir();
     return spec->resolvedCacheDir();
-}
-
-qint64 RunnerManager::cacheBytes(const QString& id) const
-{
-    const QString path = cachePath(id);
-    if (path.isEmpty())
-        return -1;
-    qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-    }
-    return total;
 }

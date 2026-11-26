@@ -34,6 +34,7 @@
 #include <cmath>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QEventLoop>
 #include <QTimer>
 
 #include <memory>
@@ -638,6 +639,16 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
 
     w.resize(st == QLatin1String("in-game-fitted") && o.size == QSize(1280, 800) ? QSize(1280, 760) : o.size);
     w.show();
+    // a state is shown as a warm launcher shows it: after the first background scans
+    QEventLoop loop;
+    const auto settled = [&s, &loop] {
+        if (s.shaderCache.hasSnapshot() && s.hardware.ready())
+            loop.quit();
+    };
+    QObject::connect(&s.shaderCache, &ShaderCacheMonitor::changed, &loop, settled);
+    QObject::connect(&s.hardware, &HardwareMonitor::changed, &loop, settled);
+    if (!s.shaderCache.hasSnapshot() || !s.hardware.ready())
+        loop.exec();
     if (st.startsWith(QLatin1String("in-game"))) {
         playForReal(o, s, w, signal);
         return;

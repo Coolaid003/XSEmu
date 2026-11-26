@@ -310,7 +310,7 @@ void RunsWithSelector::openPicker()
     head->addWidget(new Label(QStringLiteral("Runs with"), Label::Style::Caps, Theme::Role::Text3));
     head->addStretch(1);
     head->addWidget(new IconView(QStringLiteral("chip"), Theme::Role::Text3, 12));
-    head->addWidget(new Label(QStringLiteral("Your GPU: %1").arg(HardwareInfo::read().gpuNameOrUnknown()), Label::Style::Caption, Theme::Role::Text3));
+    head->addWidget(new Label(QStringLiteral("Your GPU: %1").arg(m_s.hardware.gpuLabel()), Label::Style::Caption, Theme::Role::Text3));
     v->addLayout(head);
 
     const QString chosen = runnerId();

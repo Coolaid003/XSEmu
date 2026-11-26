@@ -88,10 +88,10 @@ QString statusDetail(Services& s, const RunnerSpec& spec, const RunnerManager::S
     case S::UpdateAvailable: {
         const QDateTime at = s.runners.installedAt(spec.id);
         const QString when = at.isValid() ? QStringLiteral("Installed %1").arg(QLocale().toString(at.date(), QStringLiteral("d MMM"))) : QStringLiteral("Installed");
-        const QString size = Format::bytes(s.runners.installedBytes(spec.id));
         if (st.state == S::UpdateAvailable)
             return QStringLiteral("%1 \u2192 %2").arg(st.installedVersion, st.pinnedVersion);
-        return QStringLiteral("%1 \u00B7 %2").arg(when, size);
+        const qint64 bytes = s.runners.installedBytes(spec.id);
+        return bytes < 0 ? when : QStringLiteral("%1 \u00B7 %2").arg(when, Format::bytes(bytes));
     }
     case S::Installing: return QStringLiteral("Since %1").arg(QLocale().toString(st.progress.startedAt.time(), QLocale::ShortFormat));
     case S::NotInstalled:
@@ -105,7 +105,7 @@ QString statusDetail(Services& s, const RunnerSpec& spec, const RunnerManager::S
 
 Runners::Recommendation recommendation(Services& s)
 {
-    const HardwareInfo hw = HardwareInfo::read();
+    const HardwareInfo& hw = s.hardware.info();
     return Runners::recommend(hw.gpuVendorId, hw.gpuName, hw.totalRamBytes, [&s](const QString& id) { return s.runners.isInstallable(id); });
 }
 
@@ -167,7 +167,7 @@ void confirmInstall(QWidget* window, Services& s, const QString& runnerId)
     }
     d->body()->addWidget(table);
 
-    const HardwareInfo hw = HardwareInfo::read();
+    const HardwareInfo& hw = s.hardware.info();
     const Runners::Recommendation rec = recommendation(s);
     const RunnerSpec::Vendor have = hw.gpuVendorId == Runners::kVendorAmd ? RunnerSpec::Vendor::Amd
                                     : hw.gpuVendorId == Runners::kVendorNvidia ? RunnerSpec::Vendor::Nvidia

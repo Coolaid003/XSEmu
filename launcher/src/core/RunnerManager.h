@@ -55,11 +55,10 @@ public:
     void cancel();
     bool uninstall(const QString& id, QString* error = nullptr);
 
-    // Bytes in the runner's cache directory; -1 when the runner has no known cache dir.
-    qint64 cacheBytes(const QString& id) const;
     QString cachePath(const QString& id) const;
-    // Bytes the installed copy takes on disk (its install dir); 0 when not installed.
-    qint64 installedBytes(const QString& id) const;
+    // Bytes the installed copy takes on disk (its install dir), measured on a worker thread: -1 until
+    // the measurement lands and changed(id) follows; 0 for the built-in runner.
+    qint64 installedBytes(const QString& id);
     QDateTime installedAt(const QString& id) const;
 
     // Screenshot fixtures only: report this status for the runner instead of the real one.
@@ -74,4 +73,5 @@ private:
     QString m_taskId;
     QHash<QString, QString> m_errors;
     QHash<QString, Status> m_simulated;
+    QHash<QString, qint64> m_sizes; // -1 while measuring
 };

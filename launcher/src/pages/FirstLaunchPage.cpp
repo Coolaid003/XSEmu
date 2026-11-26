@@ -296,17 +296,28 @@ QWidget* FirstLaunchPage::buildConsole()
     row->addWidget(seriesX);
     c->addLayout(row);
 
-    const HardwareInfo hw = HardwareInfo::read();
-    const qint64 ramGb = qint64((hw.totalRamBytes + (512ULL << 20)) >> 30);
-    QString text = QStringLiteral("This PC has %1 GB of RAM").arg(ramGb);
-    if (hw.gpuName.isEmpty())
-        text += QStringLiteral(", and XSEmu couldn't read its GPU.");
-    else if (hw.dedicatedVramBytes > 0)
-        text += QStringLiteral(" and %1 with %2.").arg(hw.gpuName, Format::gigabytes(qint64(hw.dedicatedVramBytes), 0));
-    else
-        text += QStringLiteral(" and %1.").arg(hw.gpuName);
-    text += ramGb >= 64 ? QStringLiteral(" Either console fits; Series S is the safe choice.") : QStringLiteral(" Series S is the safe choice.");
-    c->addWidget(new InfoNote(text));
+    auto* note = new InfoNote({});
+    c->addWidget(note);
+    // the hardware is read in the background when the launcher starts; the note fills in when it lands
+    const auto showHardware = [this, note] {
+        if (!m_s.hardware.ready()) {
+            note->setText(QStringLiteral("Series S is the safe choice."));
+            return;
+        }
+        const HardwareInfo& hw = m_s.hardware.info();
+        const qint64 ramGb = qint64((hw.totalRamBytes + (512ULL << 20)) >> 30);
+        QString text = QStringLiteral("This PC has %1 GB of RAM").arg(ramGb);
+        if (hw.gpuName.isEmpty())
+            text += QStringLiteral(", and XSEmu couldn't read its GPU.");
+        else if (hw.dedicatedVramBytes > 0)
+            text += QStringLiteral(" and %1 with %2.").arg(hw.gpuName, Format::gigabytes(qint64(hw.dedicatedVramBytes), 0));
+        else
+            text += QStringLiteral(" and %1.").arg(hw.gpuName);
+        text += ramGb >= 64 ? QStringLiteral(" Either console fits; Series S is the safe choice.") : QStringLiteral(" Series S is the safe choice.");
+        note->setText(text);
+    };
+    showHardware();
+    connect(&m_s.hardware, &HardwareMonitor::changed, note, showHardware);
     return page;
 }
 
@@ -471,8 +482,7 @@ void FirstLaunchPage::refreshFolders()
         ch->setContentsMargins(0, 0, 0, 0);
         ch->setSpacing(12);
         auto* thumb = new CoverThumb(QSize(44, 66));
-        const QString art = m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid);
-        thumb->setCover(art.isEmpty() ? QPixmap() : QPixmap(art), g.title());
+        thumb->setCover(m_s.art(g.titleId(), CoverCache::Kind::Grid), g.title());
         ch->addWidget(thumb);
         auto* tv = new QVBoxLayout;
         tv->setSpacing(3);

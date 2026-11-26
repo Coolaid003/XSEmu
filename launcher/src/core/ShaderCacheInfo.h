@@ -3,9 +3,12 @@
 #include "AppSettings.h"
 
 #include <QDateTime>
+#include <QSet>
 #include <QFileInfo>
 #include <QString>
 #include <QStringList>
+
+#include <atomic>
 
 // What the launcher can truthfully say about the shader cache, read from the files the emulator
 // writes (crates/xcl/src/hle/d3d12x/pso_manifest.rs and real.rs). The cache is machine-wide, not
@@ -14,6 +17,7 @@
 // blobs the warm-up built are <dxil>\driver\<vendor-device-umd>\*.pso. A value of -1 means Unknown.
 struct ShaderCacheInfo {
     QString dxilDir;
+    bool scanned = false;          // read from disk; a default value says nothing about the cache
     bool exists = false;           // the DXIL cache folder exists
     qint64 pipelines = -1;         // distinct pipelines recorded (-1: no pipelines.bin)
     qint64 manifestEntries = -1;   // entries in pipelines.bin, repeats included
@@ -23,10 +27,23 @@ struct ShaderCacheInfo {
     qint64 blobBytes = -1;
     int adapters = 0;              // driver blob folders (one per GPU + driver version)
     QDateTime newestBlob;          // when the newest blob was written (invalid: none)
-    QDateTime lastWarmup;          // the launcher's newest recorded warm-up (invalid: none)
+    qint64 totalBytes = -1;        // every file in the cache folder
 
+    // What has been parsed of pipelines.bin so far, so a later read parses only the appended tail.
+    // It starts over when the file shrinks, its first bytes change or the path changes.
+    struct Manifest {
+        QString path;
+        QByteArray head;
+        qint64 offset = 0;
+        qint64 entries = 0;
+        QSet<quint64> keys;
+    };
+    // Parses the new part of the manifest at `path` in chunks; false when the file is missing.
+    static bool readManifest(const QString& path, Manifest& m, const std::atomic<bool>* cancel = nullptr);
+
+    // Walks the whole folder; slow on a real cache, so only ever called off the UI thread.
     static ShaderCacheInfo read(const QString& dxilDir);
-    static ShaderCacheInfo readDefault(); // Paths::dxilCacheDir()
+    static ShaderCacheInfo read(const QString& dxilDir, Manifest& manifest, const std::atomic<bool>* cancel = nullptr);
 
     // FNV-1a 64 as the emulator computes it (gpu::shader::fnv64).
     static quint64 fnv64(const char* data, qsizetype len);
@@ -50,7 +67,8 @@ struct ShaderCacheInfo {
 // A game's warm-up state as far as the launcher can tell: from its own warm-up records (the
 // emulator keeps no per-title shader state, so a game nobody warmed up from this launcher is Unknown
 // unless the machine-wide cache is empty). A finished warm-up is Ready only while the cache still
-// holds driver blobs, so a cleared cache reads as NeverWarmed.
+// holds driver blobs, so a cleared cache reads as NeverWarmed. Before the cache is scanned nothing is
+// claimed about it: only the launcher's own records count.
 enum class TitleShaderState { Unknown, NeverWarmed, Ready, LastRunIncomplete, LastRunFailed };
 
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache);

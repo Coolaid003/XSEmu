@@ -1,7 +1,5 @@
 #include "ShaderCacheInfo.h"
 
-#include "Paths.h"
-
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -19,38 +17,67 @@ quint64 ShaderCacheInfo::fnv64(const char* data, qsizetype len)
     return h;
 }
 
-ShaderCacheInfo ShaderCacheInfo::readDefault()
+bool ShaderCacheInfo::readManifest(const QString& path, Manifest& m, const std::atomic<bool>* cancel)
 {
-    return read(Paths::dxilCacheDir());
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        m = Manifest{};
+        return false;
+    }
+    const qint64 size = file.size();
+    const QByteArray head = file.read(64);
+    if (m.path != path || size < m.offset || !head.startsWith(m.head))
+        m = Manifest{path, {}, 0, 0, {}};
+    m.head = head;
+    if (!file.seek(m.offset))
+        return true;
+    constexpr qint64 chunk = 4 << 20;
+    QByteArray buf;
+    qint64 at = m.offset;
+    while (!file.atEnd()) {
+        if (cancel && cancel->load())
+            break;
+        buf += file.read(chunk);
+        qsizetype pos = 0;
+        while (pos + 4 <= buf.size()) {
+            const auto* p = reinterpret_cast<const unsigned char*>(buf.constData() + pos);
+            const quint32 len = quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
+            if (pos + 4 + qsizetype(len) > buf.size())
+                break;
+            m.keys.insert(fnv64(buf.constData() + pos + 4, len) | 1ULL);
+            ++m.entries;
+            pos += 4 + qsizetype(len);
+        }
+        buf.remove(0, pos);
+        at += pos;
+        m.offset = at;
+    }
+    return true;
 }
 
 ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir)
 {
+    Manifest manifest;
+    return read(dxilDir, manifest);
+}
+
+ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir, Manifest& manifest, const std::atomic<bool>* cancel)
+{
     ShaderCacheInfo info;
     info.dxilDir = dxilDir;
+    info.scanned = true;
     const QDir root(dxilDir);
     info.exists = root.exists();
-    if (!info.exists)
+    if (!info.exists) {
+        manifest = Manifest{};
         return info;
+    }
 
-    QFile manifest(root.filePath(QStringLiteral("pipelines/pipelines.bin")));
-    if (manifest.open(QIODevice::ReadOnly)) {
-        const QByteArray file = manifest.readAll();
-        info.manifestBytes = file.size();
-        QSet<quint64> keys;
-        qint64 entries = 0;
-        qsizetype at = 0;
-        while (at + 4 <= file.size()) {
-            const auto* p = reinterpret_cast<const unsigned char*>(file.constData() + at);
-            const quint32 len = quint32(p[0]) | (quint32(p[1]) << 8) | (quint32(p[2]) << 16) | (quint32(p[3]) << 24);
-            if (at + 4 + qsizetype(len) > file.size())
-                break;
-            keys.insert(fnv64(file.constData() + at + 4, len) | 1ULL);
-            ++entries;
-            at += 4 + len;
-        }
-        info.manifestEntries = entries;
-        info.pipelines = keys.size();
+    const QString manifestPath = root.filePath(QStringLiteral("pipelines/pipelines.bin"));
+    if (readManifest(manifestPath, manifest, cancel)) {
+        info.manifestBytes = QFileInfo(manifestPath).size();
+        info.manifestEntries = manifest.entries;
+        info.pipelines = manifest.keys.size();
     }
 
     QFile runs(root.filePath(QStringLiteral("pipelines/runs")));
@@ -60,23 +87,30 @@ ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir)
         info.runs = ok ? n : 0;
     }
 
+    // one walk for the folder size and the driver blobs (driver/<adapter>/**/*.pso)
     const QDir driver(root.filePath(QStringLiteral("driver")));
-    if (driver.exists()) {
+    const bool hasDriver = driver.exists();
+    if (hasDriver) {
         info.blobs = 0;
         info.blobBytes = 0;
-        const QStringList adapters = driver.entryList(QDir::Dirs | QDir::NoDotAndDotDot);
-        info.adapters = adapters.size();
-        for (const QString& a : adapters) {
-            QDirIterator it(driver.filePath(a), {QStringLiteral("*.pso")}, QDir::Files, QDirIterator::Subdirectories);
-            while (it.hasNext()) {
-                it.next();
-                const QFileInfo fi = it.fileInfo();
-                ++info.blobs;
-                info.blobBytes += fi.size();
-                if (!info.newestBlob.isValid() || fi.lastModified() > info.newestBlob)
-                    info.newestBlob = fi.lastModified();
-            }
-        }
+        info.adapters = int(driver.entryList(QDir::Dirs | QDir::NoDotAndDotDot).size());
+    }
+    const QString driverPrefix = driver.absolutePath() + QLatin1Char('/');
+    info.totalBytes = 0;
+    QDirIterator it(root.absolutePath(), QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    for (int n = 0; it.hasNext(); ++n) {
+        if ((n & 1023) == 0 && cancel && cancel->load())
+            break;
+        const QString path = it.next();
+        const QFileInfo fi = it.fileInfo();
+        info.totalBytes += fi.size();
+        if (!hasDriver || !path.endsWith(QLatin1String(".pso")) || !path.startsWith(driverPrefix) || path.indexOf(QLatin1Char('/'), driverPrefix.size()) < 0)
+            continue;
+        ++info.blobs;
+        info.blobBytes += fi.size();
+        const QDateTime modified = fi.lastModified();
+        if (!info.newestBlob.isValid() || modified > info.newestBlob)
+            info.newestBlob = modified;
     }
     return info;
 }
@@ -84,7 +118,7 @@ ShaderCacheInfo ShaderCacheInfo::read(const QString& dxilDir)
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache)
 {
     // a finished warm-up counts only while its driver blobs are still there (Clear empties the cache)
-    const bool empty = !cache.exists || cache.blobs <= 0;
+    const bool empty = cache.scanned && (!cache.exists || cache.blobs <= 0);
     for (const WarmupRun& r : recent) {
         if (r.titleId != titleId || !r.runnerId.isEmpty()) // a runner's pre-cache fills its own cache, not XSEmu's
             continue;

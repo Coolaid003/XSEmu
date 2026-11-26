@@ -14,7 +14,6 @@
 
 #include <QDesktopServices>
 #include <QDir>
-#include <QDirIterator>
 #include <QCoreApplication>
 #include <QFileDialog>
 #include <QHBoxLayout>
@@ -40,18 +39,6 @@ bool isShaderCacheFolder(const QDir& dir)
     }
     return false;
 }
-
-qint64 folderBytes(const QString& path)
-{
-    qint64 total = 0;
-    QDirIterator it(path, QDir::Files | QDir::Hidden | QDir::NoSymLinks, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        it.next();
-        total += it.fileInfo().size();
-    }
-    return total;
-}
-
 
 }
 
@@ -97,43 +84,37 @@ QWidget* SettingsSections::shaders(Services& s)
     sizeRow->addControl(open);
     sizeRow->addControl(clear);
 
-    auto info = std::make_shared<ShaderCacheInfo>();
-    auto bytes = std::make_shared<qint64>(-1);
     const QPointer<QWidget> page = sec.page;
-    const auto refresh = [&s, info, bytes, page, path, pathNote, change, reset, size, sizeRow, clear] {
-        *info = ShaderCacheInfo::readDefault();
-        path->setPath(info->dxilDir);
+    const auto refresh = [&s, path, pathNote, change, reset, size, sizeRow, clear] {
+        const ShaderCacheInfo& info = s.shaderCache.snapshot();
+        const QString dir = Paths::dxilCacheDir();
+        path->setPath(dir);
         const bool fromEnv = LaunchConfig::shaderCacheDirFromEnvironment();
         change->setEnabled(!fromEnv);
         reset->setVisible(!fromEnv && !s.settings.shaderCacheDirOverride().isEmpty());
         pathNote->setText(fromEnv ? QStringLiteral("Set by XCL_DXIL_CACHE in the environment.") : QString());
         pathNote->setVisible(fromEnv);
-        const QString pipelines = info->pipelines < 0 ? QStringLiteral("No pipelines recorded yet")
-                                                      : QStringLiteral("%1 pipelines recorded").arg(Format::count(info->pipelines));
-        const QString blobs = info->blobs < 0 ? QString() : QStringLiteral(", %1 driver blobs").arg(Format::count(info->blobs));
-        sizeRow->setHelp(pipelines + blobs + QStringLiteral(", shared by all your games."));
-        size->setText(info->exists ? QStringLiteral("Measuring...") : QStringLiteral("Empty"));
-        const QString blocked = s.gate.isFree() ? QString() : s.gate.blockedReason(ProcessGate::Action::StartWarmup);
-        clear->setEnabled(info->exists && blocked.isEmpty());
-        clear->setToolTip(blocked);
-        if (!info->exists)
+        if (!s.shaderCache.hasSnapshot() || info.dxilDir != dir) {
+            sizeRow->setHelp(QStringLiteral("Reading the cache..."));
+            size->setText(QStringLiteral("Measuring..."));
+            clear->setEnabled(false);
             return;
-        const QString dir = info->dxilDir;
-        QThreadPool::globalInstance()->start([dir, page, size, bytes] {
-            const qint64 n = folderBytes(dir);
-            QMetaObject::invokeMethod(qApp, [page, size, bytes, n] {
-                if (!page)
-                    return;
-                *bytes = n;
-                size->setText(Format::bytes(n));
-            });
-        });
+        }
+        const QString pipelines = info.pipelines < 0 ? QStringLiteral("No pipelines recorded yet")
+                                                     : QStringLiteral("%1 pipelines recorded").arg(Format::count(info.pipelines));
+        const QString blobs = info.blobs < 0 ? QString() : QStringLiteral(", %1 driver blobs").arg(Format::count(info.blobs));
+        sizeRow->setHelp(pipelines + blobs + QStringLiteral(", shared by all your games."));
+        size->setText(info.exists ? Format::bytes(info.totalBytes) : QStringLiteral("Empty"));
+        const QString blocked = s.gate.isFree() ? QString() : s.gate.blockedReason(ProcessGate::Action::StartWarmup);
+        clear->setEnabled(info.exists && blocked.isEmpty());
+        clear->setToolTip(blocked);
     };
     refresh();
 
-    QObject::connect(open, &Button::clicked, sec.page, [info] {
-        QDir().mkpath(info->dxilDir);
-        QDesktopServices::openUrl(QUrl::fromLocalFile(info->dxilDir));
+    QObject::connect(open, &Button::clicked, sec.page, [] {
+        const QString dir = Paths::dxilCacheDir();
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
     });
     QObject::connect(change, &Button::clicked, sec.page, [&s, page, pathNote] {
         const QString dir = QFileDialog::getExistingDirectory(page->window(), QStringLiteral("Choose a folder for the shader cache"));
@@ -147,12 +128,13 @@ QWidget* SettingsSections::shaders(Services& s)
         s.settings.setShaderCacheDirOverride(dir);
     });
     QObject::connect(reset, &Button::clicked, sec.page, [&s] { s.settings.setShaderCacheDirOverride({}); });
-    QObject::connect(clear, &Button::clicked, sec.page, [&s, page, info, bytes, refresh] {
+    QObject::connect(clear, &Button::clicked, sec.page, [&s, page] {
+        const ShaderCacheInfo& info = s.shaderCache.snapshot();
         auto* d = new Dialog(page->window(), 460);
         d->setIcon(QStringLiteral("trash"), int(Theme::Tone::Danger));
         d->setTitle(QStringLiteral("Clear the shader cache?"));
-        const QString what = info->pipelines > 0 ? QStringLiteral("%1 pipelines").arg(Format::count(info->pipelines)) : QStringLiteral("every compiled shader");
-        const QString amount = *bytes >= 0 ? QStringLiteral(" (%1)").arg(Format::bytes(*bytes)) : QString();
+        const QString what = info.pipelines > 0 ? QStringLiteral("%1 pipelines").arg(Format::count(info.pipelines)) : QStringLiteral("every compiled shader");
+        const QString amount = info.totalBytes >= 0 ? QStringLiteral(" (%1)").arg(Format::bytes(info.totalBytes)) : QString();
         auto* text = new Label(QStringLiteral("This deletes %1%2 for all your games. Each game stalls on its next run until you warm it up again.").arg(what, amount),
                                Label::Style::Body, Theme::Role::Text2);
         text->setWordWrap(true);
@@ -165,29 +147,49 @@ QWidget* SettingsSections::shaders(Services& s)
         d->addButton(cancel);
         d->addButton(confirm);
         QObject::connect(cancel, &Button::clicked, d, &Dialog::dismiss);
-        QObject::connect(confirm, &Button::clicked, d, [&s, d, driver, info, refresh, confirm, cancel] {
+        QObject::connect(confirm, &Button::clicked, d, [&s, d, driver, confirm, cancel] {
             QString error;
             if (!s.gate.isFree())
                 error = s.gate.blockedReason(ProcessGate::Action::StartWarmup);
             else if (const ProcessGate::External other = s.gate.external(); other.busy())
                 error = other.reason();
-            const ShaderCacheInfo::Cleared cleared = error.isEmpty() ? ShaderCacheInfo::clear(info->dxilDir) : ShaderCacheInfo::Cleared{};
-            if (error.isEmpty())
-                error = cleared.error;
-            refresh();
             if (!error.isEmpty()) {
                 driver->setText(error);
                 driver->setRole(Theme::Role::Danger);
                 return;
             }
-            if (!cleared.kept.isEmpty()) {
-                driver->setText(QStringLiteral("Cleared. These aren't XSEmu's, so they were kept: %1.").arg(cleared.kept.join(QStringLiteral(", "))));
-                driver->setRole(Theme::Role::Text2);
-                confirm->hide();
-                cancel->setText(QStringLiteral("Close"));
-                return;
-            }
-            d->dismiss();
+            // deleting a large cache takes a while, so it runs off the UI thread
+            confirm->setEnabled(false);
+            cancel->setEnabled(false);
+            confirm->setText(QStringLiteral("Clearing..."));
+            const QPointer<Dialog> dialog = d;
+            const QPointer<ShaderCacheMonitor> monitor = &s.shaderCache;
+            const QString dir = Paths::dxilCacheDir();
+            QThreadPool::globalInstance()->start([dialog, monitor, dir, driver, confirm, cancel] {
+                const ShaderCacheInfo::Cleared cleared = ShaderCacheInfo::clear(dir);
+                QMetaObject::invokeMethod(qApp, [dialog, monitor, cleared, driver, confirm, cancel] {
+                    if (monitor)
+                        monitor->refresh();
+                    if (!dialog)
+                        return;
+                    cancel->setEnabled(true);
+                    if (!cleared.error.isEmpty()) {
+                        driver->setText(cleared.error);
+                        driver->setRole(Theme::Role::Danger);
+                        confirm->setText(QStringLiteral("Clear cache"));
+                        confirm->setEnabled(true);
+                        return;
+                    }
+                    if (!cleared.kept.isEmpty()) {
+                        driver->setText(QStringLiteral("Cleared. These aren't XSEmu's, so they were kept: %1.").arg(cleared.kept.join(QStringLiteral(", "))));
+                        driver->setRole(Theme::Role::Text2);
+                        confirm->hide();
+                        cancel->setText(QStringLiteral("Close"));
+                        return;
+                    }
+                    dialog->dismiss();
+                });
+            });
         });
         d->open();
     });
@@ -196,7 +198,8 @@ QWidget* SettingsSections::shaders(Services& s)
             refresh();
     });
     QObject::connect(&s.gate, &ProcessGate::changed, sec.page, refresh);
-    SettingsKit::onShow(sec.page, refresh);
+    QObject::connect(&s.shaderCache, &ShaderCacheMonitor::changed, sec.page, refresh);
+    SettingsKit::onShow(sec.page, [&s] { s.shaderCache.refreshIfStale(); });
     sec.finish();
     return sec.page;
 }

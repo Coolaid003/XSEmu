@@ -135,7 +135,7 @@ void FloatingBar::sync()
     const Game& g = m_s.emulator.game();
     if (g.titleId() != m_coverTitle) {
         m_coverTitle = g.titleId();
-        m_cover->setCover(QPixmap(m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid)), g.title());
+        m_cover->setCover(m_s.art(g.titleId(), CoverCache::Kind::Grid), g.title());
     }
     m_title->setText(g.title());
     m_runner->setText(m_s.emulator.runner().name);

@@ -321,7 +321,6 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
 {
     const PageScaffold page = makePageScaffold(this, QStringLiteral("Runners"));
     page.header->setSubtitle(QStringLiteral("Programs that can run your games"));
-    const HardwareInfo hw = HardwareInfo::read();
     auto* gpu = new Card(Card::Kind::Surface, Metrics::RadiusLg);
     gpu->setObjectName(QStringLiteral("detectedGpu"));
     auto* gl = new QHBoxLayout(gpu);
@@ -329,7 +328,8 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
     gl->setSpacing(8);
     gl->addWidget(new IconView(QStringLiteral("chip"), Theme::Role::Text3, 14));
     gl->addWidget(new Label(QStringLiteral("Detected GPU"), Label::Style::Small, Theme::Role::Text2));
-    gl->addWidget(new Label(hw.gpuNameOrUnknown(), Label::Style::SmallStrong));
+    auto* gpuName = new Label(m_s.hardware.gpuLabel(), Label::Style::SmallStrong);
+    gl->addWidget(gpuName);
     page.header->addAction(gpu);
 
     m_list = new QVBoxLayout;
@@ -361,6 +361,13 @@ RunnersPage::RunnersPage(Services& services, QWidget* parent)
         Q_UNUSED(id);
     });
     connect(&m_s.settings, &AppSettings::changed, this, [this] {
+        for (RunnerCard* c : std::as_const(m_cards))
+            c->refresh();
+    });
+    connect(&m_s.hardware, &HardwareMonitor::changed, this, [this, gpuName, why] {
+        gpuName->setText(m_s.hardware.gpuLabel());
+        why->setText(RunnerUi::recommendation(m_s).reason);
+        reorder();
         for (RunnerCard* c : std::as_const(m_cards))
             c->refresh();
     });

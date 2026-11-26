@@ -230,8 +230,7 @@ void Sidebar::refresh()
         }
         if (held > 0)
             status += QStringLiteral(" · %1 held").arg(Format::gigabytes(held));
-        const QString art = m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid);
-        m_now->set(g.title(), status, tone, art.isEmpty() || !QFileInfo::exists(art) ? QPixmap() : QPixmap(art));
+        m_now->set(g.title(), status, tone, m_s.art(g.titleId(), CoverCache::Kind::Grid));
     }
 
     m_console->setText(Services::consoleName(m_s.settings.defaultDeviceType()));

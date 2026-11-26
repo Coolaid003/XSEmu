@@ -1,4 +1,7 @@
 #include "ShaderCacheInfo.h"
+#include "ShaderCacheMonitor.h"
+
+#include <QSignalSpy>
 
 #include <QDir>
 #include <QFile>
@@ -11,6 +14,8 @@ private slots:
     void fnvMatchesTheEmulator();
     void missingIsUnknown();
     void readsManifestRunsAndBlobs();
+    void incrementalParseMatchesFullParse();
+    void monitorKeepsASnapshot();
     void titleState();
     void clearKeepsWhatIsNotTheCaches();
 };
@@ -73,9 +78,91 @@ void TestShaderCache::readsManifestRunsAndBlobs()
     QVERIFY(info.newestBlob.isValid());
 }
 
+static QByteArray entries(int from, int to)
+{
+    QByteArray out;
+    for (int i = from; i < to; ++i)
+        out += entry(QByteArray("pipeline-") + QByteArray::number(i % 50) + QByteArray(i % 7 * 300, 'x'));
+    return out;
+}
+
+void TestShaderCache::incrementalParseMatchesFullParse()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath(QStringLiteral("pipelines.bin"));
+    const QByteArray all = entries(0, 400);
+    const qsizetype cut = all.size() / 3 + 5; // ends inside an entry, as a manifest being written does
+    writeFile(path, all.left(cut));
+    ShaderCacheInfo::Manifest m;
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    const qint64 firstEntries = m.entries;
+    QVERIFY(firstEntries > 0 && m.offset < cut);
+
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::Append));
+    f.write(all.mid(cut));
+    f.close();
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    ShaderCacheInfo::Manifest full;
+    QVERIFY(ShaderCacheInfo::readManifest(path, full));
+    QCOMPARE(m.entries, qint64(400));
+    QCOMPARE(m.entries, full.entries);
+    QCOMPARE(m.keys, full.keys);
+    QCOMPARE(m.offset, qint64(all.size()));
+
+    // a shorter file, a rewritten start or another path is parsed from scratch
+    writeFile(path, entries(0, 10));
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    QCOMPARE(m.entries, qint64(10));
+    writeFile(path, entries(100, 110) + entries(0, 400));
+    QVERIFY(ShaderCacheInfo::readManifest(path, m));
+    QCOMPARE(m.entries, qint64(410));
+    const QString other = dir.filePath(QStringLiteral("other.bin"));
+    writeFile(other, entries(0, 3));
+    QVERIFY(ShaderCacheInfo::readManifest(other, m));
+    QCOMPARE(m.entries, qint64(3));
+    QVERIFY(!ShaderCacheInfo::readManifest(dir.filePath(QStringLiteral("gone.bin")), m));
+    QCOMPARE(m.entries, qint64(0));
+}
+
+void TestShaderCache::monitorKeepsASnapshot()
+{
+    QTemporaryDir dir;
+    writeFile(dir.filePath(QStringLiteral("pipelines/pipelines.bin")), entries(0, 20));
+    writeFile(dir.filePath(QStringLiteral("driver/10de-2786-1/a.pso")), QByteArray(30, 'x'));
+    writeFile(dir.filePath(QStringLiteral("0123456789abcdef.dxil")), QByteArray(70, 'x'));
+    qputenv("XCL_DXIL_CACHE", dir.path().toUtf8());
+    ShaderCacheMonitor monitor;
+    QVERIFY(!monitor.hasSnapshot());
+    QSignalSpy changed(&monitor, &ShaderCacheMonitor::changed);
+    monitor.refresh();
+    monitor.refresh();
+    monitor.refresh(); // coalesced into one more scan after the running one
+    QTRY_VERIFY(monitor.hasSnapshot());
+    QTRY_COMPARE(changed.count(), 2);
+    QTest::qWait(50);
+    QCOMPARE(changed.count(), 2);
+    QCOMPARE(monitor.snapshot().pipelines, 20);
+    QCOMPARE(monitor.snapshot().blobs, 1);
+    QCOMPARE(monitor.snapshot().totalBytes, qint64(QFileInfo(dir.filePath(QStringLiteral("pipelines/pipelines.bin"))).size() + 30 + 70));
+
+    QFile f(dir.filePath(QStringLiteral("pipelines/pipelines.bin")));
+    QVERIFY(f.open(QIODevice::Append));
+    f.write(entries(50, 60));
+    f.close();
+    monitor.refreshIfStale(); // fresh: nothing to do
+    QTest::qWait(50);
+    QCOMPARE(changed.count(), 2);
+    monitor.refresh();
+    QTRY_COMPARE(changed.count(), 3);
+    QCOMPARE(monitor.snapshot().manifestEntries, qint64(30));
+    qunsetenv("XCL_DXIL_CACHE");
+}
+
 void TestShaderCache::titleState()
 {
     ShaderCacheInfo cache;
+    cache.scanned = true;
     QCOMPARE(titleShaderState(QStringLiteral("A"), {}, cache), TitleShaderState::NeverWarmed);
     cache.exists = true;
     cache.blobs = 10;
@@ -92,12 +179,18 @@ void TestShaderCache::titleState()
 
     // after Clear the finished warm-up no longer makes the game ready
     ShaderCacheInfo cleared;
+    cleared.scanned = true;
     cleared.exists = true;
     cleared.blobs = -1;
     QCOMPARE(titleShaderState(QStringLiteral("A"), {ok}, cleared), TitleShaderState::NeverWarmed);
     cleared.blobs = 0;
     QCOMPARE(titleShaderState(QStringLiteral("A"), {ok}, cleared), TitleShaderState::NeverWarmed);
     QCOMPARE(titleShaderState(QStringLiteral("A"), {bad, ok}, cleared), TitleShaderState::LastRunFailed);
+
+    // before the first scan only the launcher's own records count
+    const ShaderCacheInfo unscanned;
+    QCOMPARE(titleShaderState(QStringLiteral("A"), {}, unscanned), TitleShaderState::Unknown);
+    QCOMPARE(titleShaderState(QStringLiteral("A"), {ok}, unscanned), TitleShaderState::Ready);
 }
 
 void TestShaderCache::clearKeepsWhatIsNotTheCaches()

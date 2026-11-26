@@ -459,6 +459,7 @@ LibraryPage::LibraryPage(Services& services, QWidget* parent)
     connect(&m_s.library, &Library::gamesChanged, this, &LibraryPage::rebuild);
     connect(&m_s.covers, &CoverArtService::artChanged, this, &LibraryPage::rebuild);
     connect(&m_s.gate, &ProcessGate::changed, this, &LibraryPage::refreshState);
+    connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &LibraryPage::refreshState);
     connect(&m_s.emulator, &EmulatorController::stateChanged, this, &LibraryPage::refreshState);
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &LibraryPage::refreshState);
     connect(&m_s.settings, &AppSettings::changed, this, [this](const QString& key) {
@@ -518,9 +519,8 @@ void LibraryPage::rebuild()
     for (const Game& g : std::as_const(m_shown)) {
         auto* tile = new CoverTile(CoverTile::Kind::NoArt, m_gridHost);
         tile->setTitle(g.title());
-        const QString art = m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid);
-        if (!art.isEmpty())
-            tile->setArt(QPixmap(art));
+        if (const QPixmap art = m_s.art(g.titleId(), CoverCache::Kind::Grid); !art.isNull())
+            tile->setArt(art);
         connect(tile, &CoverTile::clicked, this, [this, g] { emit detailsRequested(g); });
         connect(tile, &CoverTile::playClicked, this, [this, g] { requestPlay(g); });
         connect(tile, &CoverTile::doubleClicked, this, [this, g] { requestPlay(g); });
@@ -568,7 +568,7 @@ void LibraryPage::rebuild()
 
 void LibraryPage::refreshState()
 {
-    const ShaderCacheInfo cache = ShaderCacheInfo::readDefault();
+    const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
     const QList<WarmupRun> recent = m_s.settings.recentWarmups();
     const EmulatorController::State st = m_s.emulator.state();
     const QString playingId = st == EmulatorController::State::Idle ? QString() : m_s.emulator.game().titleId();
@@ -615,13 +615,11 @@ void LibraryPage::refreshState()
         const QString shaders = shaderStatus(titleShaderState(m_heroGame.titleId(), recent, cache)).text;
         if (!shaders.isEmpty())
             meta << sentenceCase(shaders);
-        const QString art = m_s.covers.artPath(m_heroGame.titleId(), CoverCache::Kind::Hero);
-        m_hero->set(m_heroGame.title(), meta.join(QStringLiteral(" \u00B7 ")), art.isEmpty() ? QPixmap() : QPixmap(art));
+        m_hero->set(m_heroGame.title(), meta.join(QStringLiteral(" \u00B7 ")), m_s.art(m_heroGame.titleId(), CoverCache::Kind::Hero));
     }
     if (active) {
         const Game g = m_s.emulator.game();
-        const QString art = m_s.covers.artPath(g.titleId(), CoverCache::Kind::Grid);
-        m_bannerCover->setCover(art.isEmpty() ? QPixmap() : QPixmap(art), g.title());
+        m_bannerCover->setCover(m_s.art(g.titleId(), CoverCache::Kind::Grid), g.title());
         const bool paused = st == EmulatorController::State::Paused;
         m_bannerTitle->setText(paused ? QStringLiteral("%1 is paused").arg(g.title())
                                       : st == EmulatorController::State::Booting ? QStringLiteral("%1 is starting").arg(g.title())

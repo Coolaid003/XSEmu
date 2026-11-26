@@ -396,6 +396,7 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
             m_s.covers.refresh(m_game);
     });
     connect(&m_s.gate, &ProcessGate::changed, this, &GameDetailsPage::refresh);
+    connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &GameDetailsPage::refresh);
     connect(&m_s.emulator, &EmulatorController::stateChanged, this, &GameDetailsPage::refresh);
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &GameDetailsPage::onStats);
     connect(&m_s.emulator, &EmulatorController::exited, this, &GameDetailsPage::onExit);
@@ -507,14 +508,12 @@ void GameDetailsPage::refresh()
         meta << QStringLiteral("%1 played").arg(Format::playTime(played)) << QStringLiteral("last played %1").arg(lowerFirst(Format::ago(last)));
     else
         meta << QStringLiteral("Not played");
-    const QString grid = m_s.covers.artPath(id, CoverCache::Kind::Grid);
-    const QString hero = m_s.covers.artPath(id, CoverCache::Kind::Hero);
-    m_hero->set(g.title(), meta.join(QStringLiteral(" · ")), grid.isEmpty() ? QPixmap() : QPixmap(grid), hero.isEmpty() ? QPixmap() : QPixmap(hero),
+    m_hero->set(g.title(), meta.join(QStringLiteral(" · ")), m_s.art(id, CoverCache::Kind::Grid), m_s.art(id, CoverCache::Kind::Hero),
                 m_s.covers.canLookUp());
 
     // actions and the shader state
     const QList<WarmupRun> recent = m_s.settings.recentWarmups();
-    const ShaderCacheInfo cache = ShaderCacheInfo::readDefault();
+    const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
     const TitleShaderState state = titleShaderState(id, recent, cache);
     std::optional<WarmupRun> lastWarmup;
     for (const WarmupRun& r : recent) {

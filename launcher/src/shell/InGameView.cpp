@@ -35,12 +35,6 @@
 
 namespace {
 
-QPixmap coverArt(Services& s, const Game& g)
-{
-    const QString path = s.covers.artPath(g.titleId(), CoverCache::Kind::Grid);
-    return path.isEmpty() || !QFileInfo::exists(path) ? QPixmap() : QPixmap(path);
-}
-
 QString placeText(Services& s)
 {
     const auto hello = s.emulator.hello();
@@ -727,6 +721,7 @@ InGameView::InGameView(Services& services, QWidget* parent)
         refresh();
     });
     connect(&m_s.emulator, &EmulatorController::statsChanged, this, &InGameView::refresh);
+    connect(&m_s.shaderCache, &ShaderCacheMonitor::changed, this, &InGameView::refresh);
     connect(&m_s.emulator, &EmulatorController::helloReceived, this, [this] {
         refresh();
         raisePanels();
@@ -886,7 +881,7 @@ void InGameView::refresh()
 
     m_title->setText(g.title());
     m_runner->setText(m_s.emulator.runnerFor(g).name);
-    m_cover->setArt(coverArt(m_s, g));
+    m_cover->setArt(m_s.art(g.titleId(), CoverCache::Kind::Grid));
 
     m_spinner->setVisible(live && (st == S::Booting || st == S::Stopping));
     m_paused->setVisible(live && st == S::Paused);
@@ -958,7 +953,7 @@ void InGameView::refresh()
     m_exitPanel->setVisible(exit);
     const bool booting = live && st == S::Booting;
     if (booting) {
-        const ShaderCacheInfo cache = ShaderCacheInfo::readDefault();
+        const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
         QString shaders;
         switch (titleShaderState(g.titleId(), m_s.settings.recentWarmups(), cache)) {
         case TitleShaderState::Ready: shaders = QStringLiteral("Shaders ready"); break;
@@ -969,7 +964,7 @@ void InGameView::refresh()
         }
         if (cache.pipelines > 0)
             shaders += (shaders.isEmpty() ? QString() : QStringLiteral(" · ")) + QStringLiteral("%1 pipelines cached").arg(Format::count(cache.pipelines));
-        m_boot->set(g.title(), coverArt(m_s, g), shaders, QFileInfo(m_s.settings.emulatorPath()).fileName(),
+        m_boot->set(g.title(), m_s.art(g.titleId(), CoverCache::Kind::Grid), shaders, QFileInfo(m_s.settings.emulatorPath()).fileName(),
                     m_s.emulator.hello() ? double(m_s.emulator.helloAfterMs()) / 1000.0 : -1.0);
     }
     m_boot->setVisible(booting);
