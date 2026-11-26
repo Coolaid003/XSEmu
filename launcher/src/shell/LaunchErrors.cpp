@@ -1,19 +1,41 @@
 #include "LaunchErrors.h"
 
+#include "MainWindow.h"
 #include "app/Services.h"
 #include "core/Format.h"
+#include "core/HardwareInfo.h"
 #include "core/Paths.h"
-#include "theme/Theme.h"
+#include "core/ShaderCacheInfo.h"
 #include "widgets/Button.h"
 #include "widgets/Card.h"
+#include "widgets/CoverThumb.h"
 #include "widgets/Dialog.h"
+#include "widgets/Icon.h"
 #include "widgets/Text.h"
 
+#include <QAbstractButton>
+#include <algorithm>
+#include <optional>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
+#include <QFileDialog>
 #include <QFileInfo>
+#include <QHash>
+#include <QHBoxLayout>
+#include <QPainter>
+#include <QLabel>
+#include <QPointer>
+#include <QRegularExpression>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
+#endif
 
 namespace {
 
@@ -24,28 +46,51 @@ Label* paragraph(const QString& text, Theme::Role role = Theme::Role::Text2, Lab
     return l;
 }
 
-QWidget* pathBox(const QString& path)
+// Icon tile, title and the design's spacing (16 under the icon, 8 under the title); the caller adds
+// the rest with explicit spacing.
+void begin(Dialog* d, const QString& icon, Theme::Tone tone, const QString& title)
+{
+    d->setIcon(icon, int(tone));
+    d->setTitle(title);
+    QVBoxLayout* b = d->body();
+    b->setSpacing(0);
+    if (QSpacerItem* s = b->itemAt(1)->spacerItem())
+        s->changeSize(0, 16, QSizePolicy::Fixed, QSizePolicy::Fixed);
+    if (auto* t = qobject_cast<QLabel*>(b->itemAt(2)->widget()))
+        t->setWordWrap(true);
+    b->addSpacing(8);
+}
+
+QWidget* pathBox(const QString& path, const QString& note = {})
 {
     auto* box = new Card(Card::Kind::Sunken, Metrics::RadiusLg);
     auto* v = new QVBoxLayout(box);
-    v->setContentsMargins(12, 10, 12, 11);
+    v->setContentsMargins(12, 10, 12, 10);
+    v->setSpacing(4);
     auto* l = new Label(QDir::toNativeSeparators(path), Label::Style::Mono, Theme::Role::Text);
+    l->setFont(Theme::mono(12));
     l->setWordWrap(true);
     l->setTextInteractionFlags(Qt::TextSelectableByMouse);
     v->addWidget(l);
+    if (!note.isEmpty()) {
+        auto* n = new Label(note, Label::Style::Caption, Theme::Role::Text3);
+        n->setWordWrap(true);
+        v->addWidget(n);
+    }
     return box;
 }
 
-Button* closeButton(Dialog* d, const QString& text = QStringLiteral("Close"))
+Button* closeButton(Dialog* d, const QString& text, Button::Variant variant = Button::Variant::Secondary)
 {
-    auto* b = new Button(text, Button::Variant::Secondary, Button::Size::Large);
+    auto* b = new Button(text, variant, Button::Size::Large);
     QObject::connect(b, &Button::clicked, d, &Dialog::dismiss);
     return b;
 }
 
-Button* actionButton(Dialog* d, const QString& text, std::function<void()> action, Button::Variant variant = Button::Variant::Primary)
+Button* actionButton(Dialog* d, const QString& text, std::function<void()> action,
+                     Button::Variant variant = Button::Variant::Primary, const QString& icon = {})
 {
-    auto* b = new Button(text, variant, Button::Size::Large);
+    auto* b = new Button(text, variant, Button::Size::Large, icon);
     QObject::connect(b, &Button::clicked, d, [d, action] {
         d->dismiss();
         if (action)
@@ -54,108 +99,518 @@ Button* actionButton(Dialog* d, const QString& text, std::function<void()> actio
     return b;
 }
 
-QString logsFolder(const Game& game)
+// A label/value table on a sunken card ("Needed 9.6 GB").
+struct FactsBox {
+    Card* card;
+    QVBoxLayout* rows;
+    Label* add(const QString& label, const QString& value, Theme::Role role = Theme::Role::Text)
+    {
+        auto* row = new QHBoxLayout;
+        row->setSpacing(12);
+        row->addWidget(new Label(label, Label::Style::Small, Theme::Role::Text2));
+        row->addStretch(1);
+        auto* v = new Label(value, Label::Style::SmallStrong, role);
+        row->addWidget(v);
+        rows->addLayout(row);
+        return v;
+    }
+};
+
+FactsBox factsBox()
 {
-    const QString name = game.identityName.isEmpty() ? QFileInfo(game.folder).fileName() : game.identityName;
-    return Paths::logsDir(Paths::titleDirName(name));
+    auto* card = new Card(Card::Kind::Sunken, 10);
+    auto* v = new QVBoxLayout(card);
+    v->setContentsMargins(14, 12, 14, 12);
+    v->setSpacing(8);
+    return {card, v};
 }
 
+// The design's 16 px checkbox with a label (cold-cache prompt).
+class CheckRow : public QAbstractButton {
+public:
+    explicit CheckRow(const QString& text)
+    {
+        setText(text);
+        setCheckable(true);
+        setCursor(Qt::PointingHandCursor);
+        setFocusPolicy(Qt::StrongFocus);
+        connect(&Theme::instance(), &Theme::changed, this, qOverload<>(&QWidget::update));
+    }
+    QSize sizeHint() const override
+    {
+        return {26 + QFontMetrics(Theme::font(Metrics::TextSm)).horizontalAdvance(text()) + 2, 18};
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        const Palette& c = Theme::instance().palette();
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRectF box(0.5, 1.5, 15, 15);
+        if (isChecked()) {
+            p.setPen(Qt::NoPen);
+            p.setBrush(c.accent);
+            p.drawRoundedRect(box, 4, 4);
+            Icon::paint(p, box, QStringLiteral("check"), c.onAccent, 12);
+        } else {
+            p.setPen(QPen(c.borderStrong, 1));
+            p.setBrush(c.surface);
+            p.drawRoundedRect(box, 4, 4);
+        }
+        p.setFont(Theme::font(Metrics::TextSm));
+        p.setPen(c.text);
+        p.drawText(QRectF(26, 0, width() - 26, height()), Qt::AlignLeft | Qt::AlignVCenter, text());
+    }
+};
+
+// The newest warm-up the launcher recorded for the title, if any.
+std::optional<WarmupRun> lastWarmup(Services& s, const Game& game)
+{
+    for (const WarmupRun& r : s.settings.recentWarmups()) {
+        if (r.titleId == game.titleId())
+            return r;
+    }
+    return std::nullopt;
+}
+
+// After stop: run next() once the gate is free (a game stops within its grace period, or is killed).
+void whenGateFree(Services& s, std::function<void()> next)
+{
+    if (s.gate.isFree()) {
+        next();
+        return;
+    }
+    auto* conn = new QMetaObject::Connection;
+    *conn = QObject::connect(&s.gate, &ProcessGate::changed, &s.gate, [&s, conn, next] {
+        if (!s.gate.isFree())
+            return;
+        QObject::disconnect(*conn);
+        delete conn;
+        QTimer::singleShot(0, &s.gate, next);
+    });
+}
+
+void showStopFirst(QWidget* window, Services& s, const Game& game, std::function<void()> retry)
+{
+    auto* d = new Dialog(window, 460);
+    const QString owner = s.gate.ownerTitle();
+    if (s.gate.owner() == ProcessGate::Owner::Warmup) {
+        begin(d, QStringLiteral("bolt"), Theme::Tone::Warning, QStringLiteral("Cancel the warm-up first?"));
+        d->body()->addWidget(paragraph(QStringLiteral("%1 can't start while the shader warm-up for %2 runs, because XSEmu runs one process at a time. Compiles in flight finish before it stops.").arg(game.title(), owner)));
+        d->addButton(closeButton(d, QStringLiteral("Keep warming up")));
+        d->addButton(actionButton(d, QStringLiteral("Cancel and play %1").arg(game.title()), [&s, retry] {
+            s.gate.stopOwner();
+            whenGateFree(s, retry);
+        }));
+        d->open();
+        return;
+    }
+    const Game held = s.emulator.game();
+    const bool paused = s.emulator.state() == EmulatorController::State::Paused;
+    begin(d, QStringLiteral("stop"), Theme::Tone::Warning, QStringLiteral("Stop %1 first?").arg(owner));
+    const qint64 heldBytes = s.emulator.stats().heldBytes;
+    QString why = QStringLiteral("%1 can't start while %2 is %3.").arg(game.title(), owner, paused ? QStringLiteral("paused") : QStringLiteral("running"));
+    why += heldBytes > 0 ? QStringLiteral(" It still holds %1, and XSEmu runs one game at a time.").arg(Format::gigabytes(heldBytes))
+                         : QStringLiteral(" XSEmu runs one game at a time.");
+    d->body()->addWidget(paragraph(why));
+    d->body()->addSpacing(16);
+
+    auto* box = new Card(Card::Kind::Sunken, 10);
+    auto* bv = new QVBoxLayout(box);
+    bv->setContentsMargins(14, 14, 14, 14);
+    bv->setSpacing(8);
+    auto* row = new QHBoxLayout;
+    row->setSpacing(10);
+    auto* thumb = new CoverThumb(QSize(24, 36));
+    const QString art = s.covers.artPath(held.titleId(), CoverCache::Kind::Grid);
+    thumb->setCover(art.isEmpty() ? QPixmap() : QPixmap(art), held.title());
+    row->addWidget(thumb);
+    row->addWidget(new Label(owner, Label::Style::Small, Theme::Role::Text), 1);
+    const qint64 session = s.emulator.sessionSeconds();
+    if (session > 0)
+        row->addWidget(new Label(QStringLiteral("%1 this session").arg(Format::duration(session).replace(QRegularExpression(QStringLiteral(" \\d+ s$")), QString())), Label::Style::Caption, Theme::Role::Text2));
+    bv->addLayout(row);
+    auto* note = new Label(QStringLiteral("Stopping quits the game without saving. Use the game's own save first if you need it."), Label::Style::Caption, Theme::Role::Text3);
+    note->setWordWrap(true);
+    bv->addWidget(note);
+    d->body()->addWidget(box);
+
+    d->addButton(closeButton(d, QStringLiteral("Cancel")));
+    // the design names both games on the buttons; long names fall back to the verb alone
+    const bool shortLabels = owner.size() + game.title().size() > 26;
+    const QString resumeLabel = paused ? QStringLiteral("Resume") : QStringLiteral("Back to game");
+    QPointer<QWidget> w = window;
+    d->addButton(actionButton(d, shortLabels || !paused ? resumeLabel : QStringLiteral("Resume %1").arg(owner), [&s, w, paused] {
+        if (paused)
+            s.emulator.resume();
+        if (auto* mw = qobject_cast<MainWindow*>(w.data()))
+            mw->enterInGame();
+    }, Button::Variant::Secondary));
+    d->addButton(actionButton(d, shortLabels ? QStringLiteral("Stop and play") : QStringLiteral("Stop and play %1").arg(game.title()), [&s, retry] {
+        s.gate.stopOwner();
+        whenGateFree(s, retry);
+    }));
+    d->open();
+}
+
+void showFilesMissing(QWidget* window, Services& s, const Game& game, std::function<void()> retry)
+{
+    auto* d = new Dialog(window, 500);
+    begin(d, QStringLiteral("folder"), Theme::Tone::Danger, QStringLiteral("%1 can't start").arg(game.title()));
+    const bool folderGone = !QFileInfo(game.folder).isDir() || !QFileInfo::exists(game.configPath);
+    if (folderGone) {
+        d->body()->addWidget(paragraph(QStringLiteral("Its folder is gone or a drive is disconnected. XSEmu looked for MicrosoftGame.config here:")));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(pathBox(game.folder));
+    } else {
+        const QString exe = game.exe.isEmpty() ? game.executables.value(0) : game.exe;
+        d->body()->addWidget(paragraph(exe.isEmpty() ? QStringLiteral("Its MicrosoftGame.config names no executable, so XSEmu has nothing to start in:")
+                                                     : QStringLiteral("Its MicrosoftGame.config names %1, but that file isn't in the game folder. XSEmu looked here:").arg(QDir::toNativeSeparators(exe))));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(pathBox(exe.isEmpty() ? game.folder : QDir(game.folder).filePath(exe)));
+    }
+    d->body()->addSpacing(12);
+    d->body()->addWidget(paragraph(QStringLiteral("Reconnect the drive and try again, or point XSEmu at the new folder. The shader cache stays either way."),
+                                   Theme::Role::Text3, Label::Style::Small));
+
+    const QStringList roots = s.settings.gameFolders();
+    const QString canonical = QDir::cleanPath(game.folder);
+    const bool isRoot = std::any_of(roots.cbegin(), roots.cend(), [&](const QString& r) { return QDir::cleanPath(r) == canonical; });
+    if (folderGone || isRoot) {
+        d->addButton(actionButton(d, QStringLiteral("Remove from library"), [&s, canonical] {
+            QStringList folders = s.settings.gameFolders();
+            folders.erase(std::remove_if(folders.begin(), folders.end(), [&](const QString& r) { return QDir::cleanPath(r) == canonical; }), folders.end());
+            s.settings.setGameFolders(folders);
+            s.library.rescanNow();
+        }, Button::Variant::Ghost), true);
+    }
+    QPointer<QWidget> w = window;
+    d->addButton(actionButton(d, QStringLiteral("Locate folder\u2026"), [&s, w, game, canonical, retry] {
+        const QString dir = QFileDialog::getExistingDirectory(w, QStringLiteral("Locate %1").arg(game.title()));
+        if (dir.isEmpty())
+            return;
+        const Game found = Library::readGame(dir);
+        QStringList folders = s.settings.gameFolders();
+        folders.erase(std::remove_if(folders.begin(), folders.end(), [&](const QString& r) { return QDir::cleanPath(r) == canonical; }), folders.end());
+        if (!folders.contains(dir))
+            folders << dir;
+        s.settings.setGameFolders(folders);
+        s.library.rescanNow();
+        if (found.isValid() && w) {
+            if (auto* mw = qobject_cast<MainWindow*>(w.data()))
+                mw->play(s.library.game(found.titleId()).isValid() ? s.library.game(found.titleId()) : found);
+        }
+    }, Button::Variant::Secondary));
+    d->addButton(actionButton(d, QStringLiteral("Try again"), [&s, retry] {
+        s.library.rescanNow();
+        retry();
+    }));
+    d->open();
+}
+
+void showNotEnoughRam(QWidget* window, const Game& game, const EmulatorController::LaunchCheck& check, std::function<void()> retry)
+{
+    auto* d = new Dialog(window, 480);
+    begin(d, QStringLiteral("warning"), Theme::Tone::Warning, QStringLiteral("Not enough free memory to start"));
+    const qint64 floorMb = EmulatorController::kRamFloorMb;
+    const qint64 extraMb = qMax<qint64>(0, check.needMb - floorMb);
+    QString body = extraMb > 0
+        ? QStringLiteral("%1 needs %2 free to start: the %3 you set in Settings, plus the 1 GB floor XSEmu keeps free.").arg(game.title(), Format::gigabytesFromMb(check.needMb), Format::gigabytesFromMb(extraMb))
+        : QStringLiteral("XSEmu keeps 1 GB of RAM free while %1 runs, and stops the game below that.").arg(game.title());
+    body += QStringLiteral(" This PC has %1 free right now.").arg(Format::gigabytesFromMb(check.freeMb));
+    auto* text = paragraph(body);
+    d->body()->addWidget(text);
+    d->body()->addSpacing(14);
+
+    FactsBox facts = factsBox();
+    facts.add(QStringLiteral("Needed"), Format::gigabytesFromMb(check.needMb));
+    Label* freeNow = facts.add(QStringLiteral("Free now"), Format::gigabytesFromMb(check.freeMb), Theme::Role::Warning);
+    const LaunchErrors::BiggestApp big = LaunchErrors::biggestOtherApp();
+    if (!big.name.isEmpty())
+        facts.add(QStringLiteral("Biggest other app"), QStringLiteral("%1 \u00B7 %2").arg(big.name, Format::gigabytes(big.bytes)));
+    d->body()->addWidget(facts.card);
+    d->body()->addSpacing(12);
+    auto* note = paragraph(QStringLiteral("Close other apps and XSEmu starts the game as soon as enough memory is free."), Theme::Role::Text3, Label::Style::Small);
+    d->body()->addWidget(note);
+
+    auto* timer = new QTimer(d);
+    timer->setInterval(1000);
+    const qint64 need = check.needMb;
+    QObject::connect(timer, &QTimer::timeout, d, [freeNow, need] {
+        const qint64 mb = qint64(HardwareInfo::availableRam() / (1024 * 1024));
+        freeNow->setText(Format::gigabytesFromMb(mb));
+        freeNow->setRole(mb >= need ? Theme::Role::Success : Theme::Role::Warning);
+    });
+    timer->start();
+
+    d->addButton(closeButton(d, QStringLiteral("Cancel")));
+    auto* wait = new Button(QStringLiteral("Start when memory frees"), Button::Variant::Primary, Button::Size::Large);
+    QObject::connect(wait, &Button::clicked, d, [d, wait, note, timer, need, retry] {
+        wait->setEnabled(false);
+        wait->setText(QStringLiteral("Waiting for memory\u2026"));
+        note->setText(QStringLiteral("Waiting. The game starts by itself once %1 is free; Cancel stops waiting.").arg(Format::gigabytesFromMb(need)));
+        QObject::connect(timer, &QTimer::timeout, d, [d, need, retry] {
+            if (qint64(HardwareInfo::availableRam() / (1024 * 1024)) < need)
+                return;
+            d->dismiss();
+            retry();
+        });
+    });
+    d->addButton(wait);
+    d->open();
+}
+
+}
+
+bool LaunchErrors::shadersCold(Services& s, const Game& game)
+{
+    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), ShaderCacheInfo::readDefault())) {
+    case TitleShaderState::NeverWarmed:
+    case TitleShaderState::LastRunIncomplete:
+    case TitleShaderState::LastRunFailed:
+        return true;
+    case TitleShaderState::Ready:
+    case TitleShaderState::Unknown:
+        break;
+    }
+    return false;
+}
+
+void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, std::function<void()> play, std::function<void()> warmUp)
+{
+    if (!s.gate.isFree() || !shadersCold(s, game)) {
+        play();
+        return;
+    }
+    const QString alwaysKey = QStringLiteral("alwaysWarmUp");
+    if (s.settings.gameOverrides(game.titleId()).value(alwaysKey).toBool()) {
+        warmUp();
+        return;
+    }
+    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), ShaderCacheInfo::readDefault());
+    const std::optional<WarmupRun> last = lastWarmup(s, game);
+    auto* d = new Dialog(window, 460);
+    begin(d, QStringLiteral("bolt"), Theme::Tone::Warning, QStringLiteral("Warm up %1 first?").arg(game.title()));
+    QString why;
+    switch (state) {
+    case TitleShaderState::LastRunIncomplete:
+        why = last && last->total > 0 ? QStringLiteral("The last warm-up for %1 stopped part way, at %2 of %3 pipelines.").arg(game.title(), Format::count(last->done), Format::count(last->total))
+                                      : QStringLiteral("The last warm-up for %1 stopped part way.").arg(game.title());
+        break;
+    case TitleShaderState::LastRunFailed:
+        why = QStringLiteral("The last warm-up for %1 failed%2.").arg(game.title(), last ? QStringLiteral(" (exit code %1)").arg(Format::exitCode(last->exitCode)) : QString());
+        break;
+    default:
+        why = QStringLiteral("%1 has no shaders on this PC yet.").arg(game.title());
+        break;
+    }
+    why += QStringLiteral(" You can play now, but expect stutter and long stalls while each shader compiles the first time the game needs it.");
+    d->body()->addWidget(paragraph(why));
+
+    if (last && last->total > 0 && last->done > 0 && last->tookS > 0) {
+        const double estimate = last->tookS / double(last->done) * double(last->total);
+        auto* row = new QHBoxLayout;
+        row->setSpacing(8);
+        row->addWidget(new IconView(QStringLiteral("clock"), Theme::Role::Text3, 14));
+        const qint64 secs = qint64(estimate + 0.5);
+        const QString about = secs < 90 ? QStringLiteral("%1 seconds").arg(secs) : QStringLiteral("%1 minutes").arg((secs + 30) / 60);
+        row->addWidget(new Label(QStringLiteral("About %1 on this PC · %2 pipelines").arg(about, Format::count(last->total)), Label::Style::Small, Theme::Role::Text2), 1);
+        d->body()->addSpacing(16);
+        d->body()->addLayout(row);
+    }
+    auto* always = new CheckRow(QStringLiteral("Always warm up first for this game"));
+    d->body()->addSpacing(18);
+    d->body()->addWidget(always);
+
+    const QString titleId = game.titleId();
+    auto remember = [&s, always, titleId, alwaysKey] {
+        if (always->isChecked())
+            s.settings.setGameOverride(titleId, alwaysKey, true);
+    };
+    d->addButton(actionButton(d, QStringLiteral("Play anyway"), [remember, play] {
+        remember();
+        play();
+    }, Button::Variant::Secondary));
+    d->addButton(actionButton(d, QStringLiteral("Warm up first"), [remember, warmUp] {
+        remember();
+        warmUp();
+    }, Button::Variant::Primary, QStringLiteral("bolt")));
+    d->open();
 }
 
 void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& game,
                                      const EmulatorController::LaunchCheck& check, std::function<void()> retry)
 {
     using P = EmulatorController::LaunchCheck::Problem;
-    auto* d = new Dialog(window);
     switch (check.problem) {
     case P::None:
-        delete d;
+        return;
+    case P::Busy:
+        showStopFirst(window, s, game, retry);
         return;
     case P::GameFilesMissing:
-        d->setIcon(QStringLiteral("folder"), int(Theme::Tone::Danger));
-        d->setTitle(QStringLiteral("%1 can't start").arg(game.title()));
-        d->body()->addWidget(paragraph(QStringLiteral("Its folder is gone or a drive is disconnected. XSEmu looked for the game here:")));
-        d->body()->addWidget(pathBox(game.exe.isEmpty() ? game.folder : QDir(game.folder).filePath(game.exe)));
-        d->body()->addWidget(paragraph(QStringLiteral("Reconnect the drive and try again. The shader cache stays either way."), Theme::Role::Text3, Label::Style::Small));
-        d->addButton(closeButton(d));
-        d->addButton(actionButton(d, QStringLiteral("Try again"), [&s, retry] {
-            s.library.rescanNow();
-            retry();
-        }));
-        break;
-    case P::EmulatorMissing:
-        d->setIcon(QStringLiteral("file"), int(Theme::Tone::Danger));
-        d->setTitle(QStringLiteral("XSEmu.exe is missing"));
-        d->body()->addWidget(paragraph(check.reason));
-        d->body()->addWidget(pathBox(s.settings.emulatorPath()));
-        d->body()->addWidget(paragraph(QStringLiteral("Keep XSEmu.exe next to the launcher, or reinstall XSEmu."), Theme::Role::Text3, Label::Style::Small));
-        d->addButton(closeButton(d));
-        break;
-    case P::Busy:
-        d->setIcon(QStringLiteral("lock"), int(Theme::Tone::Warning));
-        d->setTitle(QStringLiteral("Stop %1 first").arg(s.gate.ownerTitle()));
-        d->body()->addWidget(paragraph(check.reason));
-        d->addButton(closeButton(d, QStringLiteral("Keep it")));
-        d->addButton(actionButton(d, s.gate.stopActionLabel(), [&s] { s.gate.stopOwner(); }, Button::Variant::Danger));
-        break;
-    case P::OtherEmulatorRunning:
-        d->setIcon(QStringLiteral("warning"), int(Theme::Tone::Warning));
-        d->setTitle(QStringLiteral("Another XSEmu is running"));
-        d->body()->addWidget(paragraph(check.reason));
-        if (!check.processes.isEmpty())
-            d->body()->addWidget(pathBox(check.processes.join(QLatin1Char('\n'))));
-        d->body()->addWidget(paragraph(QStringLiteral("Only one XSEmu process runs at a time. Close it, then try again."), Theme::Role::Text3, Label::Style::Small));
-        d->addButton(closeButton(d));
-        d->addButton(actionButton(d, QStringLiteral("Try again"), retry));
-        break;
+        showFilesMissing(window, s, game, retry);
+        return;
     case P::NotEnoughRam:
-        d->setIcon(QStringLiteral("chip"), int(Theme::Tone::Warning));
-        d->setTitle(QStringLiteral("Not enough free RAM for %1").arg(game.title()));
+        showNotEnoughRam(window, game, check, retry);
+        return;
+    case P::EmulatorMissing: {
+        auto* d = new Dialog(window, 500);
+        begin(d, QStringLiteral("file"), Theme::Tone::Danger, QStringLiteral("XSEmu.exe is missing"));
         d->body()->addWidget(paragraph(check.reason));
-        d->body()->addWidget(paragraph(QStringLiteral("Needs %1 · free now %2").arg(Format::gigabytesFromMb(check.needMb), Format::gigabytesFromMb(check.freeMb)), Theme::Role::Text, Label::Style::Number));
-        d->body()->addWidget(paragraph(QStringLiteral("Close other programs, then try again."), Theme::Role::Text3, Label::Style::Small));
-        d->addButton(closeButton(d));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(pathBox(s.settings.emulatorPath()));
+        d->body()->addSpacing(12);
+        d->body()->addWidget(paragraph(QStringLiteral("Keep XSEmu.exe next to the launcher, or reinstall XSEmu."), Theme::Role::Text3, Label::Style::Small));
+        d->addButton(closeButton(d, QStringLiteral("Close")));
+        d->open();
+        return;
+    }
+    case P::OtherEmulatorRunning: {
+        auto* d = new Dialog(window, 500);
+        begin(d, QStringLiteral("warning"), Theme::Tone::Warning, QStringLiteral("Another XSEmu is running"));
+        d->body()->addWidget(paragraph(check.reason));
+        if (!check.processes.isEmpty()) {
+            d->body()->addSpacing(12);
+            d->body()->addWidget(pathBox(check.processes.join(QLatin1Char('\n'))));
+        }
+        d->body()->addSpacing(12);
+        d->body()->addWidget(paragraph(QStringLiteral("Only one XSEmu process runs at a time. Close it, then try again."), Theme::Role::Text3, Label::Style::Small));
+        d->addButton(closeButton(d, QStringLiteral("Close")));
         d->addButton(actionButton(d, QStringLiteral("Try again"), retry));
+        d->open();
+        return;
+    }
+    }
+}
+
+QString LaunchErrors::logsFolder(const Game& game)
+{
+    return Paths::logsDir(game.titleId());
+}
+
+QString LaunchErrors::crashReport(const Game& game)
+{
+    const QString report = Paths::reportJson(game.titleId());
+    return QFileInfo::exists(report) ? report : logsFolder(game);
+}
+
+void LaunchErrors::openCrashReport(const Game& game)
+{
+    QDesktopServices::openUrl(QUrl::fromLocalFile(crashReport(game)));
+}
+
+LaunchErrors::ExitReport LaunchErrors::describeExit(const EmulatorController::ExitInfo& info)
+{
+    using K = EmulatorController::ExitInfo::Kind;
+    ExitReport r;
+    const QString title = info.game.title();
+    const QString after = info.playedSeconds >= 60 ? QStringLiteral(" after %1").arg(Format::playTime(info.playedSeconds)) : QString();
+    const QString saved = QStringLiteral(" Play time was saved and the memory is free again.");
+    switch (info.kind) {
+    case K::Stopped:
+    case K::TitleExit:
+        return r;
+    case K::DeviceRemoved: {
+        r.icon = QStringLiteral("warning");
+        r.status = QStringLiteral("Stopped \u00B7 GPU device removed");
+        r.title = QStringLiteral("The graphics driver reset");
+        const QString reason = info.message.isEmpty() ? QStringLiteral("DXGI_ERROR_DEVICE_REMOVED") : info.message;
+        r.body = QStringLiteral("Windows removed the GPU device (%1)%2. This is usually a driver timeout.").arg(reason, after) + saved;
         break;
     }
-    d->open();
+    case K::Crash:
+        r.icon = QStringLiteral("warning");
+        r.status = QStringLiteral("Stopped \u00B7 crashed");
+        r.title = QStringLiteral("%1 crashed").arg(title);
+        r.body = (info.message.isEmpty() ? QStringLiteral("XSEmu stopped unexpectedly%1.").arg(after) : info.message) + saved;
+        break;
+    case K::Error:
+        r.icon = QStringLiteral("warning");
+        r.status = QStringLiteral("Couldn't start");
+        r.title = QStringLiteral("%1 couldn't start").arg(title);
+        r.body = info.message.isEmpty() ? QStringLiteral("XSEmu reported an error while starting the game.") : info.message;
+        break;
+    }
+    const bool report = QFileInfo::exists(Paths::reportJson(info.game.titleId()));
+    r.detailPath = QDir::toNativeSeparators(report ? Paths::reportJson(info.game.titleId()) : logsFolder(info.game));
+    r.detailNote = report ? QStringLiteral("Exit code %1. The log and this crash report stay on this PC; nothing is uploaded.").arg(Format::exitCode(info.exitCode))
+                          : QStringLiteral("Exit code %1. The log stays on this PC; nothing is uploaded.").arg(Format::exitCode(info.exitCode));
+    r.openLabel = report ? QStringLiteral("Open crash report") : QStringLiteral("Open logs");
+    return r;
 }
 
 void LaunchErrors::showExit(QWidget* window, const EmulatorController::ExitInfo& info, std::function<void()> playAgain)
 {
-    using K = EmulatorController::ExitInfo::Kind;
-    if (info.kind == K::Stopped || info.kind == K::TitleExit)
+    const ExitReport r = describeExit(info);
+    if (r.title.isEmpty())
         return;
-    auto* d = new Dialog(window);
-    const QString title = info.game.title();
-    switch (info.kind) {
-    case K::Crash:
-        d->setIcon(QStringLiteral("warning"), int(Theme::Tone::Danger));
-        d->setTitle(QStringLiteral("%1 crashed").arg(title));
-        d->body()->addWidget(paragraph(info.message.isEmpty() ? QStringLiteral("XSEmu stopped unexpectedly.") : info.message));
-        break;
-    case K::DeviceRemoved:
-        d->setIcon(QStringLiteral("monitor"), int(Theme::Tone::Danger));
-        d->setTitle(QStringLiteral("The GPU stopped responding"));
-        d->body()->addWidget(paragraph(QStringLiteral("Windows reset the graphics driver while %1 was running, so XSEmu had to stop.").arg(title)));
-        if (!info.message.isEmpty())
-            d->body()->addWidget(pathBox(info.message));
-        break;
-    case K::Error:
-        d->setIcon(QStringLiteral("warning"), int(Theme::Tone::Danger));
-        d->setTitle(QStringLiteral("%1 couldn't start").arg(title));
-        d->body()->addWidget(paragraph(info.message.isEmpty() ? QStringLiteral("XSEmu reported an error while starting the game.") : info.message));
-        break;
-    case K::Stopped:
-    case K::TitleExit:
-        break;
-    }
-    d->body()->addWidget(paragraph(QStringLiteral("Exit code %1. The log and crash report are in the game's logs folder.").arg(Format::exitCode(info.exitCode)), Theme::Role::Text3, Label::Style::Small));
-    auto* logs = new Button(QStringLiteral("Open logs"), Button::Variant::Ghost, Button::Size::Large, QStringLiteral("folder"));
-    const QString folder = logsFolder(info.game);
-    QObject::connect(logs, &Button::clicked, d, [folder] { QDesktopServices::openUrl(QUrl::fromLocalFile(folder)); });
-    d->addButton(logs, true);
-    d->addButton(closeButton(d));
-    d->addButton(actionButton(d, QStringLiteral("Play again"), playAgain));
+    auto* d = new Dialog(window, 520);
+    begin(d, r.icon, r.tone, r.title);
+    d->body()->addWidget(paragraph(r.body));
+    d->body()->addSpacing(16);
+    d->body()->addWidget(pathBox(r.detailPath, r.detailNote));
+    d->addButton(actionButton(d, QStringLiteral("Relaunch"), playAgain, Button::Variant::Primary, QStringLiteral("play")), true);
+    const Game game = info.game;
+    auto* open = new Button(r.openLabel, Button::Variant::Secondary, Button::Size::Large, QStringLiteral("file"));
+    QObject::connect(open, &Button::clicked, d, [game] { openCrashReport(game); });
+    d->addButton(open, true);
+    d->addButton(closeButton(d, QStringLiteral("Back to library"), Button::Variant::Ghost));
     d->open();
+}
+
+LaunchErrors::BiggestApp LaunchErrors::biggestOtherApp()
+{
+    QHash<QString, qint64> byName;
+    const qint64 self = QCoreApplication::applicationPid();
+#ifdef Q_OS_WIN
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE)
+        return {};
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof(pe);
+    for (BOOL ok = Process32FirstW(snap, &pe); ok; ok = Process32NextW(snap, &pe)) {
+        if (qint64(pe.th32ProcessID) == self || pe.th32ProcessID == 0)
+            continue;
+        HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+        if (!h)
+            continue;
+        PROCESS_MEMORY_COUNTERS pmc{};
+        pmc.cb = sizeof(pmc);
+        if (K32GetProcessMemoryInfo(h, &pmc, sizeof(pmc)))
+            byName[QString::fromWCharArray(pe.szExeFile)] += qint64(pmc.WorkingSetSize);
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+#else
+    const QDir proc(QStringLiteral("/proc"));
+    const qint64 page = 4096;
+    for (const QString& pid : proc.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        bool numeric = false;
+        const qint64 id = pid.toLongLong(&numeric);
+        if (!numeric || id == self)
+            continue;
+        QFile comm(proc.filePath(pid + QStringLiteral("/comm")));
+        QFile statm(proc.filePath(pid + QStringLiteral("/statm")));
+        if (!comm.open(QIODevice::ReadOnly) || !statm.open(QIODevice::ReadOnly))
+            continue;
+        const QList<QByteArray> fields = statm.readAll().split(' ');
+        if (fields.size() < 2)
+            continue;
+        byName[QString::fromUtf8(comm.readAll()).trimmed()] += fields[1].toLongLong() * page;
+    }
+#endif
+    BiggestApp best;
+    for (auto it = byName.cbegin(); it != byName.cend(); ++it) {
+        if (it.value() > best.bytes) {
+            best.bytes = it.value();
+            best.name = it.key();
+        }
+    }
+    if (best.name.endsWith(QLatin1String(".exe"), Qt::CaseInsensitive))
+        best.name.chop(4);
+    if (!best.name.isEmpty())
+        best.name[0] = best.name.at(0).toUpper();
+    return best;
 }

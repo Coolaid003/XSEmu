@@ -33,7 +33,8 @@ void TestSettings::defaultsFollowTheHouseRules()
     QVERIFY(s.offline());
     QVERIFY(!s.firstLaunchDone());
     QCOMPARE(s.theme(), AppSettings::ThemeMode::System);
-    QCOMPARE(s.launchNeedMb(), 6 * 1024);
+    QCOMPARE(s.launchNeedMb(), 0);
+    QCOMPARE(s.librarySort(), QStringLiteral("recent"));
     QVERIFY(s.artLookups());
     QVERIFY(s.steamGridDbKey().isEmpty());
 }

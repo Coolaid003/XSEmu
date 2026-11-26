@@ -83,7 +83,7 @@ QString ago(const QDateTime& when, const QDateTime& now)
 QString exitCode(int code)
 {
     const quint32 u = static_cast<quint32>(code);
-    if (u >= 0xC0000000u)
+    if (u >= 0x80000000u) // NTSTATUS and HRESULT codes (0xC0000005, 0x887A0006) read in hex
         return QStringLiteral("0x%1").arg(u, 8, 16, QLatin1Char('0')).toUpper().replace(QLatin1String("0X"), QLatin1String("0x"));
     return QString::number(code);
 }

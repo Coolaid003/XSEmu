@@ -95,6 +95,8 @@ public:
     bool pipeConnected() const { return m_socket != nullptr; }
     std::optional<ExitInfo> lastExit() const { return m_lastExit; }
     QString pipeName() const { return m_pipeName; }
+    // Seconds since the game first reported running this session (pauses included), 0 before.
+    qint64 sessionSeconds() const { return m_playClock.isValid() ? m_playClock.elapsed() / 1000 : 0; }
 
     // The command line and environment start() uses (tested).
     static QStringList runArguments(const QString& gameFolder, quintptr hostWindow, const QString& pipeName);

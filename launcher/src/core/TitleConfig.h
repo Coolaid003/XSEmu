@@ -27,10 +27,14 @@ public:
     // with only these keys. Returns false and leaves the file untouched when it cannot be written.
     bool set(const QString& key, const QVariant& value);
     bool set(const QVariantMap& values);
+    // Remove top-level keys (the emulator's default applies again) and write the file. Comments,
+    // tables and every other line stay. Nothing to remove (or no file) is a success.
+    bool remove(const QStringList& keys);
 
     // Pure text transforms behind the above (unit-tested).
     static QVariantMap parse(const QString& text);
     static QString apply(const QString& text, const QVariantMap& values);
+    static QString without(const QString& text, const QStringList& keys);
     static QString formatValue(const QVariant& value);
 
 private:
