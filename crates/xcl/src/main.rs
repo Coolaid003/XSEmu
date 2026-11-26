@@ -132,15 +132,79 @@ fn warm_up_giants(floor_mb: u64) -> i32 {
     }
 }
 
+/// `--progress-json`: the stdout the launcher reads, for the JSON lines alone; the process's
+/// stdout handle is pointed at stderr, so whatever else XCL prints goes there.
+struct JsonOut(std::sync::Mutex<std::fs::File>);
+
+impl JsonOut {
+    fn take_stdout() -> JsonOut {
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::System::Console::{GetStdHandle, SetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+        unsafe {
+            let stdout = GetStdHandle(STD_OUTPUT_HANDLE);
+            SetStdHandle(STD_OUTPUT_HANDLE, GetStdHandle(STD_ERROR_HANDLE));
+            JsonOut(std::sync::Mutex::new(std::fs::File::from_raw_handle(stdout)))
+        }
+    }
+
+    fn emit(&self, e: &xcl::warm_up_json::Event) {
+        use std::io::Write;
+        let mut out = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let _ = writeln!(out, "{}", xcl::warm_up_json::line(e));
+        let _ = out.flush();
+    }
+}
+
 /// `xcl warm-up`: `real::warm_up`, with its progress and result on the console: with
 /// `XCL_PROGRESS` on (the default) a line at most every second with the blobs built, the DXIL
-/// they came from, the driver compiles in flight and the RAM free.
-fn warm_up(full: bool) -> i32 {
+/// they came from, the driver compiles in flight and the RAM free. `--progress-json`: the
+/// launcher's JSON lines on stdout instead (docs/launcher-protocol.md), the console's text on
+/// stderr, and `{"cmd":"cancel"}` or the end of stdin cancels (exit code 4).
+fn warm_up(args: xcl::warm_up_json::Args) -> i32 {
+    use xcl::hle::d3d12x::real::WarmStatus;
+    use xcl::warm_up_json::{phase_id, Event, Rate};
+    let full = args.full;
+    let out = args.progress_json.then(JsonOut::take_stdout);
     let others = other_xcl_processes();
     if !others.is_empty() {
         eprintln!("xcl warm-up: refusing to start – another XCL process is running ({}); one XCL process tree at a time: stop it or wait for it to end", others.join(", "));
+        if let Some(out) = &out {
+            out.emit(&Event::Error { message: format!("another XSEmu process is running ({})", others.join(", ")) });
+        }
         return 3;
     }
+    if out.is_some() {
+        let _ = std::thread::Builder::new().name("xcl-warm-up-stdin".into()).spawn(|| {
+            let why = xcl::warm_up_json::wait_for_cancel(std::io::stdin().lock());
+            eprintln!("xcl warm-up: cancel ({why:?}): no more builds start, those running finish");
+            xcl::hle::d3d12x::real::cancel_warm_up();
+        });
+    }
+    let reported = std::sync::Mutex::new((Rate::new(std::time::Instant::now()), None::<WarmStatus>));
+    let status = |s: &WarmStatus| {
+        let Some(out) = &out else { return };
+        let mut reported = reported.lock().unwrap_or_else(|e| e.into_inner());
+        let (rate, last) = &mut *reported;
+        if last.is_none() {
+            out.emit(&Event::WarmupStart { total: s.pipelines, full, threads: s.threads });
+        }
+        *last = Some(*s);
+        let phase = phase_id(s.phase);
+        let (keys_per_s, eta_s) = rate.at(phase, s.done, s.total, std::time::Instant::now());
+        out.emit(&Event::WarmupProgress {
+            done: s.done,
+            total: s.total,
+            keys_per_s,
+            eta_s,
+            ram_free_mb: xcl::hle::d3d12x::real::available_physical() >> 20,
+            giants_compiling: s.giants,
+            giants_max: s.giants_max,
+            in_flight: s.in_flight,
+            failed: s.failed,
+            phase,
+            paused_for_ram: s.short_of_ram,
+        });
+    };
     let dxil = std::sync::atomic::AtomicU64::new(0);
     let last = std::sync::Mutex::new(None::<std::time::Instant>);
     let report = |done: usize, total: usize, len: usize, took: std::time::Duration, hash: u64| {
@@ -168,7 +232,7 @@ fn warm_up(full: bool) -> i32 {
             took.as_secs_f32()
         );
     };
-    match xcl::hle::d3d12x::real::warm_up(full, report) {
+    match xcl::hle::d3d12x::real::warm_up(full, report, &status) {
         Ok(w) => {
             println!(
                 "warm-up{}: {} pipelines earlier runs made ({} kept entries dropped), {} last made in this translation, {} stale left out (none made by the last {} of {} runs){}; {} compute programs, {} driver blobs kept already, {} too big for the memory limits; {} stale blobs deleted ({} MB); {:.0} s on {} threads, peak commit {} MB",
@@ -207,10 +271,29 @@ fn warm_up(full: bool) -> i32 {
                 );
             }
             println!("warm-up shaders: {}", xcl::gpu::recomp::dxc::stage_summary());
-            (w.failed() != 0) as i32
+            let code = if w.cancelled { 4 } else { (w.failed() != 0) as i32 };
+            if let Some(out) = &out {
+                let last = reported.lock().unwrap_or_else(|e| e.into_inner()).1;
+                if let (Some(last), Some(p)) = (last, w.phases.last()) {
+                    status(&WarmStatus { phase: p.name, done: p.of.saturating_sub(p.not_started), total: p.of, failed: w.failed(), in_flight: 0, giants: 0, short_of_ram: false, ..last });
+                }
+                out.emit(&Event::WarmupDone {
+                    built: w.phases.iter().map(|p| p.built).sum(),
+                    failed: w.failed(),
+                    too_big: w.too_big(),
+                    took_s: (w.took.as_secs_f64() * 10.0).round() / 10.0,
+                    complete: w.phases.iter().all(|p| p.not_started == 0),
+                    cancelled: w.cancelled,
+                    code,
+                });
+            }
+            code
         }
         Err(e) => {
             eprintln!("xcl warm-up: no D3D12 device: {e}");
+            if let Some(out) = &out {
+                out.emit(&Event::Error { message: format!("no D3D12 device: {e}") });
+            }
             2
         }
     }
@@ -267,7 +350,7 @@ fn main() {
                 }
             }
         }
-        Some("warm-up") => warm_up(args.iter().any(|a| a == "--full")),
+        Some("warm-up") => warm_up(xcl::warm_up_json::warm_up_args(&args[1..])),
         Some("--version") | Some("-V") => {
             println!("XSEmu {}", env!("CARGO_PKG_VERSION"));
             0

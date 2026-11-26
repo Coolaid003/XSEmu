@@ -4153,6 +4153,8 @@ enum Refused {
     /// a run's background compile nothing waits for that does not fit now: its build is put off
     /// and its worker goes on with the next (`pso_async::put_off`)
     NoRoom,
+    /// a warm-up's compile not started because the warm-up was cancelled (`cancel_warm_up`)
+    Cancelled,
 }
 
 static HEADROOM: Mutex<(Option<std::time::Instant>, super::pso_sched::Headroom, super::pso_sched::TitleReserve, u64)> =
@@ -4414,6 +4416,10 @@ impl Governor {
         let mut starving = false;
         let id = std::thread::current().id();
         let (urgent, available_at_idle_break) = loop {
+            if give_up && WARM_UP_CANCEL.load(Ordering::Relaxed) {
+                s.starving -= starving as usize;
+                return Err(Refused::Cancelled);
+            }
             let wanted = demand() != DriverDemand::Background;
             // A bind waiting for room takes precedence over speculative builds.
             if wanted != starving {
@@ -4424,7 +4430,8 @@ impl Governor {
                 }
                 starving = wanted;
             }
-            let (verdict, available) = self.verdict(&s, starving, dxil_len, wanted, most, cap, floor(s.urgent));
+            let room_floor = floor(s.urgent);
+            let (verdict, available) = self.verdict(&s, starving, dxil_len, wanted, most, cap, room_floor);
             match verdict {
                 Verdict::Urgent => break (true, None),
                 Verdict::Background => break (false, None),
@@ -4433,6 +4440,10 @@ impl Governor {
             if !wait {
                 s.starving -= starving as usize;
                 return Err(Refused::NoRoom);
+            }
+            let kept = if wanted { URGENT_FLOOR } else { room_floor.unwrap_or_else(keep_free).max(URGENT_FLOOR) };
+            if available.saturating_sub(s.reserved) < kept + cost {
+                RAM_HOLDS.fetch_add(1, Ordering::Relaxed);
             }
             let running = s.running;
             if !give_up && cap.is_none() && s.idle_breaker.hold(id, demand() == DriverDemand::Blocking, running, available, URGENT_FLOOR, std::time::Instant::now()) {
@@ -4761,7 +4772,7 @@ fn driver_slot(dxil_len: usize, warm: bool, what: impl FnOnce() -> String) -> Re
         }
         Err(Refused::TooBig) => crate::xlog_warn!("D3D12.X: {}: {dxil_len} B of DXIL – too big to build within the memory limits, left for its first bind", what()),
         Err(Refused::Later) => eprintln!("  {}: {dxil_len} B of DXIL – no room now ({} MB available), tried again at the end of the phase", what(), available_physical() >> 20),
-        Err(Refused::Giant) => {}
+        Err(Refused::Giant | Refused::Cancelled) => {}
         Err(Refused::NoMemory) => {
             COMPILE_FAILURES.fetch_add(1, Ordering::Relaxed);
             let why = format!(
@@ -4804,6 +4815,22 @@ thread_local! {
 
 /// The private memory `xcl warm-up` keeps within (`DRIVER_COMPILES`).
 const WARM_UP_COMMIT: u64 = 12 << 30;
+
+/// `cancel_warm_up` was called
+static WARM_UP_CANCEL: AtomicBool = AtomicBool::new(false);
+/// times a compile waiting for a slot found the memory short of its floor (`WarmStatus::short_of_ram`)
+static RAM_HOLDS: AtomicUsize = AtomicUsize::new(0);
+
+/// `warm_up` starts no more builds: a compile waiting for its slot gives up, those running
+/// finish, and what was built stays (driver blobs, and the `--full` record of the pipelines gone
+/// through, written as each one is), so the next warm-up goes on from there.
+pub fn cancel_warm_up() {
+    WARM_UP_CANCEL.store(true, Ordering::Relaxed);
+}
+
+fn warm_up_cancelled() -> bool {
+    WARM_UP_CANCEL.load(Ordering::Relaxed)
+}
 
 #[derive(Default)]
 pub struct WarmMesh {
@@ -5071,6 +5098,8 @@ pub struct WarmUp {
     /// this pass went through the rest (the next one starts again)
     pub resumed: usize,
     pub complete: bool,
+    /// `cancel_warm_up` stopped it with builds not started (`WarmPhase::not_started`)
+    pub cancelled: bool,
     pub phases: Vec<WarmPhase>,
     /// translated compute programs on disk, their blobs kept already
     pub programs: usize,
@@ -5092,6 +5121,27 @@ impl WarmUp {
     }
 }
 
+/// How `warm_up` is getting on, told about once a second (`xcl warm-up --progress-json`).
+#[derive(Clone, Copy, Debug)]
+pub struct WarmStatus {
+    pub phase: &'static str,
+    /// builds of the phase gone through, of `total` (as `warm_up`'s `progress` counts them)
+    pub done: usize,
+    pub total: usize,
+    /// builds that failed, in this phase and those before
+    pub failed: usize,
+    /// the pipelines this pass goes through (the phases' kept pipelines; giants and compute blobs
+    /// are found as their phases start) and the threads it builds on
+    pub pipelines: usize,
+    pub threads: usize,
+    /// driver compiles in flight (`DRIVER_COMPILES`), the giants among them, and the most giants at once
+    pub in_flight: usize,
+    pub giants: usize,
+    pub giants_max: usize,
+    /// a compile waited for its slot with the memory short of its floor since the last report
+    pub short_of_ram: bool,
+}
+
 /// Rounds a warm-up phase tries again the builds it had no room for (`Refused::Later`).
 const RETRY_ROUNDS: usize = 3;
 
@@ -5110,8 +5160,9 @@ const WARM_UP_BUDGET: std::time::Duration = std::time::Duration::from_secs(20 * 
 /// pipeline and giant with no budget, going on where a pass of this translation era stopped.
 /// Builds run on every core within the memory left (`DRIVER_COMPILES`, the private memory within
 /// `WARM_UP_COMMIT`); the memory available and the builds running are logged every 10 s.
-/// `progress` is told of each one built (done, of, bytes, how long, its key or DXIL hash).
-pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Duration, u64) + Sync) -> Result<WarmUp, String> {
+/// `progress` is told of each one built (done, of, bytes, how long, its key or DXIL hash), `status`
+/// about once a second from when the builds start. After `cancel_warm_up` no build starts.
+pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Duration, u64) + Sync, status: impl Fn(&WarmStatus) + Sync) -> Result<WarmUp, String> {
     use super::pso_manifest::{Kind, Record};
     let started = std::time::Instant::now();
     init()?;
@@ -5119,6 +5170,7 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
     let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).max(GIANTS_AT_ONCE + 1);
     let done = std::sync::atomic::AtomicBool::new(false);
     let (built, failed, left, big) = (AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0), AtomicUsize::new(0));
+    let failed_before = AtomicUsize::new(0);
     let (phase, phase_total) = (std::sync::Mutex::new("pipelines"), AtomicUsize::new(0));
     let store = super::pso_manifest::Store::open(super::pso_manifest::dir());
     let loaded = store.load();
@@ -5164,8 +5216,9 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
     let budget = (!full).then(|| std::env::var("XCL_WARMUP_BUDGET_S").ok().and_then(|v| v.trim().parse().ok()).map_or(WARM_UP_BUDGET, std::time::Duration::from_secs));
     let mut phases = Vec::new();
     let (mut programs_found, mut kept, mut pruned) = (0, 0, (0, 0));
+    let targets = bound.len() + compute.len() + rest.len();
     std::thread::scope(|s| {
-        let (done, built, failed, left, big, phase, phase_total) = (&done, &built, &failed, &left, &big, &phase, &phase_total);
+        let (done, built, failed, left, big, phase, phase_total, failed_before, status) = (&done, &built, &failed, &left, &big, &phase, &phase_total, &failed_before, &status);
         // the logger ends with the builds, however they end (a panic unwinding out of here waited
         // for it for ever)
         struct Done<'a>(&'a std::sync::atomic::AtomicBool);
@@ -5180,8 +5233,31 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
         s.spawn(move || {
             let mut last = std::time::Instant::now();
             let mut last_dump = std::time::Instant::now();
+            let mut ram_holds = RAM_HOLDS.load(Ordering::Relaxed);
+            let mut tell = || {
+                let (n, g, _) = DRIVER_COMPILES.in_flight();
+                let holds = RAM_HOLDS.load(Ordering::Relaxed);
+                status(&WarmStatus {
+                    phase: *phase.lock().unwrap(),
+                    done: built.load(Ordering::Relaxed) + failed.load(Ordering::Relaxed) + left.load(Ordering::Relaxed) + big.load(Ordering::Relaxed),
+                    total: phase_total.load(Ordering::Relaxed),
+                    failed: failed_before.load(Ordering::Relaxed) + failed.load(Ordering::Relaxed),
+                    pipelines: targets,
+                    threads,
+                    in_flight: n,
+                    giants: g,
+                    giants_max: GIANTS_AT_ONCE,
+                    short_of_ram: std::mem::replace(&mut ram_holds, holds) != holds,
+                });
+            };
+            tell();
+            let mut last_status = std::time::Instant::now();
             while !done.load(Ordering::Acquire) {
                 std::thread::sleep(std::time::Duration::from_millis(250));
+                if last_status.elapsed() >= std::time::Duration::from_secs(1) {
+                    last_status = std::time::Instant::now();
+                    tell();
+                }
                 if dump_every.is_some_and(|n| last_dump.elapsed() >= n) && *phase.lock().unwrap() == "the rest" {
                     last_dump = std::time::Instant::now();
                     crate::eh::dump_threads();
@@ -5206,7 +5282,11 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
             name,
             of,
             built: built.swap(0, Ordering::Relaxed),
-            failed: failed.swap(0, Ordering::Relaxed),
+            failed: {
+                let n = failed.swap(0, Ordering::Relaxed);
+                failed_before.fetch_add(n, Ordering::Relaxed);
+                n
+            },
             giants_left: left.swap(0, Ordering::Relaxed),
             too_big: big.swap(0, Ordering::Relaxed),
             not_started,
@@ -5228,7 +5308,7 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                         let _ = std::thread::Builder::new().name(format!("xcl-pso-warm-{k}")).stack_size(64 << 20).spawn_scoped(w, move || {
                             WARMING_UP.with(|c| c.set(Some(threads)));
                             LEAVE_GIANTS.with(|c| c.set(leave_giants));
-                            while deadline.is_none_or(|d| std::time::Instant::now() < d) {
+                            while deadline.is_none_or(|d| std::time::Instant::now() < d) && !warm_up_cancelled() {
                                 let Some(&p) = queue.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
                                 let (r, key) = (&p.0, p.1);
                                 let t0 = std::time::Instant::now();
@@ -5247,7 +5327,7 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                                 }
                                 match REFUSED.with(|c| c.get()) {
                                     Some(Refused::Giant) => drop(left.fetch_add(1, Ordering::Relaxed)),
-                                    Some(Refused::Later) => later.lock().unwrap().push(p),
+                                    Some(Refused::Later | Refused::Cancelled) => later.lock().unwrap().push(p),
                                     Some(Refused::TooBig) => drop(big.fetch_add(1, Ordering::Relaxed)),
                                     _ => {
                                         (if ok { built } else { failed }).fetch_add(1, Ordering::Relaxed);
@@ -5263,6 +5343,9 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                 });
                 not_started += queue.len().saturating_sub(next.into_inner());
                 queue = later.into_inner().unwrap();
+                if warm_up_cancelled() {
+                    not_started += std::mem::take(&mut queue).len();
+                }
                 if queue.is_empty() {
                     break;
                 }
@@ -5284,9 +5367,15 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
             trim_mapped_files();
             let giants = giants_without_blob();
             phase_total.store(giants.len(), Ordering::Relaxed);
-            for c in &giants {
+            let mut not_started = 0;
+            for (k, c) in giants.iter().enumerate() {
                 let (hash, len) = (crate::gpu::shader::fnv64(&c.dxil), c.dxil.len());
-                let Ok(slot) = DRIVER_COMPILES.acquire(len, 1, None, true, || false) else {
+                let slot = DRIVER_COMPILES.acquire(len, 1, None, true, || false);
+                if matches!(slot, Err(Refused::Cancelled)) {
+                    not_started = giants.len() - k;
+                    break;
+                }
+                let Ok(slot) = slot else {
                     eprintln!("  giants first: DXIL {hash:016x} ({len} B, ~{} MB expected peak) does not fit with {} MB available: for `xcl warm-up --giants-only`", peak(len) >> 20, available_physical() >> 20);
                     big.fetch_add(1, Ordering::Relaxed);
                     continue;
@@ -5297,7 +5386,7 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                 eprintln!("  giants first: DXIL {hash:016x} ({len} B): {} in {:.0} s", if ok { "built" } else { "the driver build failed" }, t1.elapsed().as_secs_f64());
                 (if ok { built } else { failed }).fetch_add(1, Ordering::Relaxed);
             }
-            phases.push(finish("giants first", giants.len(), 0, t0));
+            phases.push(finish("giants first", giants.len(), not_started, t0));
         }
         phases.push(run("bound by an earlier run", &bound, false, None));
         phases.push(run("compute pipelines", &compute, !full, None));
@@ -5321,13 +5410,14 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
             left.fetch_add(giants, Ordering::Relaxed);
             programs[giants..].iter().collect()
         };
+        let mut blobs_not_started = 0;
         for round in 0..=RETRY_ROUNDS {
             let (next, later) = (AtomicUsize::new(0), Mutex::new(Vec::new()));
             let build = |c: &'_ crate::gpu::recomp::pso::Compiled| {
                 let hash = crate::gpu::shader::fnv64(&c.dxil);
                 let slot = match DRIVER_COMPILES.acquire(c.dxil.len(), threads.min(SMALL_AT_ONCE), Some(WARM_UP_COMMIT), true, || false) {
                     Ok(slot) => slot,
-                    Err(Refused::Later) => return false,
+                    Err(Refused::Later | Refused::Cancelled) => return false,
                     Err(_) => {
                         eprintln!("  too big to build within the memory limits: DXIL {hash:016x} ({} B)", c.dxil.len());
                         big.fetch_add(1, Ordering::Relaxed);
@@ -5348,7 +5438,8 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                 for _ in 0..threads {
                     let (build, next, later, queue) = (&build, &next, &later, &queue);
                     w.spawn(move || {
-                        while let Some(&c) = queue.get(next.fetch_add(1, Ordering::Relaxed)) {
+                        while !warm_up_cancelled() {
+                            let Some(&c) = queue.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
                             if !build(c) {
                                 later.lock().unwrap().push(c);
                             }
@@ -5356,7 +5447,11 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
                     });
                 }
             });
+            blobs_not_started += queue.len().saturating_sub(next.into_inner());
             queue = later.into_inner().unwrap();
+            if warm_up_cancelled() {
+                blobs_not_started += std::mem::take(&mut queue).len();
+            }
             if queue.is_empty() {
                 break;
             }
@@ -5368,9 +5463,10 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
             eprintln!("  compute blobs: DXIL {:016x} ({} B) still had no room after {RETRY_ROUNDS} retries: too big for now", crate::gpu::shader::fnv64(&c.dxil), c.dxil.len());
         }
         big.fetch_add(queue.len(), Ordering::Relaxed);
-        phases.push(finish("compute blobs", total, 0, t0));
+        phases.push(finish("compute blobs", total, blobs_not_started, t0));
         phases.push(run("the rest", &rest, false, budget));
     });
+    let cancelled = warm_up_cancelled() && phases.iter().any(|p| p.not_started != 0);
     let complete = record.is_some() && phases.iter().all(|p| p.not_started == 0);
     if complete {
         store.progress_complete();
@@ -5390,6 +5486,7 @@ pub fn warm_up(full: bool, progress: impl Fn(usize, usize, usize, std::time::Dur
         runs: creations.runs,
         resumed,
         complete,
+        cancelled,
         phases,
         programs: programs_found,
         kept,
