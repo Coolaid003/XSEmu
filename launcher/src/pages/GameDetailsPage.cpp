@@ -443,12 +443,16 @@ void GameDetailsPage::onStats()
         m_freeMinMb = -1;
     }
     const EmulatorController::Stats s = m_s.emulator.stats();
-    if (st == EmulatorController::State::Running && s.fps) {
-        m_fpsSum += *s.fps;
-        ++m_fpsSamples;
+    // statsChanged also fires for memory polls and the overlay: sum each protocol sample once
+    if (s.sample != 0 && s.sample != m_lastSample) {
+        m_lastSample = s.sample;
+        if (st == EmulatorController::State::Running && s.fps) {
+            m_fpsSum += *s.fps;
+            ++m_fpsSamples;
+        }
+        if (s.stalls)
+            m_stalls += *s.stalls;
     }
-    if (s.stalls)
-        m_stalls += *s.stalls;
     if (s.worstMs)
         m_worstMs = qMax(m_worstMs, *s.worstMs);
     if (s.heldBytes > m_heldPeak)

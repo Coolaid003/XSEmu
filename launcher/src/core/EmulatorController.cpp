@@ -381,7 +381,7 @@ void EmulatorController::handle(const Protocol::Event& ev)
         }
     } else if (const auto* st = std::get_if<Protocol::Stats>(&ev)) {
         const qint64 held = m_stats.heldBytes;
-        m_stats = Stats{st->fps, st->frameMs, st->ramFreeMb, st->vramUsedMb, st->vramBudgetMb, st->stalls, st->worstMs, st->pipelines, st->compiling, held};
+        m_stats = Stats{st->fps, st->frameMs, st->ramFreeMb, st->vramUsedMb, st->vramBudgetMb, st->stalls, st->worstMs, st->pipelines, st->compiling, held, ++m_statsSamples};
         emit statsChanged();
     } else if (const auto* k = std::get_if<Protocol::Key>(&ev)) {
         emit keyPressed(k->key);

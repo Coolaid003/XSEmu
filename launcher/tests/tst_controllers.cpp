@@ -245,7 +245,12 @@ void TestControllers::gameRunPauseResumeStop()
     QTRY_VERIFY_WITH_TIMEOUT(emu.stats().heldBytes > 0, 5000);
     emu.resume();
     QTRY_COMPARE_WITH_TIMEOUT(emu.state(), EmulatorController::State::Running, 5000);
+    // each protocol stats message is one sample; an overlay toggle is not a new one
+    QVERIFY(emu.stats().sample > 0);
+    const quint64 before = emu.stats().sample;
     emu.setOverlay(true);
+    QCOMPARE(emu.stats().sample, before);
+    QTRY_VERIFY_WITH_TIMEOUT(emu.stats().sample > before, 5000);
     emu.stop();
     QCOMPARE(emu.state(), EmulatorController::State::Stopping);
     QVERIFY(exited.wait(10000));

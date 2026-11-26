@@ -49,6 +49,7 @@ public:
         std::optional<qint64> pipelines;
         std::optional<qint64> compiling;
         qint64 heldBytes = -1; // private memory of the XSEmu tree (-1: unknown)
+        quint64 sample = 0;    // which protocol stats message these are; grows across runs, 0: none yet
     };
 
     struct ExitInfo {
@@ -161,6 +162,7 @@ private:
     QTimer m_killTimer;
     QTimer m_memoryTimer;
     QElapsedTimer m_playClock;
+    quint64 m_statsSamples = 0; // protocol stats messages received, never reset
     QElapsedTimer m_launchClock;
     qint64 m_helloAfterMs = -1;
     qint64 m_playedMs = 0;

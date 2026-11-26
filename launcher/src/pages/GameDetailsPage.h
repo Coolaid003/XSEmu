@@ -58,6 +58,7 @@ private:
     double m_fpsSum = 0;
     int m_fpsSamples = 0;
     qint64 m_stalls = 0;
+    quint64 m_lastSample = 0; // the stats sample already added to the sums
     double m_worstMs = 0;
     qint64 m_heldPeak = -1;
     qint64 m_freeMinMb = -1;
