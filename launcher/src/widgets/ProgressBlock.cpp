@@ -151,6 +151,12 @@ void ProgressBlock::setState(State state)
         disc->fill = soft(Theme::Tone::Success);
         bar->color = Theme::color(Theme::Role::Success);
         break;
+    case State::Warning:
+        m_glyph->setIcon(QStringLiteral("warning"));
+        m_glyph->setRole(Theme::Role::Warning);
+        disc->fill = soft(Theme::Tone::Warning);
+        bar->color = Theme::color(Theme::Role::Warning);
+        break;
     case State::Cancelled:
         m_glyph->setIcon(QStringLiteral("close"));
         m_glyph->setRole(Theme::Role::Text2);

@@ -252,6 +252,12 @@ bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, Q
     const QString program = m_runners->status(spec.id).executable;
     const QString exe = QDir(game.folder).filePath(game.exe);
     const auto tokens = spec.tokens(game.folder, exe, game.titleId(), LaunchConfig::deviceType(m_settings, game.titleId()), 0);
+    if (const QString why = spec.writeConfig(tokens); !why.isEmpty()) {
+        if (error)
+            *error = why;
+        m_gate.release(ProcessGate::Owner::Game);
+        return false;
+    }
     auto* p = new ProcessTree(this);
     m_process = p;
     p->setProcessEnvironment(spec.processEnvironment(tokens));
@@ -266,7 +272,6 @@ bool EmulatorController::startRunner(const RunnerSpec& spec, const Game& game, Q
         if (e == QProcess::FailedToStart)
             onFinished(-1, static_cast<int>(QProcess::CrashExit));
     });
-    Q_UNUSED(error);
     m_windowReady = spec.windowReadyLine.isEmpty();
     m_killTimer.setInterval(spec.stopGraceMs);
     setState(State::Booting);

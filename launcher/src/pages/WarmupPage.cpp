@@ -132,6 +132,7 @@ RunResult runResult(const WarmupRun& run)
     case WarmupRun::Result::StoppedPartWay:
         return {run.stoppedForRam ? QStringLiteral("Stopped · free RAM below 1 GB") : QStringLiteral("Stopped part way"), Theme::Tone::Warning};
     case WarmupRun::Result::Failed: return {QStringLiteral("Failed · exit code %1").arg(Format::exitCode(run.exitCode)), Theme::Tone::Danger};
+    case WarmupRun::Result::NothingToBuild: return {QStringLiteral("Nothing to build yet"), Theme::Tone::Warning};
     }
     return {};
 }
@@ -600,6 +601,19 @@ void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool 
         m_block->setColumns({});
         switch (st) {
         case State::Finished:
+            if (run.result == WarmupRun::Result::NothingToBuild) {
+                m_block->setState(ProgressBlock::State::Warning);
+                m_block->setTitle(QStringLiteral("Nothing to build yet"));
+                m_block->setSubtitle(joined({m_s.warmup.game().title(), version}));
+                m_block->setFraction(-1);
+                m_block->setNote(run.message);
+                m_resume->setText(QStringLiteral("Run again"));
+                m_resume->show();
+                m_log->setEnabled(QFileInfo::exists(WarmupController::logPath()));
+                m_log->show();
+                m_dismiss->show();
+                return;
+            }
             m_block->setState(ProgressBlock::State::Finished);
             if (run.total <= 0) {
                 m_block->setTitle(QStringLiteral("Nothing to pre-cache yet"));
@@ -615,6 +629,8 @@ void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool 
                                      {QStringLiteral("Free RAM"), freeRam}});
                 if (run.failed > 0)
                     m_block->setNote(QStringLiteral("%1 pipelines failed to build; %2 builds them when the game needs them. The log names them.").arg(Format::count(run.failed), spec.name));
+                else if (!run.message.isEmpty())
+                    m_block->setNote(run.message);
             }
             if (m_s.warmup.game().isValid() && m_s.gate.isFree()) {
                 const QString name = m_s.warmup.game().title();
@@ -664,10 +680,14 @@ void WarmupPage::refreshRunner(const RunnerSpec& spec, const Game& picked, bool 
         m_block->setTitle(QStringLiteral("%1 is pre-cached with %2").arg(name, spec.name));
     else if (last && last->result == WarmupRun::Result::Failed)
         m_block->setTitle(QStringLiteral("%1's last pre-cache with %2 failed").arg(name, spec.name));
+    else if (last && last->result == WarmupRun::Result::NothingToBuild)
+        m_block->setTitle(QStringLiteral("%1's last pre-cache with %2 had nothing to build").arg(name, spec.name));
     else
         m_block->setTitle(QStringLiteral("%1 runs with %2").arg(name, spec.name));
     m_block->setSubtitle(last ? QStringLiteral("last run %1").arg(Format::ago(last->finishedAt).toLower()) : version);
-    m_block->setNote(spec.precache.isEmpty() ? QStringLiteral("%1 has no shader pre-cache; it builds what it needs while the game runs.").arg(spec.name) : spec.precacheNote);
+    m_block->setNote(spec.precache.isEmpty()                                                    ? QStringLiteral("%1 has no shader pre-cache; it builds what it needs while the game runs.").arg(spec.name)
+                     : last && last->result == WarmupRun::Result::NothingToBuild && !last->message.isEmpty() ? last->message
+                                                                                                             : spec.precacheNote);
     m_warm->setText(QStringLiteral("Pre-cache with %1").arg(spec.name));
     m_warm->setEnabled(cannot.isEmpty());
     m_warm->setToolTip(cannot);

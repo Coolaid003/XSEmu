@@ -5,6 +5,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSaveFile>
 #include <QThread>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -60,6 +61,7 @@ QList<QPair<QString, QString>> RunnerSpec::tokens(const QString& gameDir, const 
             {QStringLiteral("console"), deviceType == QLatin1String("anaconda") ? QStringLiteral("series-x") : QStringLiteral("series-s")},
             {QStringLiteral("runnerDir"), native(dataDir())},
             {QStringLiteral("installDir"), native(installDir())},
+            {QStringLiteral("cacheDir"), native(resolvedCacheDir())},
             {QStringLiteral("jobs"), QString::number(qMax(1, QThread::idealThreadCount()))},
             {QStringLiteral("rtFlag"), QStringLiteral("--no-rt")},
             {QStringLiteral("hostHwnd"), QStringLiteral("0x%1").arg(hostHwnd, 0, 16)}};
@@ -83,6 +85,32 @@ QProcessEnvironment RunnerSpec::processEnvironment(const QList<QPair<QString, QS
             QDir().mkpath(v);
     }
     return env;
+}
+
+QString RunnerSpec::writeConfig(const QList<QPair<QString, QString>>& values) const
+{
+    if (configFile.isEmpty())
+        return {};
+    const auto quoted = [](QString s) {
+        s.replace(QLatin1Char('\\'), QLatin1String("\\\\")).replace(QLatin1Char('"'), QLatin1String("\\\""));
+        return QLatin1Char('"') + s + QLatin1Char('"');
+    };
+    QString text = QStringLiteral("# Written by XSEmu before every run and pre-cache of %1; changes here are replaced.\n[paths]\n").arg(name);
+    for (const ConfigPath& p : configPaths) {
+        const QString value = expand(p.value, values);
+        if (value.isEmpty())
+            continue;
+        const QString path = QDir::toNativeSeparators(QDir::cleanPath(value));
+        if (p.create && !QDir().mkpath(path))
+            return QStringLiteral("XSEmu could not create %1.").arg(path);
+        text += p.key + QStringLiteral(" = ") + quoted(path) + QLatin1Char('\n');
+    }
+    const QString file = QDir::cleanPath(expand(configFile, values));
+    QDir().mkpath(QFileInfo(file).absolutePath());
+    QSaveFile f(file);
+    if (!f.open(QIODevice::WriteOnly) || f.write(text.toUtf8()) < 0 || !f.commit())
+        return QStringLiteral("XSEmu could not write %1: %2").arg(QDir::toNativeSeparators(file), f.errorString());
+    return {};
 }
 
 QString RunnerSpec::cloneUrl() const
@@ -134,7 +162,16 @@ QList<RunnerSpec> build()
     // forks publish no releases: they are built on this PC from the pinned commit (we never
     // redistribute builds). Neither may be reparented: the game's top-level window lives on its game
     // thread, which stalls for seconds, and keyboard input is gated on it being the foreground window.
+    // Both read [paths] from VICTORY_CONFIG and stop when it names a file that is not there, and both
+    // refuse keys they do not know: only game_dir, cache_dir and data_dir are written. The cache and data
+    // sit beside the install (bin\), so they move with the runner.
     const QString victoryCache = QStringLiteral("{runnerDir}/cache");
+    const QList<QPair<QString, QString>> victoryEnvironment = {{QStringLiteral("VICTORY_CONFIG"), QStringLiteral("{runnerDir}/data/victory.toml")},
+                                                               {QStringLiteral("VICTORY_CACHE_DIR"), victoryCache},
+                                                               {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")}};
+    const QList<RunnerSpec::ConfigPath> victoryPaths = {{QStringLiteral("game_dir"), QStringLiteral("{gameDir}"), false},
+                                                        {QStringLiteral("cache_dir"), victoryCache, true},
+                                                        {QStringLiteral("data_dir"), QStringLiteral("{runnerDir}/data"), true}};
     RunnerSpec v1;
     v1.id = QStringLiteral("victory-7900xtx");
     v1.name = QStringLiteral("VIctory 7900 XTX");
@@ -156,13 +193,17 @@ QList<RunnerSpec> build()
     v1.executable = QStringLiteral("victory.exe");
     v1.buildNote = QStringLiteral("VIctory 7900 XTX is built from source on this PC. It needs Git, Rust and the Visual Studio C++ build tools (installed if missing) and can take a while; build times have not been measured yet.");
     v1.launchArgs = {QStringLiteral("run"), QStringLiteral("{gameExe}"), QStringLiteral("--execute"), QStringLiteral("--console"), QStringLiteral("{console}")};
-    v1.environment = {{QStringLiteral("VICTORY_CONFIG"), QStringLiteral("{runnerDir}/data/victory.toml")},
-                      {QStringLiteral("VICTORY_CACHE_DIR"), victoryCache},
-                      {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")}};
+    // runs with VICTORY_PIPELINE_BOOK=1 write every pipeline the title creates to known-pipelines.bin, and
+    // the library lists those it drew with in early-pipelines.txt; "warm --used" builds keys in both
+    v1.environment = victoryEnvironment + QList<QPair<QString, QString>>{{QStringLiteral("VICTORY_PIPELINE_BOOK"), QStringLiteral("1")}};
+    v1.configFile = QStringLiteral("{runnerDir}/data/victory.toml");
+    v1.configPaths = victoryPaths;
     v1.precache = {{{QStringLiteral("shaders"), QStringLiteral("--jobs"), QStringLiteral("{jobs}"), QStringLiteral("{gameDir}")}, QStringLiteral("victory-shaders"), false,
                     RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Translating shaders")},
                    {{QStringLiteral("warm"), QStringLiteral("--used"), QStringLiteral("--jobs"), QStringLiteral("{jobs}")}, QStringLiteral("victory-warm"), false,
-                    RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Building pipelines")}};
+                    RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Building pipelines"),
+                    {QStringLiteral("{cacheDir}/pipelines/known-pipelines.bin"), QStringLiteral("{cacheDir}/pipelines/early-pipelines.txt")},
+                    QStringLiteral("Play once with VIctory 7900 XTX to record pipelines; the next warm-up builds them.")}};
     v1.precacheNote = QStringLiteral("Translates every shader in the game, then builds the pipelines earlier runs used. Its warm-up wants 64 GB of RAM.");
     v1.cacheDir = victoryCache;
     v1.stop = RunnerSpec::Stop::SysCommandClose;
@@ -179,6 +220,7 @@ QList<RunnerSpec> build()
     v2.recommendMinRamBytes = 0;
     v2.summary = QStringLiteral("VIctory fork tested on a Radeon RX 7900 XTX.");
     v2.note.clear();
+    v2.environment = victoryEnvironment;
     v2.commit = QStringLiteral("64bd58f5fb794216894bc0e33e03a3a64d19c347");
     // the BCPack format tables the build embeds, fetched from where its own setup script fetches them
     v2.fetches = {{QStringLiteral("https://raw.githubusercontent.com/Marvisak/VIctory/2849477415a46f5a079c85cf3e64a3dff32f713c/crates/victory-formats/src/bcpack-tables.bin"),
@@ -220,7 +262,8 @@ QList<RunnerSpec> build()
                      {QStringLiteral("VICTORY_CACHE_DIR"), QStringLiteral("{runnerDir}/cache")},
                      {QStringLiteral("VICTORY_DATA_DIR"), QStringLiteral("{runnerDir}/data")},
                      {QStringLiteral("VICTORY_LOG"), QStringLiteral("info")}};
-    k.precache = {{{QStringLiteral("precompile"), QStringLiteral("--check")}, QStringLiteral("kelvaroq"), true, RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Checking what to build")},
+    k.precache = {{{QStringLiteral("precompile"), QStringLiteral("--check")}, QStringLiteral("kelvaroq"), true, RunnerSpec::PrecacheCancel::Kill, QStringLiteral("Checking what to build"),
+                   {}, QStringLiteral("Play once with Kelvaroq, then warm up.")},
                   {{QStringLiteral("precompile")}, QStringLiteral("kelvaroq"), false, RunnerSpec::PrecacheCancel::CloseStdin, QStringLiteral("Building pipelines")}};
     k.precacheNote = QStringLiteral("Kelvaroq learns which pipelines a game needs while it plays, so its pre-cache has work only after the game ran once with it.");
     k.cacheDir = QStringLiteral("{runnerDir}/cache");
@@ -292,6 +335,8 @@ static void applyFeed(QList<RunnerSpec>& list)
         r.fetches.clear();
         r.toolchains.clear();
         r.environment.clear();
+        r.configFile.clear();
+        r.configPaths.clear();
         if (o.contains(QLatin1String("buildSteps"))) {
             r.buildSteps.clear();
             for (const QJsonValue& step : o.value(QLatin1String("buildSteps")).toArray())

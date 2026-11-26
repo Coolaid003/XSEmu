@@ -19,7 +19,7 @@ class QHBoxLayout;
 class ProgressBlock : public QWidget {
     Q_OBJECT
 public:
-    enum class State { Idle, Running, Paused, Failed, Finished, Cancelled };
+    enum class State { Idle, Running, Paused, Failed, Finished, Cancelled, Warning };
     using Column = QPair<QString, QString>;
 
     explicit ProgressBlock(QWidget* parent = nullptr);

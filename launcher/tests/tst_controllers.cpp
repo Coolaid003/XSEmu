@@ -11,6 +11,7 @@
 #include "TitleConfig.h"
 #include "WarmupController.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -39,6 +40,10 @@ private slots:
     void warmupRefused();
     void runnerPrecacheRunsEachStep();
     void runnerPrecacheCancelClosesStdin();
+    void victoryConfigWrittenForPrecacheAndLaunch();
+    void xtxWarmWaitsForThePipelineBook();
+    void kelvaroqNothingToBuildYet();
+    void silentPrecacheIsNotFinished();
     void gameRunPauseResumeStop();
     void gameCrash();
     void gameFilesMissing();
@@ -50,7 +55,9 @@ private slots:
 
 private:
     Game fixtureGame(const QString& title) const;
-    void installFakeKelvaroq() const;
+    void installFakeKelvaroq() const { installFakeRunner(QStringLiteral("kelvaroq")); }
+    void installFakeRunner(const QString& id) const;
+    WarmupRun precache(const QString& id, const Game& game, QStringList* steps = nullptr);
     QTemporaryDir m_fixtures;
     std::unique_ptr<QTemporaryDir> m_dir;
     std::unique_ptr<AppSettings> m_settings;
@@ -66,7 +73,7 @@ void TestControllers::initTestCase()
     qputenv("XSEMU_RUNNERS_DIR", m_fixtures.filePath(QStringLiteral("runners")).toUtf8());
     QFile feed(m_fixtures.filePath(QStringLiteral("feed.json")));
     QVERIFY(feed.open(QIODevice::WriteOnly));
-    feed.write(R"({"kelvaroq": {"keep": true}})");
+    feed.write(R"({"kelvaroq": {"keep": true}, "victory-dexnom": {"keep": true}, "victory-7900xtx": {"keep": true}})");
     feed.close();
     qputenv("XSEMU_RUNNER_FEED", feed.fileName().toUtf8());
     QVERIFY(DevFixtures::materialize(QStringLiteral(XSEMU_FIXTURES_DIR "/games"), m_fixtures.filePath(QStringLiteral("games"))));
@@ -100,9 +107,9 @@ Game TestControllers::fixtureGame(const QString& title) const
     return {};
 }
 
-void TestControllers::installFakeKelvaroq() const
+void TestControllers::installFakeRunner(const QString& id) const
 {
-    const RunnerSpec* spec = Runners::find(QStringLiteral("kelvaroq"));
+    const RunnerSpec* spec = Runners::find(id);
     QVERIFY(spec);
     const QString exe = QDir(spec->installDir()).filePath(spec->executable);
     QDir().mkpath(QFileInfo(exe).absolutePath());
@@ -162,6 +169,186 @@ void TestControllers::runnerPrecacheCancelClosesStdin()
     QCOMPARE(w.lastRun()->exitCode, 0); // closing stdin let it stop on its own; nothing was killed
     QVERIFY(w.lastRun()->done < 812);
     qputenv("FAKE_XSEMU_TICK_MS", "5");
+}
+
+WarmupRun TestControllers::precache(const QString& id, const Game& game, QStringList* steps)
+{
+    m_settings->setGameOverride(game.titleId(), QStringLiteral("runner"), id);
+    RunnerManager runners;
+    WarmupController w(*m_settings, *m_gate);
+    w.setRunners(&runners);
+    connect(&w, &WarmupController::progressChanged, this, [&] {
+        if (steps && (steps->isEmpty() || steps->last() != w.progress().phase))
+            *steps << w.progress().phase;
+    });
+    QSignalSpy finished(&w, &WarmupController::finished);
+    QString error;
+    if (!w.start(false, game, &error)) {
+        qWarning() << error;
+        return {};
+    }
+    if (!finished.wait(20000))
+        qWarning() << "no result" << w.stderrTail();
+    if (w.state() != WarmupController::State::Finished && w.state() != WarmupController::State::Failed)
+        qWarning() << "state" << int(w.state());
+    return w.lastRun().value_or(WarmupRun{});
+}
+
+static QString tomlString(const QString& path)
+{
+    QString s = QDir::toNativeSeparators(QDir::cleanPath(path));
+    s.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+    return QLatin1Char('"') + s + QLatin1Char('"');
+}
+
+static QString readText(const QString& path)
+{
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? QString::fromUtf8(f.readAll()) : QString();
+}
+
+void TestControllers::victoryConfigWrittenForPrecacheAndLaunch()
+{
+    const QString id = QStringLiteral("victory-dexnom");
+    installFakeRunner(id);
+    const RunnerSpec* spec = Runners::find(id);
+    const QString exe = QDir(spec->installDir()).filePath(spec->executable);
+    const QString toml = QDir(spec->dataDir()).filePath(QStringLiteral("data/victory.toml"));
+    QFile::remove(toml);
+
+    // the stand-in stops as the fork does when VICTORY_CONFIG names a missing file
+    QProcess bare;
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert(QStringLiteral("VICTORY_CONFIG"), toml);
+    bare.setProcessEnvironment(env);
+    bare.start(exe, {QStringLiteral("warm"), QStringLiteral("--no-rt"), QStringLiteral("--jobs"), QStringLiteral("2"), m_fixtures.path()});
+    QVERIFY(bare.waitForFinished(10000));
+    QCOMPARE(bare.exitCode(), 1);
+    QVERIFY2(bare.readAllStandardError().contains("which does not exist"), "no config error");
+
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    QStringList steps;
+    const WarmupRun run = precache(id, game, &steps);
+    QVERIFY2(run.result == WarmupRun::Result::Finished, qPrintable(run.message));
+    QCOMPARE(run.exitCode, 0);
+    QCOMPARE(run.done, 4210);
+    QCOMPARE(run.total, 4210);
+    QCOMPARE(steps, QStringList{QStringLiteral("Translating shaders")});
+    const auto expected = [&](const QString& runnerDir) {
+        return QStringLiteral("[paths]\ngame_dir = %1\ncache_dir = %2\ndata_dir = %3\n")
+            .arg(tomlString(game.folder), tomlString(runnerDir + QStringLiteral("/cache")), tomlString(runnerDir + QStringLiteral("/data")));
+    };
+    QVERIFY2(readText(toml).endsWith(expected(spec->dataDir())), qPrintable(readText(toml)));
+    QVERIFY(QFileInfo(QDir(spec->dataDir()).filePath(QStringLiteral("cache"))).isDir());
+
+    // a launch writes it too, and the stand-in keeps running with it
+    QFile::remove(toml);
+    {
+        RunnerManager runners;
+        EmulatorController emu(*m_settings, *m_gate);
+        emu.setRunners(&runners);
+        QSignalSpy exited(&emu, &EmulatorController::exited);
+        QString error;
+        QVERIFY2(emu.start(game, 0, &error), qPrintable(error));
+        QVERIFY(QFileInfo::exists(toml));
+        QVERIFY(!exited.wait(1500));
+        QVERIFY(emu.isActive());
+        emu.stop();
+        QTRY_COMPARE_WITH_TIMEOUT(emu.state(), EmulatorController::State::Idle, 15000);
+    }
+
+    // moved elsewhere: the next run's file names the new folders
+    const QString elsewhere = m_dir->filePath(QStringLiteral("D/runners"));
+    {
+        RunnerManager runners;
+        runners.setSettings(m_settings.get());
+        QSignalSpy moved(&runners, &RunnerManager::relocated);
+        QString error;
+        QVERIFY2(runners.relocate(id, elsewhere, RunnerManager::Relocation::Move, &error), qPrintable(error));
+        QVERIFY(moved.count() == 1 || moved.wait(30000));
+        QVERIFY2(moved.first().at(1).toBool(), qPrintable(moved.first().at(2).toString()));
+    }
+    const QString movedDir = QDir(elsewhere).filePath(id);
+    QCOMPARE(QDir::cleanPath(spec->dataDir()), QDir::cleanPath(movedDir));
+    QVERIFY(precache(id, game).result == WarmupRun::Result::Finished);
+    const QString movedToml = QDir(movedDir).filePath(QStringLiteral("data/victory.toml"));
+    QVERIFY2(readText(movedToml).endsWith(expected(movedDir)), qPrintable(readText(movedToml)));
+    RunnerManager back;
+    back.setSettings(m_settings.get());
+    QSignalSpy home(&back, &RunnerManager::relocated);
+    QVERIFY(back.relocate(id, Paths::runnersDir(), RunnerManager::Relocation::Move));
+    QVERIFY(home.count() == 1 || home.wait(30000));
+    QVERIFY(home.first().at(1).toBool());
+}
+
+void TestControllers::xtxWarmWaitsForThePipelineBook()
+{
+    const QString id = QStringLiteral("victory-7900xtx");
+    installFakeRunner(id);
+    const RunnerSpec* spec = Runners::find(id);
+    QDir pipelines(QDir(spec->dataDir()).filePath(QStringLiteral("cache/pipelines")));
+    pipelines.removeRecursively();
+    const Game game = fixtureGame(QStringLiteral("Signal Garden"));
+    const QString note = QStringLiteral("Play once with VIctory 7900 XTX to record pipelines; the next warm-up builds them.");
+
+    // no book yet: shaders only, with the note
+    QStringList steps;
+    WarmupRun run = precache(id, game, &steps);
+    QVERIFY2(run.result == WarmupRun::Result::Finished, qPrintable(run.message));
+    QCOMPARE(steps, QStringList{QStringLiteral("Translating shaders")});
+    QCOMPARE(run.done, 4210);
+    QCOMPARE(run.message, note);
+    QVERIFY(QFileInfo::exists(QDir(spec->dataDir()).filePath(QStringLiteral("data/victory.toml"))));
+
+    // a book, but an empty early list: still skipped
+    QVERIFY(QDir().mkpath(pipelines.path()));
+    const auto write = [&](const QString& name, const QByteArray& bytes) {
+        QFile f(pipelines.filePath(name));
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+        f.write(bytes);
+    };
+    write(QStringLiteral("known-pipelines.bin"), QByteArray(2000, '\n'));
+    write(QStringLiteral("early-pipelines.txt"), {});
+    steps.clear();
+    run = precache(id, game, &steps);
+    QCOMPARE(steps, QStringList{QStringLiteral("Translating shaders")});
+    QCOMPARE(run.message, note);
+
+    // both: the pipelines are built
+    write(QStringLiteral("early-pipelines.txt"), "0011223344556677\n");
+    steps.clear();
+    run = precache(id, game, &steps);
+    QVERIFY2(run.result == WarmupRun::Result::Finished, qPrintable(run.message));
+    QCOMPARE(steps, (QStringList{QStringLiteral("Translating shaders"), QStringLiteral("Building pipelines")}));
+    QCOMPARE(run.total, 1996);
+    QVERIFY(run.message.isEmpty());
+    QVERIFY(spec->environment.contains(qMakePair(QStringLiteral("VICTORY_PIPELINE_BOOK"), QStringLiteral("1"))));
+    QVERIFY(!Runners::find(QStringLiteral("victory-dexnom"))->environment.contains(qMakePair(QStringLiteral("VICTORY_PIPELINE_BOOK"), QStringLiteral("1"))));
+}
+
+void TestControllers::kelvaroqNothingToBuildYet()
+{
+    installFakeKelvaroq();
+    qputenv("FAKE_XSEMU_WAITING", "0");
+    QStringList steps;
+    const WarmupRun run = precache(QStringLiteral("kelvaroq"), fixtureGame(QStringLiteral("Signal Garden")), &steps);
+    qunsetenv("FAKE_XSEMU_WAITING");
+    QCOMPARE(run.result, WarmupRun::Result::NothingToBuild);
+    QCOMPARE(run.exitCode, 0);
+    QCOMPARE(run.message, QStringLiteral("Play once with Kelvaroq, then warm up."));
+    QCOMPARE(steps, QStringList{QStringLiteral("Checking what to build")});
+    QCOMPARE(m_settings->recentWarmups().first().result, WarmupRun::Result::NothingToBuild);
+    QCOMPARE(m_settings->recentWarmups().first().message, run.message);
+}
+
+void TestControllers::silentPrecacheIsNotFinished()
+{
+    installFakeRunner(QStringLiteral("victory-dexnom"));
+    qputenv("FAKE_XSEMU_SCENARIO", "silent");
+    const WarmupRun run = precache(QStringLiteral("victory-dexnom"), fixtureGame(QStringLiteral("Signal Garden")));
+    QCOMPARE(run.result, WarmupRun::Result::NothingToBuild);
+    QCOMPARE(run.exitCode, 0);
+    QVERIFY2(run.message.contains(QStringLiteral("finished without building anything")), qPrintable(run.message));
 }
 
 void TestControllers::warmupFinishesThroughEveryPhase()

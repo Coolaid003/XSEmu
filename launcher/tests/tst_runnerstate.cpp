@@ -73,6 +73,7 @@ private slots:
     void initTestCase();
     void dexnomReadsInstalledEverywhere();
     void changeLocationWaitsForItsRuns();
+    void leftOverFilesOfferReinstallAndUninstall();
 
 private:
     struct Surfaces {
@@ -92,8 +93,8 @@ void TestRunnerState::initTestCase()
     qputenv("XSEMU_LAUNCHER_DATA", m_dir.filePath(QStringLiteral("launcher")).toUtf8());
     qputenv("XCL_DATA_ROOT", m_dir.filePath(QStringLiteral("xcl")).toUtf8());
     qputenv("XCL_DXIL_CACHE", m_dir.filePath(QStringLiteral("dxil")).toUtf8());
-    if (QStandardPaths::findExecutable(QStringLiteral("git")).isEmpty() || QStandardPaths::findExecutable(QStringLiteral("sh")).isEmpty())
-        QSKIP("needs git and sh");
+    if (QStandardPaths::findExecutable(QStringLiteral("git")).isEmpty())
+        QSKIP("needs git");
 
     const QString repo = m_dir.filePath(QStringLiteral("repo"));
     QVERIFY(QDir().mkpath(repo));
@@ -112,28 +113,13 @@ void TestRunnerState::initTestCase()
     QVERIFY(p.waitForFinished());
     m_commit = QString::fromLatin1(p.readAllStandardOutput()).trimmed();
 
-    // cargo as DexNom's build runs it: --target puts the bins under <target>/<triple>/release and the
-    // host build scripts under <target>/release. The first run fails like a broken build does.
+    // cargo as DexNom's build runs it (tests/fake-cargo.cpp): the first run fails like a broken build does
+#ifdef Q_OS_WIN
+    const QString cargo = m_dir.filePath(QStringLiteral("cargo.exe"));
+#else
     const QString cargo = m_dir.filePath(QStringLiteral("cargo"));
-    QFile script(cargo);
-    QVERIFY(script.open(QIODevice::WriteOnly));
-    script.write(QStringLiteral(R"(#!/bin/sh
-case " $* " in *" --target x86_64-pc-windows-msvc "*) ;; *) echo "error: no --target"; exit 2 ;; esac
-t="$CARGO_TARGET_DIR"
-mkdir -p "$t/release/build" "$t/release/deps" "$t/release/examples" "$t/release/incremental"
-echo "   Compiling victory-formats v0.1.0"
-if [ ! -e "%1" ]; then
-  : > "%1"
-  echo "error[E0425]: cannot find value \`BCPACK\` in this scope"
-  echo "error: could not compile \`victory-formats\` (lib) due to 1 previous error"
-  exit 101
-fi
-mkdir -p "$t/x86_64-pc-windows-msvc/release"
-for b in victory victory-play victory-warm; do printf 'MZ %%s\n' "$b" > "$t/x86_64-pc-windows-msvc/release/$b.exe"; done
-echo "    Finished \`release\` profile [optimized] target(s) in 61.02s"
-)").arg(m_dir.filePath(QStringLiteral("attempted"))).toUtf8());
-    script.close();
-    script.setPermissions(script.permissions() | QFileDevice::ExeOwner);
+#endif
+    QVERIFY(QFile::copy(QStringLiteral(XSEMU_FAKE_CARGO), cargo));
 
     QJsonArray buildSteps;
     buildSteps.append(QJsonArray{cargo, QStringLiteral("build"), QStringLiteral("--locked"), QStringLiteral("--release"), QStringLiteral("-p"), QStringLiteral("victory"),
@@ -362,6 +348,50 @@ void TestRunnerState::changeLocationWaitsForItsRuns()
         open += pop->isVisible() ? 1 : 0;
     QCOMPARE(open, 1);
     s.settings.setRunnerLocation(QStringLiteral("kelvaroq"), {});
+}
+
+void TestRunnerState::leftOverFilesOfferReinstallAndUninstall()
+{
+    // an uninstall that could not delete everything keeps runner.json; its program is gone
+    const RunnerSpec* spec = Runners::find(kId);
+    {
+        Services before;
+        QCOMPARE(before.runners.status(kId).state, RunnerManager::State::Installed);
+        QVERIFY(QFile::remove(before.runners.status(kId).executable));
+    }
+    QVERIFY(QFileInfo::exists(QDir(spec->dataDir()).filePath(QStringLiteral("runner.json"))));
+
+    Services s;
+    const RunnerManager::Status st = s.runners.status(kId);
+    QCOMPARE(st.state, RunnerManager::State::Failed);
+    QCOMPARE(st.error, QStringLiteral("Some files of VIctory (DexNom) were left in %1. Install it again over them, or uninstall to delete them.")
+                           .arg(QDir::toNativeSeparators(spec->dataDir())));
+    QVERIFY(!s.runners.isRunnable(kId));
+    MainWindow w(s);
+    w.resize(1280, 800);
+    w.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&w));
+    w.showPage(Page::Runners);
+    QApplication::processEvents();
+    QWidget* card = w.findChild<QWidget*>(QStringLiteral("runner-") + kId);
+    QVERIFY(card);
+    auto* install = card->findChild<QAbstractButton*>(QStringLiteral("install-") + kId);
+    auto* uninstall = card->findChild<QAbstractButton*>(QStringLiteral("uninstall-") + kId);
+    QVERIFY(install && install->isVisibleTo(card) && install->isEnabled());
+    QCOMPARE(install->text(), QStringLiteral("Reinstall"));
+    QVERIFY(uninstall && uninstall->isVisibleTo(card) && uninstall->isEnabled());
+    QVERIFY2(anyContains(shown(card), QStringLiteral("were left in")), qPrintable(shown(card).join(QLatin1Char('|'))));
+
+    // Reinstall builds over the left-over files
+    QSignalSpy done(&s.runners, &RunnerManager::installFinished);
+    QString error;
+    QVERIFY2(s.runners.install(kId, &error), qPrintable(error));
+    QVERIFY(done.wait(60000));
+    QVERIFY2(done.first().at(1).toBool(), qPrintable(done.first().at(2).toString()));
+    QCOMPARE(s.runners.status(kId).state, RunnerManager::State::Installed);
+    QVERIFY(s.runners.isRunnable(kId));
+    QApplication::processEvents();
+    QVERIFY(!install->isVisibleTo(card));
 }
 
 QTEST_MAIN(TestRunnerState)

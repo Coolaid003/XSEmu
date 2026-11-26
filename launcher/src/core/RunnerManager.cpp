@@ -326,7 +326,11 @@ RunnerManager::Status RunnerManager::status(const QString& id) const
     s.error = m_errors.value(id);
     if (s.error.isEmpty())
         s.error = readJson(RunnerInstall::failurePath(id)).value(QLatin1String("error")).toString();
-    if (!rec.isEmpty())
+    if (!rec.isEmpty() && !QFileInfo::exists(s.executable)) {
+        s.state = State::Failed;
+        s.error = m_errors.value(id, QStringLiteral("Some files of %1 were left in %2. Install it again over them, or uninstall to delete them.")
+                                         .arg(spec->name, QDir::toNativeSeparators(Paths::runnerDir(id))));
+    } else if (!rec.isEmpty())
         s.state = spec->isPinned() && s.installedVersion != s.pinnedVersion ? State::UpdateAvailable : State::Installed;
     else if (!s.error.isEmpty())
         s.state = State::Failed;
@@ -430,7 +434,8 @@ bool RunnerManager::uninstall(const QString& id, QString* error)
     emit changed(id);
     emit stateChanged(id);
     // a built runner's folder holds its whole build: delete it off the UI thread. The install record
-    // goes last, so a file in use leaves the runner installed rather than half deleted and unlisted.
+    // goes last, so a file in use leaves it behind with the rest: status() reads a record whose program
+    // is gone as Failed with the folder named, and the card offers Install over it and Uninstall again.
     const QPointer<RunnerManager> self = this;
     QThreadPool::globalInstance()->start([self, id, dir = Paths::runnerDir(id), name = spec->name] {
         bool ok = true;

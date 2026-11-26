@@ -13,7 +13,8 @@
 
 // One finished warm-up, as the Warm-up page's "Recent runs" table shows it.
 struct WarmupRun {
-    enum class Result { Finished, Cancelled, StoppedPartWay, Failed };
+    // NothingToBuild: a runner's pre-cache ended cleanly with no work, and message says why
+    enum class Result { Finished, Cancelled, StoppedPartWay, Failed, NothingToBuild };
 
     QString titleId;    // the game the user started it for (the cache itself is machine-wide)
     QString titleName;
@@ -26,7 +27,7 @@ struct WarmupRun {
     int exitCode = 0;
     bool full = false;
     bool stoppedForRam = false; // ended part way while waiting at the RAM floor
-    QString message;            // error text for Failed
+    QString message;            // error text for Failed; why for NothingToBuild; a note for Finished
     QDateTime finishedAt;
 
     QVariantMap toMap() const;

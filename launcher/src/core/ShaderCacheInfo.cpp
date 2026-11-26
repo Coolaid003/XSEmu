@@ -157,6 +157,7 @@ TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>
         switch (r.result) {
         case WarmupRun::Result::Finished: return empty ? TitleShaderState::NeverWarmed : TitleShaderState::Ready;
         case WarmupRun::Result::Failed: return TitleShaderState::LastRunFailed;
+        case WarmupRun::Result::NothingToBuild: return empty ? TitleShaderState::NeverWarmed : TitleShaderState::Unknown;
         case WarmupRun::Result::Cancelled:
         case WarmupRun::Result::StoppedPartWay: return TitleShaderState::LastRunIncomplete;
         }

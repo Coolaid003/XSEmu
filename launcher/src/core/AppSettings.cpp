@@ -17,6 +17,7 @@ QString resultName(WarmupRun::Result r)
     case WarmupRun::Result::Cancelled: return QStringLiteral("cancelled");
     case WarmupRun::Result::StoppedPartWay: return QStringLiteral("stopped");
     case WarmupRun::Result::Failed: return QStringLiteral("failed");
+    case WarmupRun::Result::NothingToBuild: return QStringLiteral("nothing");
     }
     return QStringLiteral("failed");
 }
@@ -26,6 +27,7 @@ WarmupRun::Result resultFrom(const QString& s)
     if (s == QLatin1String("finished")) return WarmupRun::Result::Finished;
     if (s == QLatin1String("cancelled")) return WarmupRun::Result::Cancelled;
     if (s == QLatin1String("stopped")) return WarmupRun::Result::StoppedPartWay;
+    if (s == QLatin1String("nothing")) return WarmupRun::Result::NothingToBuild;
     return WarmupRun::Result::Failed;
 }
 

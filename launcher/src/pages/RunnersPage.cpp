@@ -280,7 +280,8 @@ public:
         m_recommended->setVisible(!m_spec.isBuiltIn() && RunnerUi::recommendation(m_s).runnerId == m_spec.id);
         m_detail->setText(RunnerUi::statusDetail(m_s, m_spec, st));
         m_detail->setVisible(st.state != S::Failed);
-        m_uninstall->setVisible(st.state == S::Installed || st.state == S::UpdateAvailable);
+        const bool leftOver = st.state == S::Failed && !st.installedVersion.isEmpty();
+        m_uninstall->setVisible(st.state == S::Installed || st.state == S::UpdateAvailable || leftOver);
         const QString busy = m_s.runners.busyReason(m_spec.id);
         m_uninstall->setEnabled(busy.isEmpty());
         m_uninstall->setToolTip(busy);
@@ -291,7 +292,10 @@ public:
         m_location->setToolTip(QStringLiteral("In %1. Keep its source, build, program and cache in another folder or drive.").arg(QDir::toNativeSeparators(m_spec.dataDir())));
         m_install->setVisible(st.state == S::NotInstalled || st.state == S::UpdateAvailable || st.state == S::Failed);
         m_install->setEnabled(m_s.runners.busyId().isEmpty());
-        m_install->setText(st.state == S::UpdateAvailable ? QStringLiteral("Update") : st.state == S::Failed ? QStringLiteral("Try again") : QStringLiteral("Install"));
+        m_install->setText(st.state == S::UpdateAvailable ? QStringLiteral("Update")
+                           : leftOver                      ? QStringLiteral("Reinstall")
+                           : st.state == S::Failed         ? QStringLiteral("Try again")
+                                                           : QStringLiteral("Install"));
         m_install->setIconName(st.state == S::UpdateAvailable || st.state == S::Failed ? QStringLiteral("refresh") : QStringLiteral("download"));
 
         const bool failed = st.state != S::Installing && !st.error.isEmpty();

@@ -22,8 +22,13 @@ xsemu_test(tst_runners)
 xsemu_test(tst_settingsprofile)
 
 # a DexNom-shaped source build read back through every runner surface, then after a restart
+# (cargo is a small program here, so the build step starts the same way on every OS)
+add_executable(fake-cargo fake-cargo.cpp)
+xsemu_warnings(fake-cargo)
 xsemu_test(tst_runnerstate)
 target_link_libraries(tst_runnerstate PRIVATE xsemu_ui)
+add_dependencies(tst_runnerstate fake-cargo)
+target_compile_definitions(tst_runnerstate PRIVATE XSEMU_FAKE_CARGO="$<TARGET_FILE:fake-cargo>")
 
 if(WIN32)
     # a window from another process reparented into a Qt host (the test picks the real windows platform)

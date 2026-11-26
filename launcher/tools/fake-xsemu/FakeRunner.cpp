@@ -47,6 +47,43 @@ int printLines(int argc, char** argv, int count, std::function<QString(int)> lin
     return app.exec();
 }
 
+// What the forks' Config::load refuses, read the way they read it.
+QString victoryConfigError(const QString& kind)
+{
+    const QString path = qEnvironmentVariable("VICTORY_CONFIG");
+    if (path.isEmpty())
+        return QStringLiteral("fake: VICTORY_CONFIG is not set");
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QStringLiteral("VICTORY_CONFIG points at %1, which does not exist").arg(path);
+    QStringList allowed = {QStringLiteral("paths.game_dir"), QStringLiteral("paths.cache_dir"), QStringLiteral("paths.data_dir"), QStringLiteral("paths.test_titles")};
+    if (kind == QLatin1String("victory-dexnom"))
+        allowed << QStringLiteral("paths.fidelityfx_dir") << QStringLiteral("graphics.ray_tracing");
+    QString table;
+    QStringList seen;
+    for (const QString& raw : QString::fromUtf8(f.readAll()).split(QLatin1Char('\n'))) {
+        const QString line = raw.trimmed();
+        if (line.isEmpty() || line.startsWith(QLatin1Char('#')))
+            continue;
+        if (line.startsWith(QLatin1Char('[')) && line.endsWith(QLatin1Char(']'))) {
+            table = line.mid(1, line.size() - 2);
+            continue;
+        }
+        const QString key = table + QLatin1Char('.') + line.section(QLatin1Char('='), 0, 0).trimmed();
+        const QString value = line.section(QLatin1Char('='), 1).trimmed();
+        if (!allowed.contains(key))
+            return QStringLiteral("parsing %1: unknown field `%2`").arg(path, key);
+        if (!value.startsWith(QLatin1Char('"')) || !value.endsWith(QLatin1Char('"')) || value.size() < 2)
+            return QStringLiteral("parsing %1: %2 is not a string").arg(path, key);
+        seen << key;
+    }
+    for (const QString& need : {QStringLiteral("paths.game_dir"), QStringLiteral("paths.cache_dir"), QStringLiteral("paths.data_dir")}) {
+        if (!seen.contains(need))
+            return QStringLiteral("fake: %1 has no %2").arg(path, need);
+    }
+    return {};
+}
+
 int runGame(const QString& kind, int argc, char** argv)
 {
     const QString scenario = qEnvironmentVariable("FAKE_XSEMU_SCENARIO", QStringLiteral("ok"));
@@ -136,11 +173,19 @@ QString kind(const QString& program, QStringList& args)
 int run(const QString& kind, const QStringList& args, int argc, char** argv)
 {
     const QString cmd = args.value(0);
+    if (kind.startsWith(QLatin1String("victory"))) {
+        if (const QString why = victoryConfigError(kind); !why.isEmpty()) {
+            std::fprintf(stderr, "Error: %s\n", why.toUtf8().constData());
+            return 1;
+        }
+    }
     if (cmd == QLatin1String("run"))
         return runGame(kind, argc, argv);
+    if (qEnvironmentVariable("FAKE_XSEMU_SCENARIO") == QLatin1String("silent"))
+        return 0;
     if (kind == QLatin1String("kelvaroq") && cmd == QLatin1String("precompile")) {
         if (args.contains(QStringLiteral("--check"))) {
-            say(QStringLiteral("precompile-check 812"));
+            say(QStringLiteral("precompile-check %1").arg(qEnvironmentVariable("FAKE_XSEMU_WAITING", QStringLiteral("812"))));
             return 0;
         }
         return precompile(argc, argv);
@@ -149,7 +194,14 @@ int run(const QString& kind, const QStringList& args, int argc, char** argv)
         return printLines(argc, argv, 4, [](int i) { return QStringLiteral("%1 shaders in the cache, %2 s").arg(i * 1000).arg(i); },
                           [] { return QStringLiteral("4210 shaders in the cache, 3 do not translate, 5 s"); });
     if (kind == QLatin1String("victory") && cmd == QLatin1String("warm")) {
-        say(QStringLiteral("9000 pipelines known, 7004 made before (last run), 4 bad; 1996 to make, 16 processes"));
+        QFile book(qEnvironmentVariable("VICTORY_CACHE_DIR") + QStringLiteral("/pipelines/known-pipelines.bin"));
+        const int known = book.open(QIODevice::ReadOnly) ? int(book.readAll().count('\n')) : 0;
+        if (known < 1996) {
+            say(QStringLiteral("%1 pipelines known, 0 made before (last run), 0 bad; 0 to make, 16 processes").arg(known));
+            say(QStringLiteral("0 made in 0 s (0 have no host pipeline, 0 ended their process)"));
+            return 0;
+        }
+        say(QStringLiteral("%1 pipelines known, 7004 made before (last run), 4 bad; 1996 to make, 16 processes").arg(known));
         return printLines(argc, argv, 20, [](int i) { return QStringLiteral("%1 of 1996, %2 s").arg(qMin(1996, i * 100)).arg(i); }, {});
     }
     if (kind == QLatin1String("victory-dexnom") && cmd == QLatin1String("warm"))

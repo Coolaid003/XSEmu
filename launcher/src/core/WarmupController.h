@@ -22,7 +22,8 @@ struct RunnerSpec;
 // recorded with the run so the Warm-up page can say which game it was for.
 // A game set to run with a third-party runner gets that runner's pre-cache instead: its steps
 // (RunnerSpec::precache) run hidden one after another, their output read by the step's progress
-// parser; a check step that finds nothing waiting ends the run, and cancel uses the step's method.
+// parser; a check step that finds nothing waiting, or a step whose needed files are missing, ends
+// the run, and cancel uses the step's method. The runner's config file is written before each step.
 //
 //   warmup.start(/*full*/ false, game);
 //   connect(&warmup, &WarmupController::progressChanged, ...);  // warmup.progress()
@@ -110,6 +111,7 @@ private:
     void startRunnerStep();
     void onRunnerLine(const QString& line);
     void onRunnerStepFinished(int exitCode, int exitStatus);
+    WarmupRun runnerRun(int exitCode) const;
     void finish(WarmupRun run);
 
     AppSettings& m_settings;
@@ -128,4 +130,5 @@ private:
     RunnerManager* m_runners = nullptr;
     const RunnerSpec* m_spec = nullptr; // the runner of this pre-cache; nullptr: XSEmu's warm-up
     int m_step = 0;
+    qint64 m_built = 0; // what the runner's finished steps built
 };

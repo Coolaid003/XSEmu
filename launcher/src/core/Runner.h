@@ -58,7 +58,7 @@ struct RunnerSpec {
     QString buildNote;       // shown before a source build starts
 
     // Tokens in arguments and environment: {gameDir} {gameExe} {gameExeDir} {titleId} {console}
-    // ("series-s"/"series-x") {runnerDir} (runners\<id>) {installDir} {jobs} {rtFlag} {hostHwnd}.
+    // ("series-s"/"series-x") {runnerDir} (runners\<id>) {installDir} {cacheDir} {jobs} {rtFlag} {hostHwnd}.
     QStringList launchArgs;
     QList<QPair<QString, QString>> environment; // set for runs and pre-cache runs
     struct PrecacheStep {
@@ -67,11 +67,22 @@ struct RunnerSpec {
         bool check = false;  // prints how much is waiting; 0 skips the steps after it
         PrecacheCancel cancel = PrecacheCancel::Kill;
         QString label;       // what the step does, for the Warm-up page ("Building pipelines")
+        QStringList needs;   // files (tokens allowed) that must exist and be non-empty; else this step and the rest are skipped
+        QString nothingNote; // why there is nothing to do when the check finds nothing or needs are missing
     };
     QList<PrecacheStep> precache; // empty: the runner has no shader pre-cache
     QString precacheNote;    // what to know before a pre-cache (when it has work, what it needs)
     quint64 recommendMinRamBytes = 0; // the recommendation needs this much RAM to pick it
     QString cacheDir;        // its shader/pipeline cache (tokens allowed); empty: unknown
+    // A config file written as TOML before every run and every pre-cache step, so the program finds
+    // it wherever the runner is now: [paths] key = value for each entry (tokens allowed).
+    struct ConfigPath {
+        QString key;         // "cache_dir"
+        QString value;       // "{runnerDir}/cache"
+        bool create = false; // the folder is made before the run
+    };
+    QString configFile;      // tokens allowed; empty: none
+    QList<ConfigPath> configPaths;
     QString windowReadyLine; // output line after which its game window may be touched; empty: when visible
     Stop stop = Stop::CloseWindow;
     int stopGraceMs = 5000;
@@ -97,6 +108,8 @@ struct RunnerSpec {
     QString resolvedCacheDir() const;
     // The system environment plus the spec's, tokens filled in; creates the *_DIR folders it names.
     QProcessEnvironment processEnvironment(const QList<QPair<QString, QString>>& tokens) const;
+    // Writes configFile atomically and makes the folders it names; returns why it could not (empty: written or none).
+    QString writeConfig(const QList<QPair<QString, QString>>& tokens) const;
 
     // Replace {token} in each argument with values[token]; unknown tokens stay as written.
     static QStringList expand(const QStringList& args, const QList<QPair<QString, QString>>& values);

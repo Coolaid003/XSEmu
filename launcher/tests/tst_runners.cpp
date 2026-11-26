@@ -206,6 +206,8 @@ void TestRunners::parsers_data()
     QTest::newRow("victory warm header") << "victory-warm" << "9000 pipelines known, 7000 made before (last run), 4 bad; 1996 to make, 16 processes" << qint64(0) << qint64(1996);
     QTest::newRow("victory warm tick") << "victory-warm" << "500 of 1996, 40 s" << qint64(500) << qint64(1996);
     QTest::newRow("dexnom tick") << "victory-dexnom" << "   12 s  2000 shaders" << qint64(2000) << qint64(-1);
+    QTest::newRow("dexnom summary") << "victory-dexnom" << "warm         4210 translated, 3 refused; 812 compute pipelines, 0 refused; 0 omitted by ray-tracing mode; 7 s"
+                                    << qint64(4210) << qint64(4210);
     QTest::newRow("generic") << "other" << "step 3/9" << qint64(3) << qint64(9);
 }
 
