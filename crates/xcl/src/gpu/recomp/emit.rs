@@ -916,6 +916,12 @@ fn outline_from(insts: usize) -> bool {
     if std::env::var_os("XCL_RECOMP_NO_OUTLINE").is_some() {
         return false;
     }
+    // AMD's D3D12 shader compiler (`amdxc64.dll`) fails with `Unknown pointer operation
+    // encountered during ParseAddress` / `0x887a0020` on DXC-compiled `[noinline]` outlined
+    // memory functions, unless `XCL_RECOMP_OUTLINE_MIN_INSTS` explicitly forces outlining.
+    if super::pso::is_amd() && std::env::var_os("XCL_RECOMP_OUTLINE_MIN_INSTS").is_none() {
+        return false;
+    }
     insts >= std::env::var("XCL_RECOMP_OUTLINE_MIN_INSTS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(1024)
 }
 
