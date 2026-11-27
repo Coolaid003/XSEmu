@@ -626,7 +626,18 @@ pub fn compile_dxc_only(src: &str, entry: &str, profile: &str) -> Result<Vec<u8>
 /// what the direct backend did not make. DXC arguments (an optimisation level, a define) ask
 /// for DXC itself, and so does `dxc_only`.
 fn submit(src: &str, entry: &str, profile: &str, extra: &[&str], dxc_only: bool) -> Result<Vec<u8>, String> {
-    if backend() != Backend::Dxc && extra.is_empty() && !dxc_only {
+    // the direct backend inlines every call, so a program with outlined functions
+    // (`emit::outlined`) is DXC's, which keeps them; with only the direct backend it is inlined
+    let outlined = backend() == Backend::Direct && extra.is_empty() && !dxc_only && src.contains("[noinline] ");
+    if outlined {
+        static OUTLINED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = OUTLINED.fetch_add(1, Ordering::Relaxed) + 1;
+        if n <= 16 || n.is_power_of_two() {
+            let program = PROGRAM.with(|p| p.borrow().clone()).map_or(String::new(), |p| format!(" of {p}"));
+            crate::xlog_info!("[SHADER] DXC compiles a {profile} program{program} with outlined memory functions ({} B HLSL; {n} so far)", src.len());
+        }
+    }
+    if backend() != Backend::Dxc && extra.is_empty() && !dxc_only && !outlined {
         let direct = {
             let _slot = wait_for_memory();
             std::thread::scope(|s| match std::thread::Builder::new().name("xcl-dxil".into()).stack_size(DXC_STACK).spawn_scoped(s, || compile_direct(src, entry, profile)) {
