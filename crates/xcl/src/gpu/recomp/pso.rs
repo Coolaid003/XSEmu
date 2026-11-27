@@ -233,6 +233,11 @@ mod translated {
         let static_cap = super::super::loop_profile::static_cap();
         // the A/B switches of the structured form, the lane-guard proofs, the quad reads, the page groups, their accessors and the primitive index width change the HLSL
         let nan = ["XCL_RECOMP_NO_CFG", "XCL_RECOMP_NO_EXEC_PROOF", "XCL_RECOMP_NO_QUAD_READS", "XCL_RECOMP_NO_PAGE_GROUPS", "XCL_RECOMP_NO_ACCESSOR_SHRINK", "XCL_RECOMP_NO_OUTLINE", "XCL_RECOMP_NO_PRIM9"].iter().filter(|v| std::env::var_os(v).is_some()).fold(nan.to_string(), |s, v| format!("{s}\0{v}"));
+        let nan = if super::is_amd() && std::env::var_os("XCL_RECOMP_OUTLINE_MIN_INSTS").is_none() {
+            format!("{nan}\0no-outline-amd")
+        } else {
+            nan
+        };
         let nan = std::env::var("XCL_RECOMP_OUTLINE_MIN_INSTS").map_or(nan.clone(), |n| format!("{nan}\0outline-min-insts={n}"));
         let nan = ["XCL_RECOMP_OUTLINE_RESULTS", "XCL_RECOMP_OUTLINE_ATOMICS", "XCL_RECOMP_OUTLINE_NESTED"].iter().fold(nan, |s, v| std::env::var(v).map_or(s.clone(), |x| format!("{s}\0{v}={x}")));
         if legacy {
@@ -831,6 +836,11 @@ pub fn set_adapter_vendor(vendor: u32) {
 /// later ordered compare of the same operands the unordered result, `emit::float_compare`).
 pub fn nan_guards() -> bool {
     matches!(ADAPTER_VENDOR.load(std::sync::atomic::Ordering::Relaxed), 0 | 0x1002)
+}
+
+/// Whether the adapter is known to be AMD (`0x1002`).
+pub fn is_amd() -> bool {
+    ADAPTER_VENDOR.load(std::sync::atomic::Ordering::Relaxed) == 0x1002
 }
 
 pub fn wave32_only(wave_min: u32, wave_max: u32) -> bool {
