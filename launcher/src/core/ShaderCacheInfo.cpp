@@ -1,5 +1,7 @@
 #include "ShaderCacheInfo.h"
 
+#include "LaunchConfig.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
@@ -168,6 +170,13 @@ TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>
     if (empty)
         return TitleShaderState::NeverWarmed;
     return TitleShaderState::Unknown;
+}
+
+TitleShaderState shownShaderState(const AppSettings& settings, const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache)
+{
+    if (!settings.xsemuWarmup())
+        return TitleShaderState::Unknown;
+    return titleShaderState(titleId, recent, cache, LaunchConfig::profileIdentity(settings, titleId));
 }
 
 bool ShaderCacheInfo::isCacheEntry(const QFileInfo& entry)

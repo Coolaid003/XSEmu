@@ -92,6 +92,7 @@ void TestControllers::init()
     qputenv("FAKE_XSEMU_SCENARIO", "ok");
     m_settings = std::make_unique<AppSettings>(m_dir->filePath(QStringLiteral("settings.ini")));
     m_settings->setLaunchNeedMb(0);
+    m_settings->setXsemuWarmup(true);
     m_gate = std::make_unique<ProcessGate>();
 }
 

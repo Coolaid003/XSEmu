@@ -70,7 +70,8 @@ public:
     void setRunners(RunnerManager* runners) { m_runners = runners; }
     // The runner whose warm-up runs for this game: its "Runs with" choice (XSEmu without a game).
     const RunnerSpec& runnerFor(const Game& game) const;
-    // Why a warm-up for this game cannot start now (empty: it can).
+    // Why a warm-up for this game cannot start now (empty: it can); XSEmu's own warm-up never starts
+    // while AppSettings::xsemuWarmup is off.
     QString checkStart(const Game& forGame = {}) const;
     bool start(bool full, const Game& forGame = {}, QString* error = nullptr);
     // Ask it to stop starting compiles; builds in flight finish (can take minutes for giants).

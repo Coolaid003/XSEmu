@@ -86,3 +86,6 @@ struct ShaderCacheInfo {
 enum class TitleShaderState { Unknown, NeverWarmed, Ready, LastRunIncomplete, LastRunFailed, ProfileChanged };
 
 TitleShaderState titleShaderState(const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache, const QString& profile = {});
+// The state the launcher shows and acts on: titleShaderState with the game's current run profile, or
+// Unknown while the XSEmu warm-up is turned off (AppSettings::xsemuWarmup), so nothing asks for it.
+TitleShaderState shownShaderState(const AppSettings& settings, const QString& titleId, const QList<WarmupRun>& recent, const ShaderCacheInfo& cache);

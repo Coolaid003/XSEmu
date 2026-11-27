@@ -87,11 +87,13 @@ const RunnerSpec& WarmupController::runnerFor(const Game& game) const
 
 QString WarmupController::checkStart(const Game& forGame) const
 {
+    const RunnerSpec& spec = runnerFor(forGame);
+    if (spec.isBuiltIn() && !m_settings.xsemuWarmup())
+        return QStringLiteral("The XSEmu warm-up is turned off in this build.");
     if (!m_gate.isFree())
         return m_gate.blockedReason(ProcessGate::Action::StartWarmup);
     if (const ProcessGate::External other = m_gate.external(); other.busy())
         return other.reason();
-    const RunnerSpec& spec = runnerFor(forGame);
     if (!spec.isBuiltIn()) {
         if (!m_runners || !m_runners->isRunnable(spec.id))
             return QStringLiteral("%1 is not installed. Install it on the Runners page, or set this game to run with XSEmu.").arg(spec.name);

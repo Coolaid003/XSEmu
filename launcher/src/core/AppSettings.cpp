@@ -341,6 +341,9 @@ void AppSettings::clearGameOverride(const QString& titleId, const QString& key)
     write(Key::GameOverrides, QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(all)).toJson(QJsonDocument::Compact)));
 }
 
+bool AppSettings::xsemuWarmup() const { return read(Key::XsemuWarmup, false).toBool(); }
+void AppSettings::setXsemuWarmup(bool on) { write(Key::XsemuWarmup, on); }
+
 QList<WarmupRun> AppSettings::recentWarmups() const
 {
     QList<WarmupRun> out;
