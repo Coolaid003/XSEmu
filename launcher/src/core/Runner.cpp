@@ -159,7 +159,7 @@ QList<RunnerSpec> build()
     x.name = QStringLiteral("XSEmu");
     x.summary = QStringLiteral("Built in. Embeds the game in this window.");
     x.repo = QStringLiteral("zortos293/xsemu");
-    x.licence = QStringLiteral("GPL-2.0");
+    x.licence = QStringLiteral("GPL-3.0-or-later");
     x.install = RunnerSpec::Install::BuiltIn;
     x.stop = RunnerSpec::Stop::ControlPipe;
     x.embed = RunnerSpec::Embed::HostHandle;
