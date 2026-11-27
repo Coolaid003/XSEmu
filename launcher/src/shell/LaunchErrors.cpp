@@ -4,7 +4,6 @@
 #include "app/Services.h"
 #include "core/Format.h"
 #include "core/HardwareInfo.h"
-#include "core/LaunchConfig.h"
 #include "core/Paths.h"
 #include "core/ShaderCacheInfo.h"
 #include "widgets/Button.h"
@@ -386,7 +385,7 @@ bool LaunchErrors::shadersCold(Services& s, const Game& game)
 {
     if (!s.emulator.runnerFor(game).isBuiltIn())
         return false; // a third-party runner keeps its own cache; its pre-cache is optional
-    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot(), LaunchConfig::profileIdentity(s.settings, game.titleId()))) {
+    switch (shownShaderState(s.settings, game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot())) {
     case TitleShaderState::NeverWarmed:
     case TitleShaderState::LastRunIncomplete:
     case TitleShaderState::LastRunFailed:
@@ -410,7 +409,7 @@ void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, s
         warmUp();
         return;
     }
-    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot(), LaunchConfig::profileIdentity(s.settings, game.titleId()));
+    const TitleShaderState state = shownShaderState(s.settings, game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot());
     const std::optional<WarmupRun> last = lastWarmup(s, game);
     auto* d = new Dialog(window, 460);
     begin(d, QStringLiteral("bolt"), Theme::Tone::Warning, QStringLiteral("Warm up %1 first?").arg(game.title()));

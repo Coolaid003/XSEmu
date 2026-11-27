@@ -77,6 +77,7 @@ public:
         static constexpr const char* PlayStats = "games/play";
         static constexpr const char* LibrarySort = "library/sort";
         static constexpr const char* RunProfile = "emulator/runProfile";
+        static constexpr const char* XsemuWarmup = "warmup/xsemu";
     };
 
     static constexpr int kRecentWarmupLimit = 20;
@@ -187,6 +188,12 @@ public:
     QVariantMap gameOverrides(const QString& titleId) const;
     void setGameOverride(const QString& titleId, const QString& key, const QVariant& value);
     void clearGameOverride(const QString& titleId, const QString& key);
+
+    // XSEmu's own warm-up (XSEmu.exe warm-up): off, with no control to turn it on, because the current
+    // XSEmu build exits from it without building anything. Off hides it everywhere: Warm-up page, Game
+    // details, the warm-up prompt before Play and the shader-state badges. Runner pre-caches are not affected.
+    bool xsemuWarmup() const;
+    void setXsemuWarmup(bool on);
 
     QList<WarmupRun> recentWarmups() const; // newest first
     void addRecentWarmup(const WarmupRun& run);

@@ -632,7 +632,7 @@ void GameDetailsPage::refresh()
     // actions and the shader state
     const QList<WarmupRun> recent = m_s.settings.recentWarmups();
     const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
-    const TitleShaderState state = titleShaderState(id, recent, cache, LaunchConfig::profileIdentity(m_s.settings, id));
+    const TitleShaderState state = shownShaderState(m_s.settings, id, recent, cache);
     std::optional<WarmupRun> lastWarmup;
     for (const WarmupRun& r : recent) {
         if (r.titleId == id) {
@@ -658,7 +658,7 @@ void GameDetailsPage::refresh()
         m_secondary->setText(state == TitleShaderState::Ready ? QStringLiteral("Warm up again") : QStringLiteral("Warm up"));
         m_secondary->setIconName(QStringLiteral("bolt"));
     }
-    m_secondary->setVisible(!playingThis);
+    m_secondary->setVisible(!playingThis && m_s.settings.xsemuWarmup());
     const RunnerSpec& runner = m_s.emulator.runnerFor(g);
     if (!runner.isBuiltIn()) {
         m_secondary->setText(QStringLiteral("Pre-cache with %1").arg(runner.name));
@@ -675,7 +675,14 @@ void GameDetailsPage::refresh()
     case TitleShaderState::LastRunIncomplete: stateText = QStringLiteral("Warm-up needed"); cacheState = QStringLiteral("Last warm-up stopped part way"); tone = Theme::Tone::Warning; cacheRole = Theme::Role::Warning; break;
     case TitleShaderState::LastRunFailed: stateText = QStringLiteral("Warm-up failed"); cacheState = QStringLiteral("Last warm-up failed"); tone = Theme::Tone::Danger; cacheRole = Theme::Role::Danger; break;
     case TitleShaderState::ProfileChanged: stateText = QStringLiteral("Warm-up needed"); cacheState = QStringLiteral("Run profile changed since the last warm-up"); tone = Theme::Tone::Warning; cacheRole = Theme::Role::Warning; break;
-    case TitleShaderState::Unknown: stateText = QStringLiteral("Not warmed up here"); cacheState = QStringLiteral("Not warmed up from this launcher"); break;
+    case TitleShaderState::Unknown:
+        if (m_s.settings.xsemuWarmup()) {
+            stateText = QStringLiteral("Not warmed up here");
+            cacheState = QStringLiteral("Not warmed up from this launcher");
+        } else {
+            cacheState = QStringLiteral("Built while the game runs");
+        }
+        break;
     }
     if (!runner.isBuiltIn()) {
         std::optional<WarmupRun> pre;
@@ -731,6 +738,7 @@ void GameDetailsPage::refresh()
         tone = tooOld ? Theme::Tone::Danger : Theme::Tone::Warning;
     }
     m_state->setText(stateText);
+    m_state->setVisible(!stateText.isEmpty());
     m_state->setToolTip(heldReason);
     m_state->setTone(tone);
 

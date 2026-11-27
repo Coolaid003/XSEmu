@@ -4,7 +4,6 @@
 #include "WindowButtons.h"
 #include "app/Services.h"
 #include "core/Format.h"
-#include "core/LaunchConfig.h"
 #include "core/Paths.h"
 #include "core/ShaderCacheInfo.h"
 #include "theme/Theme.h"
@@ -956,7 +955,7 @@ void InGameView::refresh()
     if (booting) {
         const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
         QString shaders;
-        switch (titleShaderState(g.titleId(), m_s.settings.recentWarmups(), cache, LaunchConfig::profileIdentity(m_s.settings, g.titleId()))) {
+        switch (shownShaderState(m_s.settings, g.titleId(), m_s.settings.recentWarmups(), cache)) {
         case TitleShaderState::Ready: shaders = QStringLiteral("Shaders ready"); break;
         case TitleShaderState::NeverWarmed: shaders = QStringLiteral("Shaders not warmed up"); break;
         case TitleShaderState::LastRunIncomplete: shaders = QStringLiteral("Last warm-up didn't finish"); break;

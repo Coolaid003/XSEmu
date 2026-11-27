@@ -21,7 +21,8 @@ void confirmPlay(QWidget* window, Services& services, const Game& game, std::fun
                  std::function<void()> warmUp);
 // True when Play would ask about the shader cache first: never warmed up on this PC, the last
 // warm-up for the title stopped part way or failed, or it ran with another run profile. A new XSEmu
-// translator build is not known to the launcher, so a finished warm-up with the same profile never asks.
+// translator build is not known to the launcher, so a finished warm-up with the same profile never asks,
+// and nothing asks while the XSEmu warm-up is turned off (AppSettings::xsemuWarmup).
 bool shadersCold(Services& services, const Game& game);
 
 // The emulator picker (Settings, About and the missing or too old emulator dialogs): stores the file

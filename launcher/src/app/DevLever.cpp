@@ -397,7 +397,7 @@ QStringList DevLever::states()
         QStringLiteral("cold-cache"), QStringLiteral("details"), QStringLiteral("details-no-art"),
         QStringLiteral("warmup-idle"), QStringLiteral("warmup-running"), QStringLiteral("warmup-paused-ram"),
         QStringLiteral("warmup-failed"), QStringLiteral("warmup-finished"), QStringLiteral("warmup-blocked"),
-        QStringLiteral("warmup-cancelled"), QStringLiteral("warmup-stopped"),
+        QStringLiteral("warmup-cancelled"), QStringLiteral("warmup-stopped"), QStringLiteral("warmup-off"), QStringLiteral("details-warmup-off"),
         QStringLiteral("settings"), QStringLiteral("settings-network"), QStringLiteral("settings-shaders"), QStringLiteral("settings-run-profile"),
         QStringLiteral("settings-shaders-clear"), QStringLiteral("settings-overlay"), QStringLiteral("settings-folders"),
         QStringLiteral("settings-input"), QStringLiteral("settings-graphics"), QStringLiteral("settings-logs"),
@@ -496,6 +496,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
     s.settings.setTheme(o.theme == QLatin1String("dark") ? AppSettings::ThemeMode::Dark : AppSettings::ThemeMode::Light);
     s.settings.setDefaultDeviceType(QStringLiteral("lockhart"));
     s.settings.setOffline(true);
+    // the design states show XSEmu's warm-up; the -warmup-off states show it turned off, as the build ships
+    s.settings.setXsemuWarmup(!o.state.endsWith(QLatin1String("warmup-off")));
     const bool firstLaunch = o.state.startsWith(QLatin1String("first-launch"));
     const bool libraryState = isLibraryState(o.state) && o.state != QLatin1String("library-empty");
     const QString games = root(QStringLiteral("games"));
@@ -534,7 +536,7 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         s.emulator.simulateForScreenshot(EmulatorController::State::Running, coast, {});
     } else if (st == QLatin1String("library-paused") || st == QLatin1String("library-stop-first"))
         s.emulator.simulateForScreenshot(EmulatorController::State::Paused, coast, pausedStats());
-    else if (st == QLatin1String("details"))
+    else if (st == QLatin1String("details") || st == QLatin1String("details-warmup-off"))
         w.showGameDetails(coast);
     else if (st == QLatin1String("details-no-art"))
         w.showGameDetails(signal);
