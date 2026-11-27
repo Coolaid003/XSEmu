@@ -4,7 +4,7 @@
 
 **Run Xbox Series X|S (GDK) titles on Windows, built on the XCL translation layer.**
 
-[![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue)](LICENSE)
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE)
 [![Language: Rust](https://img.shields.io/badge/language-Rust-orange?logo=rust)](Cargo.toml)
 [![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-0078D6)](#requirements)
 [![Status: experimental](https://img.shields.io/badge/status-experimental-red)](#status)
@@ -296,9 +296,11 @@ XSEmu started from
 and merges general fixes from XCL's `main`. Credit for the loader, the runtime
 shims, the recompiler and the test suite goes to ivall and the XCL contributors.
 
-XSEmu is licensed under [GPL-2.0-only](LICENSE), the same as XCL. Third-party
-sources and their licences are listed in [THIRD_PARTY.md](THIRD_PARTY.md). Code
-ported from another project carries a provenance note in the file.
+XSEmu is licensed under [GPL-3.0-or-later](LICENSE), the same as XCL, which moved
+from GPL-2.0-only to GPL-3.0-or-later in
+[`06f90c1`](https://github.com/xcl-dev/xcl/commit/06f90c1986f43698d0405eff3c2ab0af230e1ed9).
+Third-party sources and their licences are listed in [THIRD_PARTY.md](THIRD_PARTY.md).
+Code ported from another project carries a provenance note in the file.
 
 ## Legal
 

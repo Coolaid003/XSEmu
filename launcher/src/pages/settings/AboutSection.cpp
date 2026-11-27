@@ -25,7 +25,7 @@
 
 // The launcher's version (XSEMU_VERSION), the emulator's path, its answer to --version and whether the
 // launcher may start it (or why not: too old, busy), and the credits and
-// licences: XCL by the xcl-dev contributors (GPL-2.0), the launcher (GPL-2.0), Qt (LGPL-3.0, linked
+// licences: XCL by the xcl-dev contributors (GPL-3.0-or-later), the launcher (GPL-3.0-or-later), Qt (LGPL-3.0, linked
 // dynamically), cover art from SteamGridDB with the user's own key.
 QWidget* SettingsSections::about(Services& s)
 {
@@ -110,17 +110,17 @@ QWidget* SettingsSections::about(Services& s)
     QObject::connect(copy, &Button::clicked, copy, [copy] {
         QGuiApplication::clipboard()->setText(QStringLiteral("%1, launcher %2").arg(copy->property("version").toString(), QStringLiteral(XSEMU_VERSION)));
     });
-    sec.row(QStringLiteral("Launcher"), QStringLiteral("%1. New code under the GNU General Public License v2.").arg(QStringLiteral(XSEMU_VERSION)));
+    sec.row(QStringLiteral("Launcher"), QStringLiteral("%1. New code under the GNU General Public License v3 or later.").arg(QStringLiteral(XSEMU_VERSION)));
     SettingsShare::addSettingsRows(sec, s);
 
     sec.caps(QStringLiteral("Credits"));
-    auto* credits = new Label(QStringLiteral("XSEmu is built on <b>XCL</b>, the Xbox Series compatibility layer by the xcl-dev contributors (GPL-2.0). "
+    auto* credits = new Label(QStringLiteral("XSEmu is built on <b>XCL</b>, the Xbox Series compatibility layer by the xcl-dev contributors (GPL-3.0-or-later). "
                                              "The console model, system libraries and shader recompiler come from XCL."),
                               Label::Style::Body);
     credits->setTextFormat(Qt::RichText);
     credits->setWordWrap(true);
     sec.add(credits, 8);
-    auto* licences = new Label(QStringLiteral("Like XCL, XSEmu and this launcher are licensed under the GNU General Public License v2. The launcher uses Qt under the "
+    auto* licences = new Label(QStringLiteral("Like XCL, XSEmu and this launcher are licensed under the GNU General Public License v3 or later. The launcher uses Qt under the "
                                               "GNU Lesser General Public License v3, linked dynamically. Cover art is fetched from SteamGridDB with your own key and "
                                               "cached on this PC; XSEmu ships no game art."),
                                Label::Style::Small, Theme::Role::Text2);
@@ -131,7 +131,7 @@ QWidget* SettingsSections::about(Services& s)
     lh->setContentsMargins(0, 16, 0, 0);
     lh->setSpacing(6);
     const QList<QPair<QString, QString>> urls = {
-        {QStringLiteral("GPL-2.0 licence"), QStringLiteral("https://www.gnu.org/licenses/old-licenses/gpl-2.0.html")},
+        {QStringLiteral("GPL-3.0 licence"), QStringLiteral("https://www.gnu.org/licenses/gpl-3.0.html")},
         {QStringLiteral("Qt licence (LGPL-3.0)"), QStringLiteral("https://www.gnu.org/licenses/lgpl-3.0.html")},
         {QStringLiteral("XCL source"), QStringLiteral("https://github.com/ivall/xcl")},
     };
