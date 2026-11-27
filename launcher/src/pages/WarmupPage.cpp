@@ -3,6 +3,7 @@
 #include "PageScaffold.h"
 #include "app/Services.h"
 #include "core/Format.h"
+#include "core/LaunchConfig.h"
 #include "core/Runner.h"
 #include "core/ShaderCacheInfo.h"
 #include "settings/SettingsKit.h"
@@ -139,6 +140,7 @@ QString stateSentence(const QString& name, TitleShaderState st)
     case TitleShaderState::NeverWarmed: return QStringLiteral("%1 has never been warmed up").arg(name);
     case TitleShaderState::LastRunIncomplete: return QStringLiteral("%1's last warm-up stopped part way").arg(name);
     case TitleShaderState::LastRunFailed: return QStringLiteral("%1's last warm-up failed").arg(name);
+    case TitleShaderState::ProfileChanged: return QStringLiteral("%1's run profile changed since its last warm-up").arg(name);
     case TitleShaderState::Unknown: break;
     }
     return {};
@@ -256,6 +258,8 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
     connect(&m_s.settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::RecentWarmups)) {
             refreshRuns();
+            refresh();
+        } else if (key == QLatin1String(AppSettings::Key::RunProfile) || key == QLatin1String(AppSettings::Key::GameOverrides)) {
             refresh();
         }
     });
@@ -493,7 +497,7 @@ void WarmupPage::refresh()
     m_block->setState(ProgressBlock::State::Idle);
     m_block->setFraction(0);
     m_block->setColumns({});
-    const TitleShaderState pickedState = picked.isValid() ? titleShaderState(picked.titleId(), recent, cache) : TitleShaderState::Unknown;
+    const TitleShaderState pickedState = picked.isValid() ? titleShaderState(picked.titleId(), recent, cache, LaunchConfig::profileIdentity(m_s.settings, picked.titleId())) : TitleShaderState::Unknown;
     switch (pickedState) {
     case TitleShaderState::Ready:
         m_block->setTitle(QStringLiteral("%1 is warmed up").arg(pickedName));
@@ -503,6 +507,9 @@ void WarmupPage::refresh()
         break;
     case TitleShaderState::LastRunFailed:
         m_block->setTitle(QStringLiteral("%1's last warm-up failed").arg(pickedName));
+        break;
+    case TitleShaderState::ProfileChanged:
+        m_block->setTitle(QStringLiteral("%1's run profile changed since its last warm-up").arg(pickedName));
         break;
     case TitleShaderState::NeverWarmed:
     case TitleShaderState::Unknown:
@@ -538,7 +545,7 @@ void WarmupPage::refresh()
     for (const Game& g : m_s.library.games()) {
         if (g.titleId() == picked.titleId() || others.size() >= 3)
             continue;
-        const QString s = stateSentence(g.title(), titleShaderState(g.titleId(), recent, cache));
+        const QString s = stateSentence(g.title(), titleShaderState(g.titleId(), recent, cache, LaunchConfig::profileIdentity(m_s.settings, g.titleId())));
         if (!s.isEmpty())
             others << s;
     }

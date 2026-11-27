@@ -10,6 +10,7 @@
 #include <QVariantMap>
 
 #include <memory>
+#include <optional>
 
 // One finished warm-up, as the Warm-up page's "Recent runs" table shows it.
 struct WarmupRun {
@@ -28,6 +29,7 @@ struct WarmupRun {
     bool full = false;
     bool stoppedForRam = false; // ended part way while waiting at the RAM floor
     QString message;            // error text for Failed; why for NothingToBuild; a note for Finished
+    QString profile;            // XSEmu's warm-up: LaunchConfig::profileIdentity it ran with; empty: not recorded
     QDateTime finishedAt;
 
     QVariantMap toMap() const;
@@ -74,6 +76,7 @@ public:
         static constexpr const char* RecentWarmups = "warmup/recentRuns";
         static constexpr const char* PlayStats = "games/play";
         static constexpr const char* LibrarySort = "library/sort";
+        static constexpr const char* RunProfile = "emulator/runProfile";
     };
 
     static constexpr int kRecentWarmupLimit = 20;
@@ -161,6 +164,7 @@ public:
     void setEmulatorPathOverride(const QString& path);
     // The executable used: env XSEMU_EMULATOR, else the override, else Paths::defaultEmulatorPath().
     QString emulatorPath() const;
+    static bool emulatorPathFromEnvironment(); // XSEMU_EMULATOR is set, so the override is not used
     // A file whose existence means another job holds the emulator (Play and Warm-up wait): env
     // XSEMU_BUSY_MARKER, else the setting; empty: none.
     QString busyMarker() const;
@@ -169,6 +173,15 @@ public:
     // Free RAM a game launch asks for on top of the 1 GB floor.
     int launchNeedMb() const;
     void setLaunchNeedMb(int mb);
+
+    // The environment XSEmu runs with for Play and the warm-up, one KEY=VALUE per line (LaunchConfig::
+    // runEnvironment). defaultRunProfile() until the user edits it; reset forgets the edit.
+    static const QStringList& defaultRunProfile();
+    QStringList runProfile() const;
+    void setRunProfile(const QStringList& lines);
+    void resetRunProfile();
+    // A game's own run profile (the "runProfile" game override), replacing the global one; empty when it has none.
+    std::optional<QStringList> gameRunProfile(const QString& titleId) const;
 
     // Launcher-side per-game choices (not xcl.toml): an open map per title id.
     QVariantMap gameOverrides(const QString& titleId) const;
