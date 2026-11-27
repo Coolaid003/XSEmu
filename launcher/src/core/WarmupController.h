@@ -19,7 +19,9 @@ struct RunnerSpec;
 
 // Shader warm-ups: "XSEmu.exe warm-up [--full] --progress-json", its JSON progress and cancel.
 // The cache is machine-wide (the emulator takes no game argument); the game picked in the UI is
-// recorded with the run so the Warm-up page can say which game it was for.
+// recorded with the run so the Warm-up page can say which game it was for, and its run environment
+// (LaunchConfig::runEnvironment, the same as Play's) picks the translator switches and so the cache
+// generation the warm-up fills.
 // A game set to run with a third-party runner gets that runner's pre-cache instead: its steps
 // (RunnerSpec::precache) run hidden one after another, their output read by the step's progress
 // parser; a check step that finds nothing waiting, or a step whose needed files are missing, ends

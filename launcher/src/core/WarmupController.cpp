@@ -138,6 +138,7 @@ bool WarmupController::start(bool full, const Game& forGame, QString* error)
 
     auto* p = new ProcessTree(this);
     m_process = p;
+    p->setProcessEnvironment(LaunchConfig::runEnvironment(QProcessEnvironment::systemEnvironment(), m_settings, forGame.titleId()));
     p->setWorkingDirectory(QFileInfo(m_settings.emulatorPath()).absolutePath());
     connect(p, &QProcess::readyReadStandardOutput, this, &WarmupController::onStdout);
     connect(p, &QProcess::readyReadStandardError, this, &WarmupController::onStderr);

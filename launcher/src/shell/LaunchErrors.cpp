@@ -99,6 +99,25 @@ Button* actionButton(Dialog* d, const QString& text, std::function<void()> actio
     return b;
 }
 
+// The way out of a missing or too old emulator: choose another one, then launch again. XSEMU_EMULATOR
+// wins over any choice, so with it set the dialog says where to change it instead.
+void offerChooseEmulator(Dialog* d, QWidget* window, Services& s, std::function<void()> retry)
+{
+    if (AppSettings::emulatorPathFromEnvironment()) {
+        d->body()->addSpacing(8);
+        d->body()->addWidget(paragraph(QStringLiteral("XSEMU_EMULATOR in the launcher's environment sets this path. Change it there, or start the launcher "
+                                                      "without it to choose the emulator here."),
+                                       Theme::Role::Text3, Label::Style::Small));
+        return;
+    }
+    Button* choose = actionButton(d, QStringLiteral("Choose emulator..."), [window, &s, retry] {
+        if (LaunchErrors::chooseEmulator(window, s.settings))
+            retry();
+    }, Button::Variant::Primary, QStringLiteral("folder"));
+    choose->setObjectName(QStringLiteral("chooseEmulator"));
+    d->addButton(choose);
+}
+
 // A label/value table on a sunken card ("Needed 9.6 GB").
 struct FactsBox {
     Card* card;
@@ -440,6 +459,16 @@ void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, s
     d->open();
 }
 
+bool LaunchErrors::chooseEmulator(QWidget* parent, AppSettings& settings)
+{
+    const QString picked = QFileDialog::getOpenFileName(parent, QStringLiteral("Choose the emulator"), QFileInfo(settings.emulatorPath()).absolutePath(),
+                                                        QStringLiteral("XSEmu (XSEmu.exe xcl.exe);;Programs (*.exe);;All files (*)"));
+    if (picked.isEmpty())
+        return false;
+    settings.setEmulatorPathOverride(picked);
+    return true;
+}
+
 void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& game,
                                      const EmulatorController::LaunchCheck& check, std::function<void()> retry)
 {
@@ -463,8 +492,11 @@ void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& g
         d->body()->addSpacing(12);
         d->body()->addWidget(pathBox(s.settings.emulatorPath()));
         d->body()->addSpacing(12);
-        d->body()->addWidget(paragraph(QStringLiteral("Keep XSEmu.exe next to the launcher, or reinstall XSEmu."), Theme::Role::Text3, Label::Style::Small));
+        d->body()->addWidget(paragraph(QStringLiteral("Keep XSEmu.exe next to the launcher, or choose where it is. The choice is kept, so the launcher "
+                                                      "starts from its normal shortcut."),
+                                       Theme::Role::Text3, Label::Style::Small));
         d->addButton(closeButton(d, QStringLiteral("Close")));
+        offerChooseEmulator(d, window, s, retry);
         d->open();
         return;
     }
@@ -475,8 +507,9 @@ void LaunchErrors::showLaunchProblem(QWidget* window, Services& s, const Game& g
         d->body()->addSpacing(12);
         d->body()->addWidget(pathBox(s.settings.emulatorPath()));
         d->body()->addSpacing(12);
-        d->body()->addWidget(paragraph(QStringLiteral("The launcher didn't start it. Put a current XSEmu.exe next to the launcher, or choose one in Settings, About."), Theme::Role::Text3, Label::Style::Small));
+        d->body()->addWidget(paragraph(QStringLiteral("The launcher didn't start it. Put a current XSEmu.exe next to the launcher, or choose another build."), Theme::Role::Text3, Label::Style::Small));
         d->addButton(closeButton(d, QStringLiteral("Close")));
+        offerChooseEmulator(d, window, s, retry);
         d->open();
         return;
     }

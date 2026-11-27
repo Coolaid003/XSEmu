@@ -5,6 +5,7 @@
 
 #include <functional>
 
+class AppSettings;
 class QWidget;
 class Services;
 
@@ -22,6 +23,10 @@ void confirmPlay(QWidget* window, Services& services, const Game& game, std::fun
 // warm-up for the title stopped part way or failed. Staleness (a new translator) is not known to the
 // launcher, so a finished warm-up never asks.
 bool shadersCold(Services& services, const Game& game);
+
+// The emulator picker (Settings, About and the missing or too old emulator dialogs): stores the file
+// chosen as AppSettings::emulatorPathOverride. False when the user cancelled.
+bool chooseEmulator(QWidget* parent, AppSettings& settings);
 
 // Why a launch was refused (EmulatorController::checkLaunch). retry() launches again.
 void showLaunchProblem(QWidget* window, Services& services, const Game& game,
