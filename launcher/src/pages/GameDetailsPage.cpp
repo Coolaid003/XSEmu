@@ -515,14 +515,11 @@ GameDetailsPage::GameDetailsPage(Services& services, QWidget* parent)
         if (!m_game.isValid())
             return;
         if (key == QLatin1String(AppSettings::Key::RecentWarmups) || key == QLatin1String(AppSettings::Key::PlayStats)
-            || key == QLatin1String(AppSettings::Key::SteamGridDbKey))
+            || key == QLatin1String(AppSettings::Key::SteamGridDbKey) || key == QLatin1String(AppSettings::Key::RunProfile)
+            || key == QLatin1String(AppSettings::Key::GameOverrides))
             refresh();
         else if (key == QLatin1String(AppSettings::Key::DefaultDeviceType) || key == QLatin1String(AppSettings::Key::OverlayDefault))
             refreshOverrides();
-        else if (key == QLatin1String(AppSettings::Key::RunProfile) || key == QLatin1String(AppSettings::Key::GameOverrides)) {
-            refreshOverrides();
-            refreshRunProfile();
-        }
     });
     connect(m_ownProfile, &Toggle::toggled, this, [this](bool on) {
         if (on)

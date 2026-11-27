@@ -467,7 +467,8 @@ LibraryPage::LibraryPage(Services& services, QWidget* parent)
     connect(&m_s.settings, &AppSettings::changed, this, [this](const QString& key) {
         if (key == QLatin1String(AppSettings::Key::LibrarySort) || key == QLatin1String(AppSettings::Key::PlayStats))
             rebuild();
-        else if (key == QLatin1String(AppSettings::Key::RecentWarmups))
+        else if (key == QLatin1String(AppSettings::Key::RecentWarmups) || key == QLatin1String(AppSettings::Key::RunProfile)
+                 || key == QLatin1String(AppSettings::Key::GameOverrides))
             refreshState();
     });
     rebuild();

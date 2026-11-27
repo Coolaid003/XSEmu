@@ -259,6 +259,8 @@ WarmupPage::WarmupPage(Services& services, QWidget* parent)
         if (key == QLatin1String(AppSettings::Key::RecentWarmups)) {
             refreshRuns();
             refresh();
+        } else if (key == QLatin1String(AppSettings::Key::RunProfile) || key == QLatin1String(AppSettings::Key::GameOverrides)) {
+            refresh();
         }
     });
     refreshGames();
