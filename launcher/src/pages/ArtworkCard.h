@@ -19,6 +19,7 @@ class ArtworkCard : public Card {
 public:
     explicit ArtworkCard(Services& services, QWidget* parent = nullptr);
     void setGame(const Game& game);
+    void chooseMatch(); // the "Choose the SteamGridDB game" dialog
 
 private:
     struct Slot {
@@ -28,7 +29,6 @@ private:
     };
 
     void refresh();
-    void chooseMatch();
 
     Services& m_s;
     Game m_game;

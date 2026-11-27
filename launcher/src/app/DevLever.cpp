@@ -441,7 +441,7 @@ QStringList DevLever::states()
         QStringLiteral("in-game-boot-error"), QStringLiteral("in-game-back-to-library"),
         QStringLiteral("runners"), QStringLiteral("runners-install-confirm"), QStringLiteral("runners-building"),
         QStringLiteral("runners-install-error"), QStringLiteral("runners-change-location"), QStringLiteral("details-runs-with-kelvaroq"),
-        QStringLiteral("details-runs-with-picker"), QStringLiteral("details-run-profile"), QStringLiteral("details-artwork"),
+        QStringLiteral("details-runs-with-picker"), QStringLiteral("details-run-profile"), QStringLiteral("details-artwork"), QStringLiteral("details-artwork-match"),
         QStringLiteral("warmup-runner"), QStringLiteral("library-runner-own-window"), QStringLiteral("library-runner-floating-bar"),
         QStringLiteral("share-settings"), QStringLiteral("import-preview"), QStringLiteral("import-error"),
     };
@@ -508,7 +508,8 @@ bool DevLever::prepare(QString* error)
     qputenv("XCL_DATA_ROOT", root(QStringLiteral("xcl")).toUtf8());
     qputenv("XCL_DXIL_CACHE", root(QStringLiteral("dxil")).toUtf8());
     qputenv("XSEMU_RUNNERS_DIR", root(QStringLiteral("runners")).toUtf8());
-    qputenv("XSEMU_SGDB_PROXY", "http://127.0.0.1:9/api/v2"); // fixtures never reach SteamGridDB
+    if (qEnvironmentVariableIsEmpty("XSEMU_SGDB_PROXY"))
+        qputenv("XSEMU_SGDB_PROXY", "http://127.0.0.1:9/api/v2"); // fixtures never reach SteamGridDB unless told to
     if (qEnvironmentVariableIsEmpty("XSEMU_GPU"))
         qputenv("XSEMU_GPU", "10de:NVIDIA GPU (sample)");
     QFile feed(root(QStringLiteral("runner-feed.json")));
@@ -576,7 +577,7 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         w.showGameDetails(coast);
     } else if (st == QLatin1String("details-runs-with-picker"))
         w.showGameDetails(coast);
-    else if (st == QLatin1String("details-artwork")) {
+    else if (st.startsWith(QLatin1String("details-artwork"))) {
         CoverCache::Entry e = s.covers.cache().entry(coast.titleId());
         e.pinned = true;
         e.authors = {QStringLiteral("Mira Okafor"), QStringLiteral("Mira Okafor"), QStringLiteral("tidewright"), {}};
@@ -741,6 +742,8 @@ void DevLever::apply(const Options& o, Services& s, MainWindow& w)
         QTimer::singleShot(0, &w, [&w] {
             w.gameDetailsPage()->findChild<QScrollArea*>()->ensureWidgetVisible(w.gameDetailsPage()->findChild<ArtworkCard*>(), 0, 24);
         });
+    if (st == QLatin1String("details-artwork-match"))
+        QTimer::singleShot(0, &w, [&w] { w.gameDetailsPage()->findChild<ArtworkCard*>()->chooseMatch(); });
     if (st == QLatin1String("runners-install-confirm"))
         QTimer::singleShot(0, &w, [&w, &s] { RunnerUi::confirmInstall(&w, s, QStringLiteral("victory-7900xtx")); });
     if (st == QLatin1String("runners-change-location")) {

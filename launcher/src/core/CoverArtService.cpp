@@ -216,6 +216,10 @@ CoverArtService::CoverArtService(AppSettings& settings, const QString& cacheDir,
 {
     m_resume->setSingleShot(true);
     connect(m_resume, &QTimer::timeout, this, &CoverArtService::pump);
+    connect(&m_settings, &AppSettings::changed, this, [this](const QString& key) {
+        if (key == QLatin1String(AppSettings::Key::ArtLookups))
+            pump();
+    });
 }
 
 CoverArtService::~CoverArtService() = default;
@@ -450,11 +454,22 @@ bool CoverArtService::setCustomImage(const QString& titleId, CoverCache::Kind ki
     const QDir dir(m_cache.dir());
     QDir().mkpath(m_cache.dir());
     const QString name = CoverCache::fileName(titleId, kind, ext, true);
-    if (!e.customFile(kind).isEmpty())
-        QFile::remove(dir.filePath(e.customFile(kind)));
-    QFile::remove(dir.filePath(name));
-    if (!QFile::copy(src.absoluteFilePath(), dir.filePath(name)))
+    const QString dest = dir.filePath(name);
+    if (src.canonicalFilePath() == QFileInfo(dest).canonicalFilePath() && e.customFile(kind) == name)
+        return true;
+    const QString part = dest + QStringLiteral(".part");
+    QFile::remove(part);
+    if (!QFile::copy(src.absoluteFilePath(), part)) {
+        QFile::remove(part);
         return false;
+    }
+    if (!e.customFile(kind).isEmpty() && e.customFile(kind) != name)
+        QFile::remove(dir.filePath(e.customFile(kind)));
+    QFile::remove(dest);
+    if (!QFile::rename(part, dest)) {
+        QFile::remove(part);
+        return false;
+    }
     e.customFile(kind) = name;
     m_cache.put(titleId, e);
     emit artChanged(titleId);
@@ -481,8 +496,19 @@ void CoverArtService::enqueue(const Job& job)
     pump();
 }
 
+// Starts the next queued lookup. With art downloads off it drops the queue instead, and the lookup
+// in flight stops at its next request (fetchKind).
 void CoverArtService::pump()
 {
+    if (!canLookUp()) {
+        m_resume->stop();
+        for (const Job& j : std::as_const(m_queue)) {
+            if (!(m_busy && m_job.game.titleId() == j.game.titleId()))
+                m_pending.remove(j.game.titleId());
+        }
+        m_queue.clear();
+        return;
+    }
     if (m_busy || m_queue.isEmpty() || m_resume->isActive())
         return;
     m_job = m_queue.takeFirst();
@@ -542,6 +568,13 @@ void CoverArtService::fetchKind(size_t index)
         finishCurrent();
         return;
     }
+    if (!canLookUp()) {
+        m_busy = false;
+        m_pending.remove(m_job.game.titleId());
+        emit artChanged(m_job.game.titleId());
+        pump();
+        return;
+    }
     const CoverCache::Kind kind = CoverCache::kKinds[index];
     const QUrl base = apiBase();
     QNetworkReply* reply = apiGet(artUrl(base, kind, m_found.gameId));
@@ -572,7 +605,8 @@ void CoverArtService::downloadImage(CoverCache::Kind kind, const Image& image, s
     QNetworkReply* reply = net()->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, kind, image, next] {
         reply->deleteLater();
-        if (httpStatus(reply) == 0) {
+        const int status = httpStatus(reply);
+        if (status == 0 || status == 429 || status >= 500) {
             failCurrent(reply);
             return;
         }

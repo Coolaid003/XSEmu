@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QPainter>
+#include <QScrollArea>
 #include <QVBoxLayout>
 
 namespace {
@@ -214,12 +215,22 @@ void ArtworkCard::chooseMatch()
     status->setWordWrap(true);
     d->body()->addSpacing(8);
     d->body()->addWidget(status);
-    auto* results = new QVBoxLayout;
+    auto* scroll = new QScrollArea;
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setFixedHeight(240);
+    auto* list = new QWidget;
+    auto* results = new QVBoxLayout(list);
+    results->setContentsMargins(0, 8, 0, 0);
     results->setSpacing(4);
-    d->body()->addLayout(results);
+    results->addStretch(1);
+    scroll->setWidget(list);
+    d->body()->addWidget(scroll);
 
     const auto run = [this, d, term, status, results, game] {
-        while (QLayoutItem* item = results->takeAt(0)) {
+        while (results->count() > 1) {
+            QLayoutItem* item = results->takeAt(0);
             if (item->widget())
                 item->widget()->deleteLater();
             delete item;
@@ -235,7 +246,7 @@ void ArtworkCard::chooseMatch()
             status->setText(matches.isEmpty() ? QStringLiteral("No games found. Try another name.") : QStringLiteral("%1 found").arg(matches.size()));
             for (const CoverArtService::Match& m : matches.mid(0, 10)) {
                 auto* b = new Button(m.verified ? QStringLiteral("%1  (verified)").arg(m.name) : m.name, Button::Variant::Secondary, Button::Size::Small);
-                results->addWidget(b);
+                results->insertWidget(results->count() - 1, b);
                 connect(b, &Button::clicked, d, [this, d, game, m] {
                     m_s.covers.setMatch(game, m);
                     d->dismiss();

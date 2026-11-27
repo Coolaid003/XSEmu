@@ -98,6 +98,9 @@ private slots:
     void overridesSurviveRefresh();
     void rateLimitHoldsTheQueue();
     void failureIsNotRetriedOnItsOwn();
+    void turningDownloadsOffStopsTheQueue();
+    void failedImageDownloadKeepsTheOldArt();
+    void replacingACustomImageIsSafe();
 };
 
 void TestCoverArt::urls()
@@ -375,6 +378,80 @@ void TestCoverArt::failureIsNotRetriedOnItsOwn()
     covers.refresh(g);
     QVERIFY(covers.isPending(g.titleId()));
     QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 2, 10000);
+}
+
+void TestCoverArt::turningDownloadsOffStopsTheQueue()
+{
+    FakeApi api;
+    qputenv("XSEMU_SGDB_PROXY", api.base().toUtf8());
+    api.routes[QStringLiteral("/api/v2/search/autocomplete/First")] = {{200, "application/json", "{\"success\":true,\"data\":[{\"id\":11,\"name\":\"First\"}]}", {}}};
+    QTemporaryDir dir;
+    AppSettings settings(dir.filePath(QStringLiteral("settings.ini")));
+    CoverArtService covers(settings, dir.filePath(QStringLiteral("covers")));
+    const Game first = makeGame(dir.path(), QStringLiteral("T.First"), QStringLiteral("First"));
+    const Game second = makeGame(dir.path(), QStringLiteral("T.Second"), QStringLiteral("Second"));
+    covers.request(first);
+    covers.request(second);
+    QVERIFY(covers.isPending(second.titleId()));
+    settings.setArtLookups(false);
+    QVERIFY(!covers.isPending(second.titleId()));
+    QTRY_VERIFY_WITH_TIMEOUT(!covers.isPending(first.titleId()), 10000);
+    QTest::qWait(200);
+    QCOMPARE(api.asked, QStringList{QStringLiteral("/api/v2/search/autocomplete/First")});
+    QVERIFY(!covers.cache().contains(first.titleId()));
+}
+
+void TestCoverArt::failedImageDownloadKeepsTheOldArt()
+{
+    FakeApi api;
+    qputenv("XSEMU_SGDB_PROXY", api.base().toUtf8());
+    api.routes[QStringLiteral("/api/v2/search/autocomplete/Kept")] = {{200, "application/json", "{\"success\":true,\"data\":[{\"id\":21,\"name\":\"Kept\"}]}", {}}};
+    api.routes[QStringLiteral("/api/v2/grids/game/21?dimensions=600x900&types=static")] = {{200, "application/json", images(api.imageUrl(QStringLiteral("k.png")), QStringLiteral("Di")), {}}};
+    api.routes[QStringLiteral("/img/k.png")] = {{200, "image/png", "kept-cover", {}}, {503, "text/plain", "busy", {}}};
+    QTemporaryDir dir;
+    AppSettings settings(dir.filePath(QStringLiteral("settings.ini")));
+    CoverArtService covers(settings, dir.filePath(QStringLiteral("covers")));
+    QSignalSpy failed(&covers, &CoverArtService::lookupFailed);
+    const Game g = makeGame(dir.path(), QStringLiteral("T.Kept"), QStringLiteral("Kept"));
+    covers.request(g);
+    QTRY_VERIFY_WITH_TIMEOUT(!covers.isPending(g.titleId()), 10000);
+    const QDateTime fetched = covers.cache().entry(g.titleId()).fetchedAt;
+    covers.refresh(g);
+    QTRY_COMPARE_WITH_TIMEOUT(failed.size(), 1, 10000);
+    QCOMPARE(covers.cache().entry(g.titleId()).fetchedAt, fetched);
+    QFile cover(covers.artPath(g.titleId(), CoverCache::Kind::Grid));
+    QVERIFY(cover.open(QIODevice::ReadOnly));
+    QCOMPARE(cover.readAll(), QByteArray("kept-cover"));
+    QVERIFY(!covers.lastError(g.titleId()).isEmpty());
+}
+
+void TestCoverArt::replacingACustomImageIsSafe()
+{
+    qputenv("XSEMU_SGDB_PROXY", "http://127.0.0.1:9/api/v2");
+    QTemporaryDir dir;
+    AppSettings settings(dir.filePath(QStringLiteral("settings.ini")));
+    CoverArtService covers(settings, dir.filePath(QStringLiteral("covers")));
+    const QString id = QStringLiteral("T.Own");
+    const auto write = [&](const QString& name, const QByteArray& bytes) {
+        QFile f(dir.filePath(name));
+        f.open(QIODevice::WriteOnly);
+        f.write(bytes);
+        return f.fileName();
+    };
+    QVERIFY(covers.setCustomImage(id, CoverCache::Kind::Hero, write(QStringLiteral("a.png"), "first")));
+    const QString kept = covers.artPath(id, CoverCache::Kind::Hero);
+    QVERIFY(covers.setCustomImage(id, CoverCache::Kind::Hero, kept));
+    QFile same(kept);
+    QVERIFY(same.open(QIODevice::ReadOnly));
+    QCOMPARE(same.readAll(), QByteArray("first"));
+    same.close();
+    QVERIFY(covers.setCustomImage(id, CoverCache::Kind::Hero, write(QStringLiteral("b.jpg"), "second")));
+    QVERIFY(!QFile::exists(kept));
+    QFile now(covers.artPath(id, CoverCache::Kind::Hero));
+    QVERIFY(now.open(QIODevice::ReadOnly));
+    QCOMPARE(now.readAll(), QByteArray("second"));
+    QVERIFY(!covers.setCustomImage(id, CoverCache::Kind::Hero, dir.filePath(QStringLiteral("gone.png"))));
+    QVERIFY(QFile::exists(covers.artPath(id, CoverCache::Kind::Hero)));
 }
 
 QTEST_GUILESS_MAIN(TestCoverArt)
