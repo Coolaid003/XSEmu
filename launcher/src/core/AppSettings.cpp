@@ -281,6 +281,9 @@ const QStringList& AppSettings::defaultRunProfile()
         QStringLiteral("XCL_DISPLAY_MODE=3840x2160"),
         QStringLiteral("XCL_WAIT_TIMEOUT_MS=20000"),
         QStringLiteral("XCL_ADAPTER=rtx"),
+        QStringLiteral("XCL_RT_GATE=hold"),
+        QStringLiteral("XCL_SHADER_CODE_MB=320"),
+        QStringLiteral("XCL_SHADER_CODE_IDLE_S=30"),
     };
     return lines;
 }

@@ -163,7 +163,8 @@ void TestSettings::runProfileDefaults()
         QStringLiteral("XCL_CHAIN_HOLD=0"), QStringLiteral("XCL_FSR4_STANDIN=1"), QStringLiteral("XCL_BVH_NODE_FIX=1"),
         QStringLiteral("XCL_COMPUTE_PER_ACCESS_COHERENCE=0"), QStringLiteral("XCL_LOOP_PROFILE=67657769b50d2f8b"), QStringLiteral("XCL_PSO_LIBRARY=0"),
         QStringLiteral("XCL_IMAGE_WRITEBACK=0"), QStringLiteral("XCL_LAZY_MESH_PSO=1"), QStringLiteral("XCL_DISPLAY_MODE=3840x2160"),
-        QStringLiteral("XCL_WAIT_TIMEOUT_MS=20000"), QStringLiteral("XCL_ADAPTER=rtx"),
+        QStringLiteral("XCL_WAIT_TIMEOUT_MS=20000"), QStringLiteral("XCL_ADAPTER=rtx"), QStringLiteral("XCL_RT_GATE=hold"),
+        QStringLiteral("XCL_SHADER_CODE_MB=320"), QStringLiteral("XCL_SHADER_CODE_IDLE_S=30"),
     };
     {
         AppSettings s(ini);

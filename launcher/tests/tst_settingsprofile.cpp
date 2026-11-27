@@ -483,7 +483,7 @@ void TestSettingsProfile::runProfileTravelsWithoutPaths()
         QVERIFY(!refused.profile.values.contains(QStringLiteral("run_profile")));
         QCOMPARE(refused.rejected.size(), 1);
     }
-    QCOMPARE(valueLabel(QStringLiteral("run_profile"), AppSettings::defaultRunProfile()), QStringLiteral("Defaults, 17 variables"));
+    QCOMPARE(valueLabel(QStringLiteral("run_profile"), AppSettings::defaultRunProfile()), QStringLiteral("Defaults, 20 variables"));
 }
 
 QTEST_GUILESS_MAIN(TestSettingsProfile)
