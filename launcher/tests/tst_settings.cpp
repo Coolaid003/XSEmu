@@ -222,6 +222,14 @@ void TestSettings::runProfilePerGame()
     QVERIFY(!LaunchConfig::runEnvironment(QProcessEnvironment(), s, a).contains(QStringLiteral("XCL_GLOBAL")));
     s.clearGameOverride(a, QStringLiteral("runProfile"));
     QVERIFY(LaunchConfig::runEnvironment(QProcessEnvironment(), s, a).contains(QStringLiteral("XCL_GLOBAL")));
+
+    // the identity a warm-up records follows the switches that apply, not their order or the settings-owned lines
+    const QString identity = LaunchConfig::profileIdentity(s, a);
+    QCOMPARE(identity.size(), 16);
+    s.setRunProfile({QStringLiteral("XCL_NETWORK=1"), QStringLiteral("XCL_GLOBAL=1")});
+    QCOMPARE(LaunchConfig::profileIdentity(s, a), identity);
+    s.setRunProfile({QStringLiteral("XCL_GLOBAL=2")});
+    QVERIFY(LaunchConfig::profileIdentity(s, a) != identity);
 }
 
 void TestSettings::runProfileSettingsOwnedKeysWin()

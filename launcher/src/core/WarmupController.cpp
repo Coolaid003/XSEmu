@@ -126,6 +126,7 @@ bool WarmupController::start(bool full, const Game& forGame, QString* error)
 
     const RunnerSpec& spec = runnerFor(forGame);
     m_spec = spec.isBuiltIn() ? nullptr : &spec;
+    m_profile = m_spec ? QString() : LaunchConfig::profileIdentity(m_settings, forGame.titleId());
     if (m_spec) {
         m_progress.runnerId = m_spec->id;
         m_progress.stepCount = int(m_spec->precache.size());
@@ -282,6 +283,7 @@ void WarmupController::finish(WarmupRun run)
     run.titleId = m_game.isValid() ? m_game.titleId() : QString();
     run.titleName = m_game.isValid() ? m_game.title() : QString();
     run.runnerId = m_spec ? m_spec->id : QString();
+    run.profile = m_profile;
     m_lastRun = run;
     m_settings.addRecentWarmup(run);
     if (m_process) {

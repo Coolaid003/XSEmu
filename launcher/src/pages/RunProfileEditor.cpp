@@ -27,16 +27,9 @@ RunProfileEditor::RunProfileEditor(int visibleLines, QWidget* parent)
     m_status->setWordWrap(true);
     v->addWidget(m_status);
 
-    m_pause.setSingleShot(true);
-    m_pause.setInterval(400);
     connect(m_text, &QPlainTextEdit::textChanged, this, [this] {
-        check();
-        m_pause.start();
-    });
-    connect(&m_pause, &QTimer::timeout, this, [this] {
-        const LaunchConfig::ProfileParse parsed = LaunchConfig::parseProfile(m_text->toPlainText());
-        if (parsed.ok())
-            emit edited(parsed.lines());
+        if (check())
+            emit edited(m_lines);
     });
     check();
 }
@@ -49,17 +42,16 @@ void RunProfileEditor::setLines(const QStringList& lines)
         const QSignalBlocker quiet(m_text);
         m_text->setPlainText(lines.join(QLatin1Char('\n')));
     }
-    m_pause.stop();
     check();
 }
 
-void RunProfileEditor::check()
+bool RunProfileEditor::check()
 {
     const LaunchConfig::ProfileParse parsed = LaunchConfig::parseProfile(m_text->toPlainText());
     if (!parsed.ok()) {
         m_status->setText(parsed.errors.join(QLatin1Char('\n')));
         m_status->setRole(Theme::Role::Danger);
-        return;
+        return false;
     }
     m_lines = parsed.lines();
     const qsizetype n = parsed.entries.size();
@@ -70,4 +62,5 @@ void RunProfileEditor::check()
     }
     m_status->setText(text.join(QLatin1Char(' ')));
     m_status->setRole(text.size() > 1 ? Theme::Role::Warning : Theme::Role::Text3);
+    return true;
 }

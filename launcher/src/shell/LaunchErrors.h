@@ -19,9 +19,9 @@ namespace LaunchErrors {
 // straight to play(), whose launch check shows the stop-first dialog.
 void confirmPlay(QWidget* window, Services& services, const Game& game, std::function<void()> play,
                  std::function<void()> warmUp);
-// True when Play would ask about the shader cache first: never warmed up on this PC, or the last
-// warm-up for the title stopped part way or failed. Staleness (a new translator) is not known to the
-// launcher, so a finished warm-up never asks.
+// True when Play would ask about the shader cache first: never warmed up on this PC, the last
+// warm-up for the title stopped part way or failed, or it ran with another run profile. A new XSEmu
+// translator build is not known to the launcher, so a finished warm-up with the same profile never asks.
 bool shadersCold(Services& services, const Game& game);
 
 // The emulator picker (Settings, About and the missing or too old emulator dialogs): stores the file

@@ -48,6 +48,7 @@ QVariantMap WarmupRun::toMap() const
         {QStringLiteral("full"), full},
         {QStringLiteral("stoppedForRam"), stoppedForRam},
         {QStringLiteral("message"), message},
+        {QStringLiteral("profile"), profile},
         {QStringLiteral("finishedAt"), finishedAt.toUTC().toString(Qt::ISODate)},
     };
 }
@@ -67,6 +68,7 @@ WarmupRun WarmupRun::fromMap(const QVariantMap& m)
     r.full = m.value(QStringLiteral("full")).toBool();
     r.stoppedForRam = m.value(QStringLiteral("stoppedForRam")).toBool();
     r.message = m.value(QStringLiteral("message")).toString();
+    r.profile = m.value(QStringLiteral("profile")).toString();
     r.finishedAt = QDateTime::fromString(m.value(QStringLiteral("finishedAt")).toString(), Qt::ISODate);
     return r;
 }

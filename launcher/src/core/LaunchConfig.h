@@ -63,6 +63,10 @@ QStringList runProfile(const AppSettings& settings, const QString& titleId);
 // Settings (XCL_DXIL_CACHE is already in base, see followShaderCacheDir) (tested).
 QProcessEnvironment runEnvironment(const QProcessEnvironment& base, const AppSettings& settings, const QString& titleId);
 
+// The run profile variables runEnvironment applies for a game, sorted and hashed to 16 hex digits:
+// recorded with each XSEmu warm-up, so a warm-up made with other translator switches no longer counts.
+QString profileIdentity(const AppSettings& settings, const QString& titleId);
+
 // Why a Settings control backed by xcl.toml has no effect: the global run profile, else the launcher's
 // own environment, sets the variable XSEmu reads over it. Empty when neither does.
 QString environmentOverride(const AppSettings& settings, const QString& variable);

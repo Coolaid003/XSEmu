@@ -3,6 +3,7 @@
 #include "DevFixtures.h"
 #include "EmulatorBuild.h"
 #include "EmulatorController.h"
+#include "LaunchConfig.h"
 #include "Library.h"
 #include "Paths.h"
 #include "ProcessGate.h"
@@ -579,6 +580,8 @@ void TestControllers::playAndWarmupShareTheRunEnvironment()
 
     const Game garden = fixtureGame(QStringLiteral("Signal Garden"));
     runBoth(garden);
+    const QString defaults = LaunchConfig::profileIdentity(*m_settings, garden.titleId());
+    QCOMPARE(m_settings->recentWarmups().first().profile, defaults);
     const QStringList played = read(QStringLiteral("run"));
     QCOMPARE(read(QStringLiteral("warm-up")), played);
     for (const QString& line : AppSettings::defaultRunProfile())
@@ -587,7 +590,9 @@ void TestControllers::playAndWarmupShareTheRunEnvironment()
 
     // the game's own profile replaces the global one in both
     m_settings->setGameOverride(garden.titleId(), QStringLiteral("runProfile"), QStringList{QStringLiteral("XCL_LOOP_GUARD=4096")});
+    QVERIFY(LaunchConfig::profileIdentity(*m_settings, garden.titleId()) != defaults);
     runBoth(garden);
+    QCOMPARE(m_settings->recentWarmups().first().profile, LaunchConfig::profileIdentity(*m_settings, garden.titleId()));
     const QStringList own = read(QStringLiteral("run"));
     QCOMPARE(read(QStringLiteral("warm-up")), own);
     QVERIFY(own.contains(QStringLiteral("XCL_LOOP_GUARD=4096")));

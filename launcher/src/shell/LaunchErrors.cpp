@@ -4,6 +4,7 @@
 #include "app/Services.h"
 #include "core/Format.h"
 #include "core/HardwareInfo.h"
+#include "core/LaunchConfig.h"
 #include "core/Paths.h"
 #include "core/ShaderCacheInfo.h"
 #include "widgets/Button.h"
@@ -385,10 +386,11 @@ bool LaunchErrors::shadersCold(Services& s, const Game& game)
 {
     if (!s.emulator.runnerFor(game).isBuiltIn())
         return false; // a third-party runner keeps its own cache; its pre-cache is optional
-    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot())) {
+    switch (titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot(), LaunchConfig::profileIdentity(s.settings, game.titleId()))) {
     case TitleShaderState::NeverWarmed:
     case TitleShaderState::LastRunIncomplete:
     case TitleShaderState::LastRunFailed:
+    case TitleShaderState::ProfileChanged:
         return true;
     case TitleShaderState::Ready:
     case TitleShaderState::Unknown:
@@ -408,7 +410,7 @@ void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, s
         warmUp();
         return;
     }
-    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot());
+    const TitleShaderState state = titleShaderState(game.titleId(), s.settings.recentWarmups(), s.shaderCache.snapshot(), LaunchConfig::profileIdentity(s.settings, game.titleId()));
     const std::optional<WarmupRun> last = lastWarmup(s, game);
     auto* d = new Dialog(window, 460);
     begin(d, QStringLiteral("bolt"), Theme::Tone::Warning, QStringLiteral("Warm up %1 first?").arg(game.title()));
@@ -417,6 +419,9 @@ void LaunchErrors::confirmPlay(QWidget* window, Services& s, const Game& game, s
     case TitleShaderState::LastRunIncomplete:
         why = last && last->total > 0 ? QStringLiteral("The last warm-up for %1 stopped part way, at %2 of %3 pipelines.").arg(game.title(), Format::count(last->done), Format::count(last->total))
                                       : QStringLiteral("The last warm-up for %1 stopped part way.").arg(game.title());
+        break;
+    case TitleShaderState::ProfileChanged:
+        why = QStringLiteral("The run profile for %1 changed since its last warm-up, so its shaders build again.").arg(game.title());
         break;
     case TitleShaderState::LastRunFailed:
         why = QStringLiteral("The last warm-up for %1 failed%2.").arg(game.title(), last ? QStringLiteral(" (exit code %1)").arg(Format::exitCode(last->exitCode)) : QString());

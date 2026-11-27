@@ -131,6 +131,7 @@ private:
     QElapsedTimer m_stepClock;
     RunnerManager* m_runners = nullptr;
     const RunnerSpec* m_spec = nullptr; // the runner of this pre-cache; nullptr: XSEmu's warm-up
+    QString m_profile;                  // XSEmu's warm-up: the run profile identity it started with
     int m_step = 0;
     qint64 m_built = 0; // what the runner's finished steps built
 };

@@ -3,6 +3,7 @@
 #include "PageScaffold.h"
 #include "app/Services.h"
 #include "core/Format.h"
+#include "core/LaunchConfig.h"
 #include "core/ShaderCacheInfo.h"
 #include "shell/LaunchErrors.h"
 #include "widgets/Badge.h"
@@ -45,7 +46,8 @@ TileStatus shaderStatus(TitleShaderState state)
     switch (state) {
     case TitleShaderState::Ready: return {QStringLiteral("Shaders ready"), Theme::Tone::Success};
     case TitleShaderState::NeverWarmed: return {QStringLiteral("Never warmed up"), Theme::Tone::Neutral};
-    case TitleShaderState::LastRunIncomplete: return {QStringLiteral("Warm-up needed"), Theme::Tone::Warning};
+    case TitleShaderState::LastRunIncomplete:
+    case TitleShaderState::ProfileChanged: return {QStringLiteral("Warm-up needed"), Theme::Tone::Warning};
     case TitleShaderState::LastRunFailed: return {QStringLiteral("Warm-up failed"), Theme::Tone::Danger};
     case TitleShaderState::Unknown: break;
     }
@@ -577,7 +579,7 @@ void LibraryPage::refreshState()
         const Game& g = m_shown[i];
         CoverTile* tile = m_tiles[i];
         const bool isPlaying = !playingId.isEmpty() && g.titleId() == playingId;
-        TileStatus status = shaderStatus(titleShaderState(g.titleId(), recent, cache));
+        TileStatus status = shaderStatus(titleShaderState(g.titleId(), recent, cache, LaunchConfig::profileIdentity(m_s.settings, g.titleId())));
         if (!g.exeExists)
             status = {QStringLiteral("Game files missing"), Theme::Tone::Danger};
         if (isPlaying) {
@@ -612,7 +614,7 @@ void LibraryPage::refreshState()
         if (played > 0)
             meta << QStringLiteral("%1 played").arg(Format::playTime(played));
         meta << QStringLiteral("last played %1").arg(sentenceCase(Format::ago(m_s.settings.lastPlayed(m_heroGame.titleId()))));
-        const QString shaders = shaderStatus(titleShaderState(m_heroGame.titleId(), recent, cache)).text;
+        const QString shaders = shaderStatus(titleShaderState(m_heroGame.titleId(), recent, cache, LaunchConfig::profileIdentity(m_s.settings, m_heroGame.titleId()))).text;
         if (!shaders.isEmpty())
             meta << sentenceCase(shaders);
         m_hero->set(m_heroGame.title(), meta.join(QStringLiteral(" \u00B7 ")), m_s.art(m_heroGame.titleId(), CoverCache::Kind::Hero));

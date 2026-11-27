@@ -635,7 +635,7 @@ void GameDetailsPage::refresh()
     // actions and the shader state
     const QList<WarmupRun> recent = m_s.settings.recentWarmups();
     const ShaderCacheInfo& cache = m_s.shaderCache.snapshot();
-    const TitleShaderState state = titleShaderState(id, recent, cache);
+    const TitleShaderState state = titleShaderState(id, recent, cache, LaunchConfig::profileIdentity(m_s.settings, id));
     std::optional<WarmupRun> lastWarmup;
     for (const WarmupRun& r : recent) {
         if (r.titleId == id) {
@@ -677,6 +677,7 @@ void GameDetailsPage::refresh()
     case TitleShaderState::NeverWarmed: stateText = QStringLiteral("Never warmed up"); cacheState = QStringLiteral("Empty"); cacheRole = Theme::Role::Text3; break;
     case TitleShaderState::LastRunIncomplete: stateText = QStringLiteral("Warm-up needed"); cacheState = QStringLiteral("Last warm-up stopped part way"); tone = Theme::Tone::Warning; cacheRole = Theme::Role::Warning; break;
     case TitleShaderState::LastRunFailed: stateText = QStringLiteral("Warm-up failed"); cacheState = QStringLiteral("Last warm-up failed"); tone = Theme::Tone::Danger; cacheRole = Theme::Role::Danger; break;
+    case TitleShaderState::ProfileChanged: stateText = QStringLiteral("Warm-up needed"); cacheState = QStringLiteral("Run profile changed since the last warm-up"); tone = Theme::Tone::Warning; cacheRole = Theme::Role::Warning; break;
     case TitleShaderState::Unknown: stateText = QStringLiteral("Not warmed up here"); cacheState = QStringLiteral("Not warmed up from this launcher"); break;
     }
     if (!runner.isBuiltIn()) {

@@ -4,6 +4,7 @@
 #include "Paths.h"
 #include "TitleConfig.h"
 
+#include <QCryptographicHash>
 #include <QDir>
 #include <QHash>
 #include <QRegularExpression>
@@ -185,6 +186,17 @@ QProcessEnvironment runEnvironment(const QProcessEnvironment& base, const AppSet
     else
         env.remove(QStringLiteral("XCL_FULL_DUMP"));
     return env;
+}
+
+QString profileIdentity(const AppSettings& settings, const QString& titleId)
+{
+    QStringList applied;
+    for (const auto& [key, value] : parseProfile(runProfile(settings, titleId).join(QLatin1Char('\n'))).entries) {
+        if (settingOwning(key).isEmpty())
+            applied << key + QLatin1Char('=') + value;
+    }
+    applied.sort();
+    return QString::fromLatin1(QCryptographicHash::hash(applied.join(QLatin1Char('\n')).toUtf8(), QCryptographicHash::Sha1).toHex().left(16));
 }
 
 QString environmentOverride(const AppSettings& settings, const QString& variable)

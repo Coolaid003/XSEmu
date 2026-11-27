@@ -29,6 +29,7 @@ struct WarmupRun {
     bool full = false;
     bool stoppedForRam = false; // ended part way while waiting at the RAM floor
     QString message;            // error text for Failed; why for NothingToBuild; a note for Finished
+    QString profile;            // XSEmu's warm-up: LaunchConfig::profileIdentity it ran with; empty: not recorded
     QDateTime finishedAt;
 
     QVariantMap toMap() const;
